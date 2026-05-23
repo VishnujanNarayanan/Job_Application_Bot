@@ -1,0 +1,184 @@
+# master_profile.example.yaml
+#
+# Copy this file to master_profile.yaml (which is gitignored).
+# Replace every REPLACE_ME with your real content.
+#
+# Rules the system enforces against this file:
+#   - The LLM NEVER writes or selects bullets. Bullets come verbatim from
+#     bullet_pool entries. Layer 4 selects them by cosine similarity.
+#   - safe_title_aliases is a closed allow-list. The LLM can only pick from
+#     it; Pydantic Literal enforces this at the API level.
+#   - skills_pool is a flat list. Categorisation happens per JD at build
+#     time — the LLM names groups, but can only use skills from this list.
+#   - On every bot run, master_profile.yaml mtime is checked. If changed:
+#     schema is validated, bullets are re-embedded, DB is diffed (new rows
+#     inserted, removed rows deactivated — never hard-deleted).
+
+# ---------------------------------------------------------------------------
+# Personal — drives resume header and form auto-fill
+# ---------------------------------------------------------------------------
+personal:
+  name: "REPLACE_ME"              # Full name as it appears on the resume
+  email: "REPLACE_ME"             # Primary email address
+  phone: "REPLACE_ME"             # E.g. "+91-XXXXX-XXXXX"
+  location: "REPLACE_ME"          # E.g. "Kochi, Kerala, India"
+  github: "REPLACE_ME"            # Full URL — embedded as hyperlink in header
+  linkedin: "REPLACE_ME"          # Full URL — embedded as hyperlink in header
+  certificates_link: "REPLACE_ME" # Full URL (e.g. Google Drive folder)
+
+# ---------------------------------------------------------------------------
+# Summaries — pre-written pool. Layer 4 selects best match deterministically.
+# The LLM never generates summary prose.
+#
+# tags: free-form labels for your own reference.
+# role_categories: subset of [backend, data, ml, fullstack, devops,
+#                              finance_market, quant] — must match the
+#                  categories in config.yaml parser.role_clusters.
+# ---------------------------------------------------------------------------
+summaries:
+  - id: "summary_001"
+    text: "REPLACE_ME"
+    tags: ["REPLACE_ME"]
+    role_categories: ["REPLACE_ME"]
+
+  - id: "summary_002"
+    text: "REPLACE_ME"
+    tags: ["REPLACE_ME"]
+    role_categories: ["REPLACE_ME"]
+
+# ---------------------------------------------------------------------------
+# Work experience
+#
+# id: stable internal identifier — never rename once applied jobs reference it.
+# actual_title: the title on your contract / offer letter.
+# safe_title_aliases: closed allow-list of titles the LLM may display on the
+#   resume for this role. MUST include actual_title. The Pydantic Literal
+#   constraint prevents the LLM from returning anything outside this list.
+# bullet_pool: every bullet you can speak to in an interview. The system
+#   picks exactly 3 per experience per JD. The LLM never rewrites them.
+# bullet id: stable — rename triggers a re-embed; removing sets is_active=false.
+# ---------------------------------------------------------------------------
+work_experience:
+  - id: "REPLACE_ME"           # e.g. "company_shortname"
+    company: "REPLACE_ME"
+    actual_title: "REPLACE_ME"
+    safe_title_aliases:
+      - "REPLACE_ME"           # must include actual_title
+      - "REPLACE_ME"
+      - "REPLACE_ME"
+    start_date: "REPLACE_ME"   # YYYY-MM
+    end_date: "REPLACE_ME"     # YYYY-MM or "present"
+    location: "REPLACE_ME"     # e.g. "Mumbai, India"
+    bullet_pool:
+      - id: "REPLACE_ME"       # e.g. "exp1_b1"
+        text: "REPLACE_ME"     # verbatim bullet — never rewritten
+        tags: ["REPLACE_ME"]
+      - id: "REPLACE_ME"
+        text: "REPLACE_ME"
+        tags: ["REPLACE_ME"]
+      - id: "REPLACE_ME"
+        text: "REPLACE_ME"
+        tags: ["REPLACE_ME"]
+
+  - id: "REPLACE_ME"
+    company: "REPLACE_ME"
+    actual_title: "REPLACE_ME"
+    safe_title_aliases:
+      - "REPLACE_ME"
+    start_date: "REPLACE_ME"
+    end_date: "REPLACE_ME"
+    location: "REPLACE_ME"
+    bullet_pool:
+      - id: "REPLACE_ME"
+        text: "REPLACE_ME"
+        tags: ["REPLACE_ME"]
+      - id: "REPLACE_ME"
+        text: "REPLACE_ME"
+        tags: ["REPLACE_ME"]
+
+# ---------------------------------------------------------------------------
+# Projects — projects section NEVER hidden; at least 2 always shown.
+#
+# link: GitHub or live URL. The DOCX assembler updates the "Code →"
+#   hyperlink target in word/_rels/document.xml.rels to this URL.
+#   The visible link text "Code →" is never changed.
+# bullet_pool: min 2 bullets; the system shows 2-3 per JD by cosine score.
+# ---------------------------------------------------------------------------
+projects:
+  - id: "REPLACE_ME"           # e.g. "project_shortname"
+    name: "REPLACE_ME"         # display name on the resume
+    link: "REPLACE_ME"         # https URL — drives hyperlink target
+    tags: ["REPLACE_ME"]
+    bullet_pool:
+      - id: "REPLACE_ME"
+        text: "REPLACE_ME"
+        tags: ["REPLACE_ME"]
+      - id: "REPLACE_ME"
+        text: "REPLACE_ME"
+        tags: ["REPLACE_ME"]
+      - id: "REPLACE_ME"
+        text: "REPLACE_ME"
+        tags: ["REPLACE_ME"]
+
+  - id: "REPLACE_ME"
+    name: "REPLACE_ME"
+    link: "REPLACE_ME"
+    tags: ["REPLACE_ME"]
+    bullet_pool:
+      - id: "REPLACE_ME"
+        text: "REPLACE_ME"
+        tags: ["REPLACE_ME"]
+      - id: "REPLACE_ME"
+        text: "REPLACE_ME"
+        tags: ["REPLACE_ME"]
+
+# ---------------------------------------------------------------------------
+# Skills pool — FLAT LIST. Do NOT categorise here.
+#
+# Categorisation happens dynamically per JD:
+#   1. Deterministic scoring picks the top-14 candidates by JD match.
+#   2. LLM names 3 categories and groups skills into them (3-5 each).
+#   3. Skills in "Familiar With" come from JD gap skills NOT in this list.
+#   4. The LLM cannot add any skill not present in this list (to categories)
+#      or not present in the JD's gap list (to Familiar With).
+#
+# Add every skill you can genuinely defend in an interview.
+# Reference buckets (for your own thinking — not in the YAML schema):
+#   Programming, Backend & APIs, Frontend, Databases, Cloud & DevOps,
+#   Data & ML, Quantitative, Build & Testing.
+# ---------------------------------------------------------------------------
+skills_pool:
+  - "REPLACE_ME"
+  - "REPLACE_ME"
+  - "REPLACE_ME"
+  - "REPLACE_ME"
+  - "REPLACE_ME"
+
+# ---------------------------------------------------------------------------
+# Education — fixed second-last section, never modified by the assembler.
+# ---------------------------------------------------------------------------
+education:
+  - degree: "REPLACE_ME"       # e.g. "B.Tech in Computer Science"
+    institution: "REPLACE_ME"
+    dates: "REPLACE_ME"        # e.g. "Sep 2021 - May 2025"
+    score: "REPLACE_ME"        # e.g. "CGPA: 7.3" or "Score: 89%"
+
+  - degree: "REPLACE_ME"
+    institution: "REPLACE_ME"
+    dates: "REPLACE_ME"
+    score: "REPLACE_ME"
+
+# ---------------------------------------------------------------------------
+# Certifications — fixed last section.
+#
+# verify_link: The DOCX assembler updates the "Verify Here" hyperlink
+#   target in word/_rels/document.xml.rels to this URL.
+#   The visible text "Verify Here" is never changed.
+# ---------------------------------------------------------------------------
+certifications:
+  - id: "REPLACE_ME"
+    name: "REPLACE_ME"         # display name on the resume
+    verify_link: "REPLACE_ME"  # https URL — drives hyperlink target
+    bullets:
+      - "REPLACE_ME"           # e.g. "Top 5% (Elite + Silver)"
+      - "REPLACE_ME"

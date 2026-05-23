@@ -1,0 +1,49 @@
+# --- Secrets & credentials --------------------------------------------------
+.env
+config/google_service_account.json
+
+# --- User-owned source of truth (gitignored per spec) -----------------------
+master_profile.yaml
+master_profile.json
+answer_bank_seed.yaml
+
+# --- Permanent audit trail (lives on Oracle Cloud VM disk, never committed) -
+resumes/applied/
+
+# --- Runtime data (ignore contents, keep directory structure) ---------------
+data/sessions/*
+!data/sessions/.gitkeep
+data/manual_queue/*
+!data/manual_queue/.gitkeep
+data/logs/*
+!data/logs/.gitkeep
+data/pending_writes.jsonl
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+
+# --- Test / type cache ------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Virtualenvs ------------------------------------------------------------
+.venv/
+venv/
+env/
+
+# --- OS ---------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# --- Editors ----------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo

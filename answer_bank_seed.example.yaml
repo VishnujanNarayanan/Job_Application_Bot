@@ -1,0 +1,64 @@
+# answer_bank_seed.example.yaml
+#
+# Seed entries for the answer_bank database table.
+# Copy to answer_bank_seed.yaml (gitignored) and replace every
+# REPLACE_ME with your defensible answers.
+#
+# How the bank is used (Layer 6, Category 3 questions):
+#   Stage 1: question text is matched against question_patterns (fuzzy).
+#   Stage 2: JD context is matched against jd_contexts (cosine, threshold 0.80).
+#   - Strong match (>0.80): auto-fill from bank, no review needed.
+#   - Weak match (<0.80): Gemini adapts the answer, held for review.
+#   - No match: Gemini drafts fresh, held for review.
+#   Only entries with approved_by_user: true are used for auto-fill.
+#
+# answer_bank grows automatically from user-approved Telegram responses.
+# This file seeds the initial entries before the first real run.
+
+entries:
+  # --- Current salary redirect ----------------------------------------------
+  # Used whenever a form asks for current CTC / current salary as free text.
+  # Gives a strategic non-numerical answer (no number disclosed).
+  - id: "current_salary_redirect"
+    question_patterns:
+      - "current ctc"
+      - "current salary"
+      - "current compensation"
+      - "what is your current salary"
+    jd_contexts: []        # empty = matches any JD
+    answer: "REPLACE_ME"   # e.g. "I'm focused on the right opportunity and
+                            #        happy to discuss compensation once we've
+                            #        established fit. My expected CTC is X LPA."
+    approved_by_user: false
+
+  # --- Notice period --------------------------------------------------------
+  - id: "notice_period"
+    question_patterns:
+      - "notice period"
+      - "how soon can you join"
+      - "earliest joining date"
+    jd_contexts: []
+    answer: "Immediate"
+    approved_by_user: false
+
+  # --- Why this company (template — fill per company) -----------------------
+  - id: "why_company_generic"
+    question_patterns:
+      - "why do you want to work here"
+      - "why are you interested in"
+      - "what attracts you to"
+    jd_contexts:
+      - "REPLACE_ME"   # e.g. role category or company domain keyword
+    answer: "REPLACE_ME"
+    approved_by_user: false
+
+  # --- Relocation -----------------------------------------------------------
+  - id: "relocation_willing"
+    question_patterns:
+      - "are you willing to relocate"
+      - "open to relocation"
+    jd_contexts: []
+    answer: "Yes, I am open to relocation."
+    approved_by_user: false
+
+  # Add more entries below following the same pattern.
