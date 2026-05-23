@@ -1,0 +1,448 @@
+# config/config.yaml
+# Single source of truth for all runtime tunables. No magic numbers in src/.
+# Secrets (API keys, DATABASE_URL) live in .env only.
+# The user owns master_profile.yaml (gitignored); this file is checked in.
+
+# ---------------------------------------------------------------------------
+# Personal — locked per architecture doc Section 2
+# ---------------------------------------------------------------------------
+personal:
+  name: "Vishnujan Narayanan"
+  years_of_experience: 1.5
+  # Reject any job posting that requires more years than this.
+  years_required_ceiling: 5
+  job_type: "fulltime"
+  # Open to international relocation; no visa filter applied.
+  visa_filter: null
+  # Reject scrapped jobs whose location string contains any of these
+  # (case-insensitive substring match). Delhi NCR is excluded.
+  disallowed_regions:
+    - "Delhi"
+    - "Gurgaon"
+    - "Gurugram"
+    - "Noida"
+    - "Ghaziabad"
+    - "Faridabad"
+  company_blocklist: []   # no companies currently blocked
+  timezone: "Asia/Kolkata"
+
+# ---------------------------------------------------------------------------
+# Scheduler — Layer 1
+# ---------------------------------------------------------------------------
+scheduler:
+  cycle_quota:
+    # How many applications to send per run, cycle-aware.
+    peak: 3       # 8am–11am IST
+    off_peak: 1   # all other times
+  peak_hours:
+    # 24-hour IST. Start inclusive, end exclusive: [8, 11).
+    start: 8
+    end: 11
+  # Cron cadence is managed at the OS / Oracle Cloud level, not from Python.
+  # These values are documentation for the cron entries to configure.
+  cadence:
+    peak_interval_minutes: 40     # weekdays 8am–6pm IST
+    off_peak_interval_hours: 4    # nights and weekends
+    weekly_report_day: "sunday"
+    weekly_report_hour_ist: 8
+
+# ---------------------------------------------------------------------------
+# Scraper — Layer 2
+# Indeed only through Iteration 3; Glassdoor enabled in Iteration 4.
+# ---------------------------------------------------------------------------
+scraper:
+  hours_old:
+    # JobSpy `hours_old` parameter — how far back to look per run.
+    peak: 2
+    off_peak: 5
+  # Stop searching when this many jobs have passed hard filters in one run.
+  short_circuit_count: 20
+  # JobSpy results_wanted cap per query term.
+  results_wanted_per_term: 50
+  country: "india"
+  sites:
+    - "indeed"
+    # - "glassdoor"   # Iteration 4
+  # Serial search rotation — one term per run, advances on short-circuit.
+  # Rotation state persisted in search_rotation_state DB table.
+  search_terms:
+    - "backend engineer"
+    - "backend developer"
+    - "software engineer python"
+    - "platform engineer"
+    - "API developer"
+    - "data engineer"
+    - "analytics engineer"
+    - "data pipeline engineer"
+    - "data scientist"
+    - "data analyst"
+    - "machine learning engineer"
+    - "ML engineer"
+    - "AI engineer"
+    - "fullstack engineer"
+    - "full stack developer"
+    - "software engineer"
+    - "devops engineer"
+    - "SRE"
+    - "quant developer"
+    - "trading systems developer"
+    - "financial software engineer"
+    - "market data engineer"
+    - "quantitative researcher"
+    - "quantitative analyst"
+  # Never apply to the same company twice within this many days.
+  cooldown_days: 10
+
+# ---------------------------------------------------------------------------
+# Parser — Layer 3
+# Role acceptance clusters are merged here (no separate role_clusters.yaml).
+# Maps each search keyword to acceptable role titles + Gemini categories.
+# A job found under "backend engineer" is accepted even if titled
+# "software developer" as long as Gemini classifies it as backend/fullstack.
+# ---------------------------------------------------------------------------
+parser:
+  # Re-check years ceiling on the Gemini-structured field (catches cases
+  # where raw scrape text was ambiguous but structured data is clear).
+  years_required_ceiling: 5
+  role_clusters:
+    backend:
+      keywords:
+        - "backend engineer"
+        - "backend developer"
+        - "software engineer python"
+        - "platform engineer"
+        - "API developer"
+      accept_titles:
+        - "backend"
+        - "software engineer"
+        - "software developer"
+        - "platform"
+        - "API"
+        - "python developer"
+      accept_categories: ["backend", "fullstack"]
+    data:
+      keywords:
+        - "data engineer"
+        - "analytics engineer"
+        - "data pipeline engineer"
+        - "data scientist"
+        - "data analyst"
+      accept_titles:
+        - "data engineer"
+        - "data scientist"
+        - "data analyst"
+        - "analytics"
+        - "etl"
+      accept_categories: ["data", "ml"]
+    ml:
+      keywords:
+        - "machine learning engineer"
+        - "ML engineer"
+        - "AI engineer"
+      accept_titles:
+        - "machine learning"
+        - "ml engineer"
+        - "ai engineer"
+        - "deep learning"
+      accept_categories: ["ml", "data"]
+    fullstack:
+      keywords:
+        - "fullstack engineer"
+        - "full stack developer"
+        - "software engineer"
+      accept_titles:
+        - "fullstack"
+        - "full stack"
+        - "software engineer"
+        - "software developer"
+        - "web developer"
+      accept_categories: ["fullstack", "backend"]
+    devops:
+      keywords:
+        - "devops engineer"
+        - "SRE"
+      accept_titles:
+        - "devops"
+        - "sre"
+        - "site reliability"
+        - "platform"
+        - "infrastructure"
+      accept_categories: ["devops", "backend"]
+    finance_market:
+      keywords:
+        - "quant developer"
+        - "trading systems developer"
+        - "financial software engineer"
+        - "market data engineer"
+      accept_titles:
+        - "quant"
+        - "trading"
+        - "financial"
+        - "market data"
+        - "fintech"
+      accept_categories: ["finance_market", "quant", "backend"]
+    quant:
+      keywords:
+        - "quantitative researcher"
+        - "quantitative analyst"
+      accept_titles:
+        - "quant"
+        - "quantitative"
+        - "researcher"
+        - "analyst"
+      accept_categories: ["quant", "finance_market", "ml", "data"]
+
+# ---------------------------------------------------------------------------
+# Selection — Layer 4 (pure deterministic, no LLM)
+# ---------------------------------------------------------------------------
+selection:
+  experience:
+    weight_alias: 0.30    # best title alias cosine score contribution
+    weight_bullets: 0.70  # top-3 bullet avg cosine score contribution
+    threshold: 0.45
+    max_shown: 3
+    min_shown: 2
+    bullets_per_experience: 3   # exactly 3 bullets shown per experience
+    # If best_score - second_score > this gap, best-match goes to position 1.
+    # Otherwise positions 1+ follow recency (most recent first).
+    match_then_recency_gap: 0.20
+
+  project:
+    weight_name: 0.20     # project name cosine score contribution
+    weight_bullets: 0.80  # topN bullet avg contribution (N = bullets shown)
+    threshold: 0.50
+    max_shown: 3
+    min_shown: 2
+    bullet_threshold: 0.40  # individual bullet floor; 2 force-included if fewer pass
+    bullet_min: 2
+    bullet_max: 3
+    hide_section: false   # projects section NEVER hidden
+
+  summary:
+    # Deterministic: pick summary whose role_categories match the JD's
+    # role_category, then highest cosine score. Falls back to all summaries
+    # if no category match.
+    fallback_to_all: true
+
+  skills:
+    # Step 1: deterministic scoring takes top-14 pool candidates.
+    top_candidates: 14
+    # Step 2: LLM names exactly this many categories (3-5 skills each).
+    categories_count: 3
+    skills_per_category_min: 3
+    skills_per_category_max: 5
+    # Step 3: LLM picks up to this many Familiar With gap skills.
+    familiar_with_max: 4
+    # Total pool skills shown: 10-14 (LLM optimises for clean grouping).
+    # Post-validation regenerates on banned category names.
+    banned_category_names:
+      - "Miscellaneous"
+      - "Other"
+      - "Various"
+      - "Additional Skills"
+      - "Soft Skills"
+
+# ---------------------------------------------------------------------------
+# Scoring — Layer 4 final score formula
+# ---------------------------------------------------------------------------
+scoring:
+  final:
+    # Weights sum to 1.0.
+    fit: 0.55
+    success_prob: 0.30
+    recency: 0.10
+    project: 0.05
+  # Jobs below this threshold are not applied to (reason: LOW_SCORE).
+  apply_threshold: 0.50
+
+  fit:
+    # Weights sum to 1.0.
+    best_experience: 0.50
+    selected_summary: 0.20
+    avg_skill_pool_match: 0.30
+
+  success_prob:
+    # Collapsed formula per project decision (applicant_score and age_score
+    # were undefined in the architecture doc; removed from spec).
+    # success_prob = seniority * 0.60 + recency * 0.40
+    weight_seniority: 0.60
+    weight_recency: 0.40
+    # Scores for Gemini-parsed role_level field.
+    seniority_scores:
+      junior: 1.00
+      mid: 0.80
+      senior: 0.40
+      lead: 0.15
+      null: 0.80  # treat unknown level as mid
+
+  recency_score:
+    # Bands by hours since the job was posted.
+    under_1h: 1.00
+    under_3h: 0.80
+    under_6h: 0.60
+    under_12h: 0.40
+    over_12h: 0.20
+
+# ---------------------------------------------------------------------------
+# Application queue — Layer 4 cycle-aware picking
+# ---------------------------------------------------------------------------
+queue:
+  # Queue entries expire this many hours after queued_at.
+  decay_hours: 12
+  stale_reason: "STALE"   # not_applied.reason_category on expiry
+
+# ---------------------------------------------------------------------------
+# Resume builder — Layer 5
+# ---------------------------------------------------------------------------
+builder:
+  template_path: "resumes/templates/resume_template.docx"
+  output_dir: "resumes/applied"
+  # Diff check: reject any build that modifies content outside permitted
+  # regions. Header (before first WORK EXPERIENCE Heading1) is never touched.
+  diff_check_enabled: true
+  # Regenerate up to this many times when Pydantic or post-validation fails.
+  llm_regenerate_attempts: 2
+  cover_letter_max_chars: 900
+
+# ---------------------------------------------------------------------------
+# Application sender — Layer 6
+# ---------------------------------------------------------------------------
+sender:
+  upload_filename_resume: "Vishnujan_Narayanan_Resume.pdf"
+  upload_filename_cover: "Vishnujan_Narayanan_Cover_Letter.pdf"
+  # Safety limit: abandon the form if it exceeds this many pages.
+  max_form_pages: 10
+  # Hard rule: never retry submission more than once.
+  retry_limit: 1
+  network_timeout_retry_seconds: 30
+  # safe = hold unknown Category-3 questions for Telegram review.
+  # bold = auto-fill and continue.
+  question_mode: "safe"
+  salary:
+    expected_default_lpa: 6.0          # used when JD specifies no salary
+    current_numeric: 100000            # honest value for numeric current-salary fields
+    # answer_bank key for the strategic-redirect text answer to current-salary
+    # text fields (no number disclosed).
+    current_text_bank_key: "current_salary_redirect"
+  profile_fields:
+    work_auth: "Yes"
+    notice_period: "Immediate"
+    years_experience_numeric: 1.5
+    years_experience_band: "1-2 yrs"
+
+# ---------------------------------------------------------------------------
+# Voice / fabrication guard — Layer 6
+# Applied to all LLM-generated cover letter and question answer text.
+# ---------------------------------------------------------------------------
+voice:
+  banned_words:
+    - "leverage"
+    - "synergy"
+    - "robust"
+    - "scalable"
+    - "holistic"
+    - "passionate about"
+    - "I bring a unique blend"
+    - "I am excited to"
+    - "I am writing to"
+    - "with X years of experience in"
+    - "as a [role]"
+  # Post-validation: regenerate up to builder.llm_regenerate_attempts times.
+  # If still failing: hold for review with violations highlighted.
+  few_shot_size: 5   # number of recent approved bank answers sent to LLM
+
+# ---------------------------------------------------------------------------
+# Cover letter PDF render contract — Layer 6 pdf_render.py
+# Plain black text. Arial 11pt. 2cm margins. Single page. No header/footer.
+# Structure: line 1 = name + email, line 2 = date, body below.
+# ---------------------------------------------------------------------------
+cover_pdf:
+  font_family: "Arial"
+  font_size_pt: 11
+  font_color: "#000000"
+  margin_cm: 2.0
+  single_page: true
+  header_enabled: false
+  footer_enabled: false
+
+# ---------------------------------------------------------------------------
+# Embeddings & NLP
+# ---------------------------------------------------------------------------
+embeddings:
+  model: "sentence-transformers/all-MiniLM-L6-v2"
+  dim: 384   # vector(384) in pgvector schema
+
+spacy:
+  model: "en_core_web_sm"
+
+# ---------------------------------------------------------------------------
+# LLM — Gemini 2.0 Flash (3-call budget max per job)
+# Call 1a: JD parse (always). Call 1b: title+skills+cover (if picked).
+# Call 2: batched form questions (if unknown questions exist).
+# ---------------------------------------------------------------------------
+llm:
+  provider: "gemini"
+  model: "gemini-2.0-flash"
+  daily_call_budget: 1500   # free tier ceiling; expected ~600/day
+  max_calls_per_job: 3
+  backoff:
+    initial_seconds: 2
+    max_seconds: 60
+    max_attempts: 3
+
+# ---------------------------------------------------------------------------
+# State / database — Layer 7 (Neon PostgreSQL, free tier)
+# ---------------------------------------------------------------------------
+database:
+  pool_size: 2
+  max_overflow: 5
+  pool_pre_ping: true   # SQLAlchemy auto-recovers on network blip
+  outage_buffer_path: "data/pending_writes.jsonl"   # drained next run
+  outage_backoff_attempts: 3
+
+storage:
+  resumes_applied_dir: "resumes/applied"    # NEVER auto-cleaned (audit trail)
+  sessions_dir: "data/sessions"
+  manual_queue_dir: "data/manual_queue"
+  logs_dir: "data/logs"
+  cleanup:
+    logs_retention_days: 365
+    manual_queue_retention_days: 90
+    resumes_applied_retention_days: null   # null = keep forever
+
+# ---------------------------------------------------------------------------
+# Notifications — Layer 8 (Telegram)
+# ---------------------------------------------------------------------------
+notifications:
+  digest_hour_ist: 8
+  # Telegram alert sent immediately when any of these conditions trigger.
+  critical_alert_triggers:
+    - "playwright_crash"
+    - "session_expired"
+    - "gemini_api_failure"
+    - "database_connection_failure"
+    - "master_profile_validation_failure"
+    - "portal_zero_results_consecutive"
+  # Alert after this many consecutive zero-result runs from a portal.
+  portal_zero_results_threshold: 3
+
+# ---------------------------------------------------------------------------
+# Analytics — Layer 9 (Google Sheets + Docs)
+# ---------------------------------------------------------------------------
+analytics:
+  sheets:
+    applied_tab: "Applied"
+    skipped_tab: "Skipped"
+    manual_required_tab: "ManualRequired"
+  docs:
+    monthly_report_enabled: true
+    # Skills appearing in >= this fraction of weekly JDs trigger a
+    # "consider learning" alert in the Sunday report.
+    skill_demand_alert_threshold: 0.30
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  level: "INFO"   # overridden by LOG_LEVEL env var at runtime
+  format: "json"  # structlog JSON output

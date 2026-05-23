@@ -1,0 +1,49 @@
+# Pinned per architecture doc Section 6. Python 3.11+ required.
+
+# --- Scraping ---------------------------------------------------------------
+python-jobspy==1.1.80
+
+# --- Browser automation -----------------------------------------------------
+playwright==1.49.0
+
+# --- NLP validation ---------------------------------------------------------
+spacy==3.8.2
+# spaCy model installed separately:
+#   python -m spacy download en_core_web_sm
+
+# --- Embeddings (local, free) -----------------------------------------------
+sentence-transformers==3.3.1
+
+# --- LLM (Gemini 2.0 Flash) + Pydantic structuring --------------------------
+google-generativeai==0.8.3
+instructor==1.7.0
+pydantic==2.10.3
+
+# --- Database ---------------------------------------------------------------
+sqlalchemy==2.0.36
+psycopg[binary]==3.2.3
+pgvector==0.3.6
+alembic==1.14.0
+
+# --- Resume building --------------------------------------------------------
+python-docx==1.1.2
+reportlab==4.2.5
+# PDF conversion uses LibreOffice headless (system binary, not pip).
+
+# --- Notifications ----------------------------------------------------------
+python-telegram-bot==21.7
+
+# --- Reporting (Google Sheets + Docs) ---------------------------------------
+gspread==6.1.4
+google-api-python-client==2.154.0
+google-auth==2.36.0
+google-auth-oauthlib==1.2.1
+
+# --- Logging + config -------------------------------------------------------
+structlog==24.4.0
+pyyaml==6.0.2
+python-dotenv==1.0.1
+
+# --- Testing ----------------------------------------------------------------
+pytest==8.3.4
+pytest-asyncio==0.24.0
