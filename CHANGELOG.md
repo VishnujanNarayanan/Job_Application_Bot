@@ -9,6 +9,21 @@ and this project loosely tracks iterations rather than semver.
 
 ---
 
+## [Iteration 0.0.2] — 2026-05-25
+
+### Changed
+- CLAUDE.md hard rule #11 rewritten as "Free tier only — with hard billing caps". Now honest about S3's 12-month free tier (~$0.30/year post-tier) and mandates layered billing safeguards: $0.01 tripwire, $0.50 warning alarm, $1 Budget Action that auto-detaches the runtime IAM policy. Always-free vs conditionally-free services split out. SNS allowed only as alarm-to-Lambda-to-Telegram bridge.
+- CLAUDE.md onboarding checklist: AWS setup reordered to put billing safeguards FIRST, before any S3/CloudWatch/IAM resource. Introduces separate `job-bot-budgets` IAM role for the kill switch. Mandates verification by manually triggering the $0.01 alert path.
+- CLAUDE.md "Things NOT to do": added prohibitions on raising/disabling budget caps, granting runtime user any budget/IAM/alarm permissions, and creating AWS resources before safeguards are verified. `us-east-1` carved out as the one allowed non-`ap-south-1` region (billing metrics only publish there).
+- PRD NFR-1 rewritten: drops the absolute "$0/month" claim, states the $0.30/year post-12-month reality, and pins the $1/month hard cap enforced by Budget Action.
+- PRD: added FR-21 "Billing guardrails" — mandates the three-layer safeguard stack (tripwire / warning / hard stop), the separate `job-bot-budgets` IAM role for the kill switch, and a verification step before going live.
+- PRD FR-20: IAM minimal permissions now explicitly excludes budget/billing operations from the runtime user.
+- PRD risk table: AWS bill surprise row upgraded to describe the three-layer mitigation; added new "Runtime user tampers with kill switch" row covered by the separated `job-bot-budgets` role.
+- Architecture Section 5.3 (cost model): rewritten as a per-service table distinguishing always-free vs 12-month-free tiers; states the $1/month hard cap and what "budget breach as incident" means.
+- Architecture: new Section 5.5 "Billing safeguards" with the three-layer stack, role separation diagram (`job-bot-runtime` vs `job-bot-budgets` vs owner), per-threshold incident response, and a verification procedure for manually exercising both alert paths. Original 5.5 (Failure handling) renumbered to 5.6.
+
+---
+
 ## [Iteration 0.0.1] — 2026-05-25
 
 ### Changed

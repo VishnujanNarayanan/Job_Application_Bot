@@ -278,14 +278,25 @@ From Iteration 3+, structured logs MUST be shipped to CloudWatch. Alarms MUST be
 - Each alarm MUST route to Telegram within 10 minutes.
 
 ### FR-20 IAM minimal permissions
-AWS credentials used at runtime MUST have only the permissions required (S3 PutObject/GetObject/DeleteObject on the bot's bucket, CloudWatch logs/metrics on the bot's namespace). No bucket-level operations, no IAM operations, no other AWS service access.
+AWS credentials used at runtime MUST have only the permissions required (S3 PutObject/GetObject/DeleteObject on the bot's bucket, CloudWatch logs/metrics on the bot's namespace). No bucket-level operations, no IAM operations, no budget/billing operations, no other AWS service access.
+
+### FR-21 Billing guardrails (mandatory before any AWS resource creation)
+The following MUST exist in the AWS account before the first S3 bucket, CloudWatch log group, or IAM runtime user is created:
+- AWS Budget at **$0.01/month**, monthly, notify on actual or forecasted breach → email + Telegram (any-charge tripwire)
+- AWS Budget at **$1/month** with a **Budget Action** that detaches `job-bot-runtime-policy` from the `job-bot-runtime` user
+- CloudWatch billing alarm at **$0.50/month** in `us-east-1` (the only region where billing metrics publish) → SNS → tiny Lambda → Telegram
+- Cost Explorer enabled
+
+The Budget Action MUST execute under a SEPARATE IAM role (`job-bot-budgets`) with only `budgets:*` on the bot's budgets and `iam:DetachUserPolicy` scoped to the runtime user/policy. The runtime user MUST NOT have permission to modify, delete, or disable any budget, alarm, or IAM resource — so it cannot tamper with its own kill switch.
+
+Verification: before declaring AWS setup complete, manually trigger the $0.01 budget alert path and confirm Telegram delivery within 10 minutes.
 
 ---
 
 ## 10. Non-Functional Requirements
 
 ### NFR-1 Cost
-Total operating cost MUST be $0/month. Every service MUST be on a free tier with no paid graduation. If AWS billing alarm fires, the offending service is disabled, never paid for.
+Total operating cost target is $0/month. Honest caveat: AWS S3's 5GB free tier is 12-month, not always-free; after AWS account turns 1 year old, S3 storage is projected at ~$0.30/year for the bot's ~1GB footprint. Hard cap: $1/month, enforced by an AWS Budget Action that auto-detaches the runtime IAM policy if breached. The bot stops itself before any meaningful charge accrues. If a budget fires, root cause is investigated; the cap is NEVER raised to keep the bot running.
 
 ### NFR-2 Privacy
 Credentials MUST NEVER be stored in plaintext in code. AWS keys live in `.env` only. Re-authentication for portals is manual.
@@ -363,7 +374,8 @@ All AWS resources MUST be in `ap-south-1` (Mumbai) for minimum latency from Orac
 | LLM picks unauthorized title | High | Pydantic Literal from safe_title_aliases |
 | LLM picks skill not in candidates | High | Post-validation rejects, regenerate, BUILD_FAILURE |
 | AWS credentials leak | High | `.env` gitignored; rotate quarterly; minimal IAM permissions |
-| AWS bill surprise | High | Billing alarm at $1; disable offending service immediately |
+| AWS bill surprise | High | Layered: $0.01 tripwire (alert), $0.50 alarm (warning), $1 Budget Action auto-detaches runtime IAM policy (hard stop). Bot physically cannot continue spending past $1 |
+| Runtime user tampers with kill switch | Medium | Budget Action lives on separate `job-bot-budgets` role; runtime user has zero `iam:*`, `budgets:*`, or `cloudwatch:*alarm*` permissions |
 | S3 bucket misconfigured public | High | Block public access enforced; bucket policy denies public |
 | Same job applied twice across portals | Medium | Strict job_id dedup |
 | Session cookies expire silently | Medium | CloudWatch alarm + Telegram |

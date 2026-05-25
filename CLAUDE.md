@@ -50,10 +50,22 @@ Project and certificate hyperlinks MUST be updated by modifying the relationship
 ### 10. No double submissions
 On submission failure, retry exactly once. Never twice. Duplicate applications are worse than a missed one.
 
-### 11. Free tier only — including AWS
-Every service must be on a free tier with no paid graduation. Validated: Neon PostgreSQL (3GB), Oracle Cloud Always Free VM (200GB), Gemini 2.0 Flash (1500 calls/day), Telegram Bot API, Google Sheets/Docs API, AWS S3 (5GB free tier), AWS CloudWatch (5GB ingest/month free), AWS IAM (free), AWS SQS (1M requests/month free).
+### 11. Free tier only — with hard billing caps
+Every service must be on a free tier. **Honest caveat:** S3's 5GB free tier is 12-month, not always-free. After AWS account turns 1 year old, S3 storage costs ~$0.025/GB-month in `ap-south-1` (projects to ~$0.30/year for the bot's ~1GB footprint). Everything else is always-free.
 
-Explicitly forbidden AWS services (cost money): RDS, Lambda for runtime, ECS, Fargate, EKS, EventBridge as primary scheduler, SNS.
+**Always-free:** Neon PostgreSQL (3GB), Oracle Cloud Always Free VM (200GB), Gemini 2.0 Flash (1500 calls/day), Telegram Bot API, Google Sheets/Docs API, AWS IAM, AWS CloudWatch (5GB ingest/month), AWS SQS (1M requests/month), AWS Budgets (first 2), AWS billing alarms, AWS Lambda (1M invocations/month — used only for tiny billing-alert function).
+
+**Conditionally free (12-month tier, then cents/year):** AWS S3 (5GB for 12 months, then ~$0.025/GB-month).
+
+**Mandatory billing safeguards — MUST exist before any S3 / CloudWatch resource is created:**
+1. AWS Budget at **$0.01/month** (any-charge tripwire) → email + Telegram
+2. AWS Budget at **$1/month** with **Budget Action** that auto-detaches `job-bot-runtime-policy` from `job-bot-runtime` — this physically stops the bot from making S3 writes, capping further growth
+3. CloudWatch billing alarm at **$0.50/month** in `us-east-1` (where billing metrics live) → SNS → Lambda → Telegram early warning
+4. Cost Explorer enabled for monthly review
+
+If a Budget Action fires, the bot stops on its own. The response is to investigate root cause, NEVER to raise the cap. Expected steady-state: $0/month first year, then under $0.05/month.
+
+**Explicitly forbidden (cost money from day 1):** RDS, Lambda for runtime workloads (a tiny billing-alert Lambda is fine — under 100 invocations/year), ECS, Fargate, EKS, EventBridge as primary scheduler, SNS as the user-facing notification channel (Telegram is). SNS is allowed only as the bridge from a billing alarm to the Lambda that pings Telegram.
 
 ### 12. Gemini call budget — 3 calls max per job
 Call 1a (parse, always), Call 1b (title + skills + cover letter, if score passes AND picked for application), Call 2 (batched form questions, if needed). Don't add a 4th. New LLM needs get bundled into an existing call.
@@ -614,8 +626,11 @@ When you complete an iteration, the closing entry marks it clearly:
 - Don't use RDS, Lambda for runtime, ECS, Fargate, EKS, EventBridge as scheduler.
 - Don't store AWS keys in code, in commits, or anywhere except `.env`.
 - Don't grant AWS IAM permissions beyond what Section 5.4 of the architecture doc specifies.
-- Don't create AWS resources outside `ap-south-1`.
+- Don't create AWS resources outside `ap-south-1` (exception: billing alarms must live in `us-east-1` — AWS billing metrics only publish there).
 - Don't keep local filesystem copies of resumes after S3 upload (use /tmp transient only).
+- Don't disable, delete, or raise the AWS Budget caps. If billing breaches $1, investigate root cause — never just raise the limit to keep the bot running.
+- Don't grant the runtime user permission to modify budgets, alarms, or IAM. The budget kill switch lives on a SEPARATE role (`job-bot-budgets`) precisely so the runtime cannot disable its own circuit breaker.
+- Don't create AWS resources before the billing safeguards are configured and verified. Budgets first, S3/CloudWatch second. Always.
 - Don't skip changelog updates. Every code-affecting change goes into `[Unreleased]` in the same session.
 - Don't auto-commit or auto-push to git. The user does that manually.
 
@@ -639,10 +654,21 @@ For a human contributor:
 - [ ] Set up Gemini API key into `.env`
 - [ ] Set up Telegram bot via @BotFather, token + chat_id into `.env`
 - [ ] Set up AWS account in `ap-south-1`:
-      - Create IAM user `job-bot-runtime` with minimal policy
+      - **Billing safeguards FIRST, before any other AWS resource:**
+        - AWS Budget at $0.01/month → email + Telegram (any-charge tripwire)
+        - AWS Budget at $1/month with Budget Action: auto-detach
+          `job-bot-runtime-policy` from `job-bot-runtime`
+        - CloudWatch billing alarm at $0.50 (us-east-1) → SNS → Lambda → Telegram
+        - Cost Explorer enabled
+      - Create separate IAM role `job-bot-budgets` with ONLY
+        `budgets:*` on the bot's budgets and `iam:DetachUserPolicy`
+        scoped to `user/job-bot-runtime` + `policy/job-bot-runtime-policy`
+      - Create IAM user `job-bot-runtime` with minimal policy (no IAM perms,
+        no budget perms — cannot tamper with its own kill switch)
       - Create S3 bucket `job-bot-{username}-resumes` (versioned, block public)
       - Generate access key + secret, save to `.env`
-      - Configure billing alarm at $1
+      - Verify by manually triggering the $0.01 budget alert and confirming
+        Telegram delivery
 - [ ] Write `master_profile.yaml` with bullet pools, safe_title_aliases, skills_pool
 - [ ] Place resume template in `resumes/templates/`
 - [ ] Run `python -m src.cli.aws_check` to verify connectivity

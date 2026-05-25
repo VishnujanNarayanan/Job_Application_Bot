@@ -701,15 +701,33 @@ SNS             Telegram is the user channel; CloudWatch alarms invoke
 ### 5.3 Cost model
 
 ```
-S3              ~1GB at year 10. Free tier: 5GB. → $0 forever
-CloudWatch      Logs: free tier 5GB ingest/month. Bot logs ~100MB/month. → $0
-IAM             Free
-SQS             Free tier 1M requests/month. We'd use <10K/month. → $0
-                If volume grows past free tier, ~$0.40/M requests.
-Total AWS       $0/month
+Service           Tier type         Bot usage          Cost projection
+─────────────────────────────────────────────────────────────────────────────
+S3 storage        12-month free     ~1GB after year 1  $0 for first 12 months,
+                  (5GB)                                  then ~$0.025/GB-month
+                                                         (~$0.30/year)
+S3 requests       Always-free       ~50/day            $0 forever
+                  (20K GET / 2K
+                  PUT per month)
+CloudWatch logs   Always-free       <100MB/month       $0 forever
+                  (5GB ingest)
+CloudWatch alarms Always-free       ~5 alarms          $0 forever
+                  (10 alarms)
+IAM               Always-free       1 user + 1 role    $0 forever
+SQS               Always-free       <10K/month         $0 forever
+                  (1M requests)
+Budgets           Always-free       2 budgets          $0 forever
+                  (first 2)
+Billing alarm     Always-free       1 alarm            $0 forever
+Lambda (alerts)   Always-free       <100 invocations   $0 forever
+                  (1M / month)        per year
+
+Expected total    Year 1:  $0/month
+                  Year 2+: ~$0.025/month (~$0.30/year)
+Hard cap          $1/month — Budget Action auto-stops bot if breached
 ```
 
-If AWS Free Tier billing alarms ever fire, the answer is to disable the offending service, never to start paying.
+The bot CANNOT exceed $1/month: at that threshold a Budget Action detaches the runtime IAM policy, preventing further S3 writes. Existing storage continues to accrue ~$0.025/GB-month until manually addressed, but new growth stops. A breached budget is treated as an incident, never resolved by raising the cap.
 
 ### 5.4 IAM policy (minimal)
 
@@ -729,7 +747,88 @@ Explicitly DENIED:
   ec2:*, rds:*, lambda:* (not in scope)
 ```
 
-### 5.5 Failure handling for AWS dependency
+### 5.5 Billing safeguards (Iteration 0.1 — MUST be in place before any S3/CloudWatch resource)
+
+```
+Layer 1 — Tripwire (informational)
+  AWS Budget                      $0.01/month, monthly cycle
+  Notification                    Email + Telegram on actual or forecasted breach
+  Purpose                         Tells you the moment AWS charges anything
+
+Layer 2 — Warning
+  CloudWatch billing alarm        $0.50/month threshold
+  Region                          us-east-1 (billing metrics only publish there)
+  Routing                         SNS → Lambda (jobbot-billing-to-telegram)
+                                  → Telegram chat
+  Purpose                         Early human review before hard stop
+
+Layer 3 — Hard stop
+  AWS Budget                      $1.00/month with Budget Action
+  Action                          iam:DetachUserPolicy on
+                                  user/job-bot-runtime
+                                  policy/job-bot-runtime-policy
+  Executor role                   job-bot-budgets (SEPARATE from runtime)
+  Effect                          Runtime user loses S3/CloudWatch write
+                                  permissions instantly; bot APPLY_FAILURE
+                                  alarm fires within minutes from the
+                                  failing S3 PutObject calls
+  Purpose                         Bot physically cannot spend past $1
+```
+
+**Separation of concerns:**
+
+```
+job-bot-runtime         Permissions: S3 PutObject/GetObject/DeleteObject
+                        on bucket, CloudWatch logs/metrics on namespace
+                        Cannot: modify budgets, alarms, IAM, or itself
+                        This is the daily runtime identity.
+
+job-bot-budgets         Permissions: budgets:* on the bot's budgets,
+                        iam:DetachUserPolicy scoped to job-bot-runtime
+                        + job-bot-runtime-policy ONLY
+                        Cannot: read S3, write logs, run anything
+                        This identity exists ONLY to execute the kill
+                        switch when the $1 budget breaches.
+
+Owner (you)             Full account access via root + MFA.
+                        Re-attaches runtime policy after a kill switch
+                        fires, only after investigating root cause.
+```
+
+**Incident response when a budget fires:**
+
+```
+$0.01 fired   → Telegram alert "AWS billing began"
+                Open Cost Explorer, identify the service.
+                Likely just expected post-12-month S3 storage.
+                No action needed unless unexpected.
+
+$0.50 fired   → Telegram alarm "AWS billing exceeded $0.50 warning"
+                Cost Explorer review mandatory within 24h.
+                If runaway pattern: manually detach runtime policy
+                before the $1 budget does it automatically.
+
+$1.00 fired   → Bot stops. Telegram receives both the Budget Action
+                notification and the APPLY_FAILURE alarm shortly after.
+                MUST investigate root cause before re-attaching policy.
+                NEVER raise the cap. Likely causes: bug looping
+                S3 writes, master_profile churn re-embedding everything,
+                someone got the AWS keys.
+```
+
+**Verification before going live:**
+
+```
+1. Manually trigger the $0.01 path: lower the budget to $0.001, wait
+   for actual usage to cross it, confirm Telegram delivery.
+2. Manually trigger the kill switch: lower the $1 budget to $0.01
+   temporarily, confirm IAM policy gets detached, re-attach manually,
+   reset budget to $1.
+3. Document the manual policy re-attach steps in README.md so you
+   can recover the bot at 3am without thinking.
+```
+
+### 5.6 Failure handling for AWS dependency
 
 ```
 S3 transient failure   → retry 3x with exponential backoff
