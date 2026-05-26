@@ -44,6 +44,14 @@ structlog==24.4.0
 pyyaml==6.0.2
 python-dotenv==1.0.1
 
+# --- AWS (S3 + CloudWatch + IAM) --------------------------------------------
+# boto3:      runtime SDK (Iteration 0.1+ for aws_check, Iteration 2+ for S3)
+# watchtower: structlog → CloudWatch handler (Iteration 3+)
+boto3==1.35.76
+watchtower==3.3.1
+
 # --- Testing ----------------------------------------------------------------
 pytest==8.3.4
 pytest-asyncio==0.24.0
+# moto: mock boto3 in unit tests (CLAUDE.md testing strategy)
+moto[s3,cloudwatch,logs]==5.0.22

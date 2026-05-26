@@ -9,6 +9,17 @@ and this project loosely tracks iterations rather than semver.
 
 ---
 
+## [Iteration 0.1] — 2026-05-26
+
+### Added
+- `.env.example`: added AWS section (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION=ap-south-1`, `AWS_S3_BUCKET`, `AWS_CLOUDWATCH_LOG_GROUP=/job-bot/runtime`, `AWS_CLOUDWATCH_NAMESPACE=JobBot`) so contributors can mirror the spec's AWS requirements. Defaults match CLAUDE.md hard rules #11, #18, #19.
+- `src/cli/aws_check.py`: real implementation of the AWS connectivity verifier (replaces no-op stub). Exercises the minimal-permission set from CLAUDE.md hard rule #19: S3 put/get/delete on the bot bucket, CloudWatch CreateLogStream + PutLogEvents on the bot log group, CloudWatch PutMetricData on the bot namespace, plus a negative IAM check that fails the run if the runtime user can call `iam:ListUsers` (proves no privilege escalation surface). Loads config from `.env` via python-dotenv. Exit 0 on all-pass, 1 on any failure.
+
+### Changed
+- `requirements.txt`: added `boto3==1.35.76` and `watchtower==3.3.1` (AWS SDK + CloudWatch log handler) and `moto[s3,cloudwatch,logs]==5.0.22` (test-time AWS mocking, per CLAUDE.md testing strategy).
+
+---
+
 ## [Iteration 0.0.2] — 2026-05-25
 
 ### Changed
