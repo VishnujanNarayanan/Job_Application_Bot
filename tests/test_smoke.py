@@ -149,9 +149,8 @@ def test_master_profile_stub_importable() -> None:
     assert MasterProfile is not None
 
 
-def test_main_raises_not_implemented() -> None:
-    """src.main.main() must raise NotImplementedError in Iteration 0."""
-    import pytest
+def test_main_importable() -> None:
+    """src.main.main() must be importable. Behaviour is tested in
+    tests/test_iteration_1.py — it now drives the real pipeline."""
     from src.main import main
-    with pytest.raises(NotImplementedError):
-        main()
+    assert callable(main)
