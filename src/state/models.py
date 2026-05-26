@@ -1,1 +1,289 @@
-"""Layer 7 — SQLAlchemy 2.0 ORM models for all DB tables. Iteration 0 stub."""
+"""Layer 7 — SQLAlchemy 2.0 ORM models for every Postgres table.
+
+Tables and indexes mirror architecture doc Section 7.3 exactly. Vector
+columns are ``pgvector`` ``vector(384)`` (matches the all-MiniLM-L6-v2
+embedding dimension); ivfflat cosine indexes are created in the Alembic
+migration alongside the tables.
+
+Iteration 1: synchronous SQLAlchemy. Async session swap is planned for
+Iteration 2 when Gemini-parallelism and submission concurrency arrive.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    """Common declarative base for every table."""
+
+
+EMBEDDING_DIM = 384
+
+
+# ---------------------------------------------------------------------------
+# Scraped + outcome tables
+# ---------------------------------------------------------------------------
+
+
+class AllJobs(Base):
+    __tablename__ = "all_jobs"
+
+    job_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    company: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    site: Mapped[str] = mapped_column(Text, nullable=False)
+    location: Mapped[str | None] = mapped_column(Text)
+    job_url: Mapped[str | None] = mapped_column(Text)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scraped_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    jd_text: Mapped[str | None] = mapped_column(Text)
+    required_skills: Mapped[Any | None] = mapped_column(JSONB)
+    nice_to_have: Mapped[Any | None] = mapped_column(JSONB)
+    responsibilities: Mapped[Any | None] = mapped_column(JSONB)
+    role_summary: Mapped[str | None] = mapped_column(Text)
+    team_or_product: Mapped[str | None] = mapped_column(Text)
+    years_required: Mapped[int | None] = mapped_column(Integer)
+    role_level: Mapped[str | None] = mapped_column(Text)
+    role_category: Mapped[str | None] = mapped_column(Text)
+    job_type: Mapped[str | None] = mapped_column(Text)
+    location_type: Mapped[str | None] = mapped_column(Text)
+    salary_min_lpa: Mapped[float | None] = mapped_column(Float)
+    salary_max_lpa: Mapped[float | None] = mapped_column(Float)
+    salary_currency: Mapped[str | None] = mapped_column(Text)
+    outcome: Mapped[str | None] = mapped_column(Text)
+    outcome_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("idx_all_jobs_scraped", scraped_at.desc()),
+        Index("idx_all_jobs_outcome", "outcome"),
+        Index(
+            "idx_all_jobs_skills",
+            "required_skills",
+            postgresql_using="gin",
+        ),
+    )
+
+
+class Applied(Base):
+    __tablename__ = "applied"
+
+    job_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("all_jobs.job_id"), primary_key=True
+    )
+    apply_type: Mapped[str | None] = mapped_column(Text)
+    resume_s3_uri: Mapped[str | None] = mapped_column(Text)
+    resume_s3_key: Mapped[str | None] = mapped_column(Text)
+    cover_letter_text: Mapped[str | None] = mapped_column(Text)
+    cover_letter_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    cover_letter_s3_uri: Mapped[str | None] = mapped_column(Text)
+    selection_json: Mapped[Any | None] = mapped_column(JSONB)
+    expected_salary_lpa: Mapped[float | None] = mapped_column(Float)
+    fit_score: Mapped[float | None] = mapped_column(Float)
+    success_prob: Mapped[float | None] = mapped_column(Float)
+    recency_score: Mapped[float | None] = mapped_column(Float)
+    final_score: Mapped[float | None] = mapped_column(Float)
+    gap_skills: Mapped[Any | None] = mapped_column(JSONB)
+    application_status: Mapped[str | None] = mapped_column(Text)
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class NotApplied(Base):
+    __tablename__ = "not_applied"
+
+    job_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("all_jobs.job_id"), primary_key=True
+    )
+    reason_category: Mapped[str] = mapped_column(Text, nullable=False)
+    reason_detail: Mapped[str | None] = mapped_column(Text)
+    fit_score: Mapped[float | None] = mapped_column(Float)
+    success_prob: Mapped[float | None] = mapped_column(Float)
+    recency_score: Mapped[float | None] = mapped_column(Float)
+    final_score: Mapped[float | None] = mapped_column(Float)
+    gap_skills: Mapped[Any | None] = mapped_column(JSONB)
+    in_field: Mapped[bool | None] = mapped_column(Boolean)
+    not_applied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Queues
+# ---------------------------------------------------------------------------
+
+
+class ApplicationQueue(Base):
+    __tablename__ = "application_queue"
+
+    job_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("all_jobs.job_id"), primary_key=True
+    )
+    final_score: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str | None] = mapped_column(Text)
+    queued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("idx_queue_status", "status", "expires_at"),)
+
+
+class ProcessingQueue(Base):
+    __tablename__ = "processing_queue"
+
+    job_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("all_jobs.job_id"), primary_key=True
+    )
+    status: Mapped[str | None] = mapped_column(Text)
+    queued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Master profile (NEVER hard-deleted)
+# ---------------------------------------------------------------------------
+
+
+class MasterBullets(Base):
+    __tablename__ = "master_bullets"
+
+    bullet_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    parent_id: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_type: Mapped[str] = mapped_column(Text, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[Any | None] = mapped_column(JSONB)
+    embedding: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("idx_bullets_parent", "parent_id", "parent_type"),
+        Index("idx_bullets_active", "is_active"),
+    )
+
+
+class MasterSummaries(Base):
+    __tablename__ = "master_summaries"
+
+    summary_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[Any | None] = mapped_column(JSONB)
+    role_categories: Mapped[Any | None] = mapped_column(JSONB)
+    embedding: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class MasterTitleAliases(Base):
+    __tablename__ = "master_title_aliases"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    parent_id: Mapped[str] = mapped_column(Text, nullable=False)
+    alias: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    __table_args__ = (Index("idx_aliases_parent", "parent_id"),)
+
+
+class MasterMeta(Base):
+    __tablename__ = "master_meta"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text)
+
+
+# ---------------------------------------------------------------------------
+# Runtime / housekeeping
+# ---------------------------------------------------------------------------
+
+
+class SearchRotationState(Base):
+    __tablename__ = "search_rotation_state"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str | None] = mapped_column(Text)
+
+
+class AnswerBank(Base):
+    __tablename__ = "answer_bank"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    question_patterns: Mapped[Any | None] = mapped_column(JSONB)
+    jd_contexts: Mapped[Any | None] = mapped_column(JSONB)
+    answer: Mapped[str | None] = mapped_column(Text)
+    approved_by_user: Mapped[bool] = mapped_column(Boolean, default=False)
+    times_used: Mapped[int] = mapped_column(Integer, default=0)
+    last_used: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class PendingReview(Base):
+    __tablename__ = "pending_review"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    job_id: Mapped[str | None] = mapped_column(Text)
+    company: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str | None] = mapped_column(Text)
+    question_text: Mapped[str | None] = mapped_column(Text)
+    question_category: Mapped[int | None] = mapped_column(Integer)
+    bank_match_id: Mapped[str | None] = mapped_column(Text)
+    bank_match_score: Mapped[float | None] = mapped_column(Float)
+    gemini_draft: Mapped[str | None] = mapped_column(Text)
+    user_answer: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PortalHealth(Base):
+    __tablename__ = "portal_health"
+
+    site: Mapped[str] = mapped_column(Text, primary_key=True)
+    last_run: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result_count: Mapped[int | None] = mapped_column(Integer)
+    consecutive_zeros: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class CompanyCooldown(Base):
+    __tablename__ = "company_cooldown"
+
+    company: Mapped[str] = mapped_column(Text, primary_key=True)
+    last_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

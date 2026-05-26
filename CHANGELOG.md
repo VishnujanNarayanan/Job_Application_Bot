@@ -9,6 +9,29 @@ and this project loosely tracks iterations rather than semver.
 
 ---
 
+## [Iteration 1] — 2026-05-26
+
+### Added
+- Layer 7: 13-table SQLAlchemy 2.0 schema in `src/state/models.py` (`all_jobs`, `applied`, `not_applied`, `application_queue`, `processing_queue`, `master_bullets`, `master_summaries`, `master_title_aliases`, `master_meta`, `search_rotation_state`, `answer_bank`, `pending_review`, `portal_health`, `company_cooldown`).
+- Layer 7: `src/state/db.py` — synchronous SQLAlchemy engine and `session_scope()` context manager. Reads pool config from `config/config.yaml`, rewrites `postgresql://` to `postgresql+psycopg://` so psycopg3 is used.
+- Layer 7: Alembic scaffold — `alembic.ini`, `src/state/migrations/env.py`, `script.py.mako`, and initial migration `0001_initial_schema.py` creating all 13 tables. Loads `DATABASE_URL` from `.env` via python-dotenv.
+- Layer 2: `src/scraper/jobspy_wrapper.py` returns 3 stub `AllJobs` rows so the rest of the pipeline runs end-to-end (real JobSpy lands in iter 2).
+- Layer 3: `src/parser.py` wires Gemini Call 1a — returns a real `JDParsed` per scraped job and `apply_to_row()` to populate AllJobs fields.
+- Layer 4: `src/scorer/apply_decision.py` — `decide()` returns LOW_SCORE while `master_bullets` is empty (iter 1 reject-all behaviour).
+- Layer 8: `src/notifications.py` — `send_dry_run_summary()` sends a Telegram message at end of run.
+- LLM schema: `src/llm/schemas.py` adds `JDParsed` (Instructor-enforced Pydantic model) for Gemini Call 1a.
+- Orchestrator: `src/main.py` wires Layers 2/3/4/7/8 end-to-end with structlog JSON output to stderr; `--dry-run` flag default for iter 1.
+- Tests: `tests/test_iteration_1.py` adds 8 offline tests covering scraper, parser, scorer stubs, and model importability (DB and Telegram mocked).
+- `TODO.md` at repo root for tracking deferred issues separate from the changelog.
+
+### Changed
+- `tests/test_smoke.py`: `test_main_raises_not_implemented` → `test_main_importable` — `src.main.main()` now drives the real pipeline instead of raising.
+
+### Fixed
+- `src/main.py`: raised `httpx` and `httpcore` loggers to WARNING in `_configure_logging()` so `python-telegram-bot`'s underlying HTTP client no longer logs the full request URL (which embeds the bot token) at INFO. Prevents token leakage into stderr and, once watchtower is wired in iter 3, into CloudWatch.
+
+---
+
 ## [Iteration 0.1] — 2026-05-26
 
 ### Added
