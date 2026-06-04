@@ -1,189 +1,201 @@
 # CLAUDE.md — Instructions for AI Assistants Working on This Project
 
-This file is the canonical context for any AI assistant collaborating on this codebase. Read this FIRST before suggesting or writing any code.
+Canonical context for any AI assistant on this codebase. Read this FIRST.
+
+---
+
+## ⚠ Migration Note — the design pivoted after Iteration 1
+
+You (or a previous agent) built Iterations 0-1 against an EARLIER design that **auto-applied to jobs via Playwright**. That approach is gone. Read this before doing anything in Iteration 2.
+
+```
+OLD (Iterations 0-1 built stubs for this)      NEW (build toward this)
+─────────────────────────────────────────      ──────────────────────────────
+auto-apply via Playwright                  →    user applies manually; bot
+                                                hands them a tailored resume
+store rendered PDFs in S3                   →    store ~2 KB selection_json in
+                                                Postgres; render PDF/DOCX on
+                                                demand via an endpoint
+no LinkedIn (account-ban risk)              →    LinkedIn back as a LISTINGS
+                                                source (JobSpy reads public
+                                                listings; never logs into or
+                                                acts on the user's account —
+                                                so no account-ban risk)
+cycle quotas (3 peak / 1 off-peak)          →    notify on EVERY match >= 0.50
+4-category form questions, answer bank,     →    all removed
+salary auto-fill, anti-AI form voice,
+Gemini Call 2
+2-3 Gemini calls/job                        →    max 2 calls/job
+```
+
+### Cleanup to do FIRST in Iteration 2 (remove obsolete Iteration-1 stubs)
+
+```
+DELETE:
+  - src/sender/ entirely (Playwright, fields, questions, bank,
+    cover_letter form logic, voice-for-form-answers)
+  - Gemini Call 2 stub + references
+  - cycle-quota / top-N picking in the scorer
+
+DROP (write a migration to remove if already created):
+  - answer_bank table
+  - pending_review table
+  - application_queue table
+
+KEEP / ADAPT:
+  - Layers 1-4 stubs → make real (add LinkedIn to scraper sources)
+  - Layer 5 → output selection_json, NOT a stored PDF
+  - Layer 7 → drop the 3 tables above; add render_cache table;
+    add jd_embedding + near_duplicate_of columns to all_jobs
+  - Layer 8 → bundle apply-link + resume-link in the notification
+  - Layer 9 → resume links point to the new endpoint
+
+ADD (new in the pivot):
+  - src/endpoint/ — FastAPI app serving /resume/{job_id}.pdf|.docx
+    (this is where the DOCX assembler + PDF conversion now live)
+  - src/scraper/dedup.py — near-duplicate JD detection (cosine > 0.95)
+  - render_cache (S3-backed, 1-month TTL)
+```
+
+Update `CHANGELOG.md [Unreleased]` with all removals and additions as you make them.
+
+The rest of this file describes the **target state**. Don't dwell on the history — build toward target.
 
 ---
 
 ## What this project is
 
-A fully autonomous job application bot for **Vishnujan Narayanan**. It scrapes Indian job portals (Indeed, Glassdoor), scores listings, builds a custom-tailored resume per JD from a master profile, submits applications automatically, and uses AWS (S3, CloudWatch, IAM) for storage and observability — all on $0/month free infrastructure.
+A personal job-application assistant for **Vishnujan Narayanan**. It scrapes Indian job listings (Indeed, Glassdoor, LinkedIn), scores them, builds a tailored resume (as a compact selection) per match, and notifies the user with apply + resume links bundled. The user applies manually. Resumes render on demand from a FastAPI endpoint. $0/month.
 
-**Read these in order before doing anything:**
+**The core value is the JD → tailored-resume engine.**
 
-1. `PRD.md` — what this product is and isn't
-2. `job_automation_architecture.md` — full 9-layer architecture (source of truth)
-3. This file — practical conventions when writing code
+Read in order: `PRD.md`, `job_automation_architecture.md`, this file.
 
-**Current build status:** Iteration 0 (scaffold) is complete. Iteration 0.1 (AWS preparation) is the next step before Iteration 1 begins.
+**Build status:** Iterations 0-1 done (old design). Iteration 2 = pivot cleanup + real data flow.
 
 ---
 
 ## Hard rules — never violate these
 
 ### 1. The LLM never writes or selects bullet content
-Every bullet on every resume comes verbatim from `master_profile.yaml`. The LLM's only jobs are: pick a title alias from an allow-list, name 3 skill categories and assign skills from pre-scored candidates, pick Familiar With gap skills, write cover letter text, and answer form questions. Bullet selection is done by sentence-transformers scoring, not the LLM. Skill candidates are picked by deterministic scoring before the LLM ever sees them.
+Bullets come verbatim from `master_profile.yaml`. The LLM only: picks a title alias from an allow-list, names 3 skill categories and assigns skills from pre-scored candidates, picks Familiar With gaps, writes cover letter text. Bullet selection is sentence-transformers math.
 
 ### 2. master_profile.yaml is the single source of truth
-All work, projects, bullets, summaries, skills, education, and certifications live in `master_profile.yaml` (gitignored). The system reads it, never writes to it. The user edits it manually.
+Read it, never write it. The user edits it.
 
-### 3. No LinkedIn — ever
-LinkedIn scraping or auto-apply is forbidden. The user's main account uses LinkedIn and ban risk is unacceptable. Don't add LinkedIn code paths even "just in case."
+### 3. Never auto-apply or act on the user's accounts
+The system does NOT submit applications, fill forms, answer screening questions, or take any automated action on any portal account. It delivers a resume + apply link; the user applies. (This is the core of the pivot — do not reintroduce auto-apply.)
 
-### 4. No fabrication anywhere
-LLM-generated content must reference only what exists in master profile text. Post-generation validation checks tech names and numbers against master profile. Regenerate up to 2x; if still failing, raise BUILD_FAILURE.
+### 4. LinkedIn is listings-only
+JobSpy may read public LinkedIn listings. It must NEVER log into or act on the user's LinkedIn account. The risk that matters (account ban) comes from automated account actions — which we don't do. Scraper-IP throttling is an acceptable, recoverable infrastructure risk.
 
-### 5. Job titles come only from safe_title_aliases
-Each experience has a `safe_title_aliases` allow-list. The LLM picks the best match per JD, enforced via `Literal[tuple(safe_title_aliases)]`. Physically cannot return an unlisted title.
+### 5. No fabrication
+LLM content references only what's in master profile text. Post-gen validation checks tech + numbers; regenerate up to 2x; else BUILD_FAILURE.
 
-### 6. Skills come only from skills_pool and identified gaps
-Deterministic scoring picks the top-14 pool skill candidates and identifies all JD gap skills. The LLM then names 3 categories with 3-5 skills each (drawn from the candidates) and picks up to 4 Familiar With gap skills. Total displayed: 10-14 pool skills + 0-4 gap skills. Distribution is flexible — the LLM optimizes for clean semantic grouping, not for hitting fixed counts. Familiar With is treated as a 4th category and ordered against the others by aggregate match score (NOT pinned to first position). Post-validation enforces source-set membership and regenerates on violation.
+### 6. Job titles only from safe_title_aliases
+Enforced via `Literal[tuple(safe_title_aliases)]`.
 
-### 7. Built resumes are diff-validated
-After assembly, a diff check confirms only permitted regions changed. Any unexpected change → BUILD_FAILURE.
+### 7. Skills only from skills_pool (and gaps for Familiar With)
+Deterministic scoring picks top-14 pool candidates. LLM names 3 categories with 3-5 skills each from candidates + up to 4 Familiar With gap skills. Total 10-14 pool + 0-4 gaps. Flexible distribution, optimized for grouping. Familiar With ordered against the other 3 by aggregate match (NOT pinned first). Post-validation enforces source-set membership.
 
-### 8. Header is never modified
-The DOCX assembler MUST NOT touch any paragraph before the first "WORK EXPERIENCE" Heading1. The header contains embedded hyperlinks (GitHub, LinkedIn, Certificates) that must survive every build untouched.
+### 8. Resumes are rendered on demand, not stored as PDFs at build time
+Layer 5 writes `selection_json` (~2 KB). The endpoint renders PDF/DOCX when the user clicks. Don't store rendered PDFs at build time. Don't build a permanent PDF pile.
 
-### 9. Hyperlink integrity on cloned blocks
-Project and certificate hyperlinks MUST be updated by modifying the relationship file (`word/_rels/document.xml.rels`) to point to URLs from master_profile. Visible link text ("Code →", "Verify Here") MUST remain unchanged.
+### 9. Diff-validate every render
+On render, a diff check confirms only permitted regions changed. Any unexpected change → BUILD_FAILURE.
 
-### 10. No double submissions
-On submission failure, retry exactly once. Never twice. Duplicate applications are worse than a missed one.
+### 10. Header is never modified
+The assembler must not touch any paragraph before the first "WORK EXPERIENCE" Heading1 (preserves embedded GitHub/LinkedIn/Certificates hyperlinks).
 
-### 11. Free tier only — with hard billing caps
-Every service must be on a free tier. **Honest caveat:** S3's 5GB free tier is 12-month, not always-free. After AWS account turns 1 year old, S3 storage costs ~$0.025/GB-month in `ap-south-1` (projects to ~$0.30/year for the bot's ~1GB footprint). Everything else is always-free.
+### 11. Hyperlink integrity on cloned blocks
+Update project ("Code →") and certificate ("Verify Here") hyperlink targets via `r:id` in `word/_rels/document.xml.rels`; visible text unchanged.
 
-**Always-free:** Neon PostgreSQL (3GB), Oracle Cloud Always Free VM (200GB), Gemini 2.0 Flash (1500 calls/day), Telegram Bot API, Google Sheets/Docs API, AWS IAM, AWS CloudWatch (5GB ingest/month), AWS SQS (1M requests/month), AWS Budgets (first 2), AWS billing alarms, AWS Lambda (1M invocations/month — used only for tiny billing-alert function).
+### 12. Free tier only — including AWS
+Neon (3GB), Oracle Cloud Always Free VM (200GB), Gemini 2.0 Flash (1500/day), Telegram, Google Sheets/Docs, AWS S3 (5GB), CloudWatch (5GB/month), IAM, SQS (1M/month). Forbidden (cost money): RDS, Lambda for runtime, ECS, Fargate, EKS, EventBridge as scheduler, SNS. (One tiny ping-Telegram Lambda for CloudWatch alarms is the sole acceptable Lambda use.)
 
-**Conditionally free (12-month tier, then cents/year):** AWS S3 (5GB for 12 months, then ~$0.025/GB-month).
+### 13. Gemini call budget — 2 calls max per job
+Call 1a (parse, always), Call 1b (title + skills + cover letter, if score >= 0.50). No Call 2 (form questions are gone). Don't add a third.
 
-**Mandatory billing safeguards — MUST exist before any S3 / CloudWatch resource is created:**
-1. AWS Budget at **$0.01/month** (any-charge tripwire) → email + Telegram
-2. AWS Budget at **$1/month** with **Budget Action** that auto-detaches `job-bot-runtime-policy` from `job-bot-runtime` — this physically stops the bot from making S3 writes, capping further growth
-3. CloudWatch billing alarm at **$0.50/month** in `us-east-1` (where billing metrics live) → SNS → Lambda → Telegram early warning
-4. Cost Explorer enabled for monthly review
+### 14. Notify on every match — no quotas
+Every job >= 0.50 builds a selection and triggers a notification. No top-N picking, no application_queue, no decay (those rationed auto-applications, which are gone).
 
-If a Budget Action fires, the bot stops on its own. The response is to investigate root cause, NEVER to raise the cap. Expected steady-state: $0/month first year, then under $0.05/month.
+### 15. Near-duplicate dedup
+Before notifying, if a JD's embedding is > 0.95 cosine to an already-notified job, mark NEAR_DUPLICATE, link to the original, skip. Prevents double-notifying cross-portal reposts.
 
-**Explicitly forbidden (cost money from day 1):** RDS, Lambda for runtime workloads (a tiny billing-alert Lambda is fine — under 100 invocations/year), ECS, Fargate, EKS, EventBridge as primary scheduler, SNS as the user-facing notification channel (Telegram is). SNS is allowed only as the bridge from a billing alarm to the Lambda that pings Telegram.
+### 16. Interview integrity is non-negotiable
+The user must defend every word on every resume. Reject anything that changes what they can't speak to, even if it raises match scores.
 
-### 12. Gemini call budget — 3 calls max per job
-Call 1a (parse, always), Call 1b (title + skills + cover letter, if score passes AND picked for application), Call 2 (batched form questions, if needed). Don't add a 4th. New LLM needs get bundled into an existing call.
-
-Queued jobs do NOT trigger Call 1b until they're picked.
-
-### 13. Cycle-aware application picking
-At end of each run: pick top N from {new eligible jobs + active queue}, sort by `final_score`. N=3 during 8-11am IST, N=1 otherwise. Unpicked eligible jobs go to `application_queue` with 12-hour expiry.
-
-### 14. Queue decay
-`application_queue` entries expire 12 hours after `queued_at`. Expired entries move to `not_applied` with reason `STALE`.
-
-### 15. Interview integrity is non-negotiable
-The user must be able to defend every word on every submitted resume. Any feature that changes something the user can't speak to in an interview is rejected, even if it improves match scores.
-
-### 16. Every submitted resume is kept forever in S3
-Resumes upload to `s3://{bucket}/resumes/applied/{job_id}_{timestamp}.{ext}` with versioning enabled. NEVER auto-deleted. The `applied` table stores `resume_s3_uri` + a full `selection_json` snapshot. The audit trail must always resolve via presigned URLs.
-
-### 17. Bullets are never hard-deleted
-When a bullet is removed from `master_profile.yaml`, the `master_bullets` row is marked `is_active=false`. Same for `master_summaries` and `master_title_aliases`.
+### 17. Selections are permanent; bullets never hard-deleted
+`applied.selection_json` is the durable per-job artifact. Removing a bullet from the YAML sets `master_bullets.is_active=false` (same for summaries, title aliases) — never a hard delete, so old selections always resolve.
 
 ### 18. AWS credentials never in code
-AWS access keys MUST live in `.env` (gitignored). Use `boto3.Session()` reading from environment. Never hardcode keys, never commit `.env`. Rotate quarterly.
+AWS keys in `.env` only (gitignored). `boto3.Session()` reads from env. Rotate quarterly.
 
 ### 19. AWS IAM minimal permissions
-The runtime IAM user/role MUST have only: `s3:PutObject`, `s3:GetObject`, `s3:DeleteObject` on the bot's bucket, `logs:CreateLogStream`, `logs:PutLogEvents`, `cloudwatch:PutMetricData` on the bot's namespace. NO bucket-level operations. NO other AWS services.
+Only `s3:PutObject/GetObject/DeleteObject` on the bot's bucket and `logs:CreateLogStream/PutLogEvents` + `cloudwatch:PutMetricData` on the bot's namespace. No bucket-level ops, no other services.
 
-### 20. CHANGELOG.md must reflect every code-affecting change
-The repo has `CHANGELOG.md` at the root. Every code, schema, config, or spec change MUST be reflected in `[Unreleased]` before the user pushes. See "Changelog discipline" section below.
+### 20. CHANGELOG.md reflects every code-affecting change
+Append to `[Unreleased]` in the same session as any change. See Changelog discipline below.
+
+### 21. Instance-ready — no hardcoded operator identity
+The system runs as a single-operator tool but MUST be runnable by anyone else as an independent instance with zero code edits. No operator-specific literal (name, email, filename, region) may appear in source — all of it comes from `config.yaml`, `.env`, `master_profile.yaml`, `resumes/templates/`. Resume/cover filenames are derived from `operator.full_name` in config, never hardcoded. This is NOT multi-tenant SaaS: do NOT add `user_id` columns, authentication, accounts, or tenant isolation. One instance = one operator. Keep code modular so a future SaaS is possible, but don't build it.
 
 ---
 
 ## Architecture quick reference
 
 ```
-LAYER 1   Scheduler              Oracle Cloud cron (iter 5+), local (1-4)
-LAYER 2   Scraper                JobSpy (Indeed iter 1+, Glassdoor iter 4)
-LAYER 3   JD Parser              Gemini Call 1a — ALWAYS runs
-LAYER 4   Scoring Engine         Master profile selection + cycle picking
-LAYER 5   Resume Builder         Gemini Call 1b + S3 upload (iter 2+)
-LAYER 6   Application Sender     Gemini Call 2 + S3 download for upload
-LAYER 7   State                  Neon (Postgres+pgvector) + AWS S3 (iter 2+)
-LAYER 8   Notifications          Telegram + CloudWatch alarms (iter 3+)
-LAYER 9   Analytics              Sheets (presigned URLs) + Docs
+LAYER 1   Scheduler              cron (Oracle iter 5+, local 1-4)
+LAYER 2   Scraper                JobSpy: Indeed, Glassdoor, LinkedIn (listings)
+                                 + near-duplicate detection
+LAYER 3   JD Parser              Gemini Call 1a — ALWAYS
+LAYER 4   Scoring Engine         selection; notify every match >= 0.50
+LAYER 5   Resume Builder         Gemini Call 1b → selection_json (no PDF)
+LAYER 6   Application Assist     notification + FastAPI resume endpoint
+LAYER 7   State                  Neon (Postgres+pgvector) + S3 cache/backup
+LAYER 8   Notifications          Telegram (apply+resume links) + CloudWatch
+LAYER 9   Analytics              Sheets index + monthly Docs
 ```
 
 ### Selection rules — locked
 
 ```
-EXPERIENCE
-  score      = best_alias_score × 0.30 + top3_bullet_avg × 0.70
-  max 3, min 2, threshold 0.45
-  force-include strongest 2 if fewer pass
-  bullets: exactly 3 per experience, top by score
-  order: best-match at position 1 if match gap > 0.20, else recency
+EXPERIENCE  score = alias × 0.30 + top3_bullet_avg × 0.70
+            max 3, min 2, threshold 0.45, force-include 2
+            bullets: exactly 3, top by score
+            order: best-match at #1 if gap > 0.20 else recency
 
-PROJECT
-  score      = name_score × 0.20 + topN_bullet_avg × 0.80
-  N = bullets actually displayed (2 or 3)
-  max 3, min 2, threshold 0.50
-  force-include best 2 if fewer pass — section NEVER hidden
-  bullets: min 2, max 3, force-include best 2 if fewer pass
-  order: score-descending
+PROJECT     score = name × 0.20 + topN_bullet_avg × 0.80 (N = shown)
+            max 3, min 2, threshold 0.50, force-include 2, NEVER hidden
+            bullets: min 2, max 3, descending
 
-SUMMARY
-  selected from pre-written pool by JD match — NO LLM generation
+SUMMARY     deterministic pool selection by JD match — no LLM
 
-SKILLS
-  Step 1: deterministic scoring picks top-14 pool candidates by JD match
-  Step 2: deterministic scoring of all JD gap skills (not in pool)
-  Step 3: LLM names exactly 3 categories, assigns 3-5 skills each from
-          the 14 candidates. LLM also picks up to 4 Familiar With gap skills.
-  Step 4: deterministic ordering within each category by skill score
-  Step 5: ALL 4 categories (3 LLM-named + Familiar With) ordered by
-          aggregate match score, descending. Familiar With NOT pinned.
-  Flexibility: 10-14 pool skills total, 0-4 gap skills
+SKILLS      top-14 pool candidates → LLM names 3 categories (3-5 each) +
+            up to 4 Familiar With gaps → order skills within category →
+            order all 4 categories by aggregate match (Familiar With NOT pinned)
+            10-14 pool + 0-4 gaps, flexible
 
-SECTION ORDER
-  Summary (fixed) → Work Experience (fixed) →
-  [Skills / Projects ordered by match] → Education (fixed) →
-  Certifications (fixed, last)
+SECTION     Summary → Work → [Skills/Projects by match] → Education → Certs
 
-FINAL SCORE
-  fit × 0.55 + success_prob × 0.30 + recency × 0.10 + project × 0.05
-  success_prob = seniority × 0.60 + recency × 0.40
-  Seniority: junior→1.0, mid→0.80, senior→0.40, lead→0.15
-  apply threshold: final_score >= 0.50
+FINAL       fit × 0.55 + success_prob × 0.30 + recency × 0.10 + project × 0.05
+            success_prob = seniority × 0.60 + recency × 0.40
+            seniority: junior 1.0, mid 0.80, senior 0.40, lead 0.15
+            match threshold: >= 0.50 → build + notify
 ```
 
-### Application picking — cycle-aware
+### Operator config — all from config.yaml/.env/master_profile (instance-ready)
 
 ```
-Each run, after scoring:
-  N = 3 if 8am <= now < 11am IST else 1
-  Combine new eligible (>= 0.50) with active queue
-  Sort by final_score, descending
-  Pick top N → Layer 5
-  Unpicked → application_queue (expires_at = now + 12h)
-```
+Operator: (config.operator.full_name) | Experience: (config) | Fulltime only
+Years ceiling: 5 | Disallowed: Delhi NCR | Visa: no filter      (all config)
+Expected salary: JD upper bound else default (config) — informational only
+Familiar With max: 4 | Company cooldown: 10 days               (all config)
+Sources: Indeed, Glassdoor, LinkedIn (listings only) | Naukri: Iteration 6
 
-### Personal config locked
-
-```
-User:                  Vishnujan Narayanan
-Experience:            1.5 years
-Years required ceiling: 5
-Job type:              Fulltime only
-Location:              All allowed except Delhi NCR (Delhi, Gurgaon,
-                       Gurugram, Noida, Ghaziabad, Faridabad)
-Visa:                  No filter (open to international)
-Expected salary:       JD upper bound if specified, else 6 LPA
-Current salary:        100000 numeric / strategic redirect text
-Upload filename:       Vishnujan_Narayanan_Resume.pdf
-Cover filename:        Vishnujan_Narayanan_Cover_Letter.pdf
-Familiar With max:     4 adjacent-domain skills
-Unknown question mode: Safe (hold for review)
-Company blocklist:     None
-Company cooldown:      10 days
+Current operator values are Vishnujan's, but they live in config, NOT in
+source. No operator name/email/filename literal in src/. Resume filename
+derived: "{operator.full_name→underscores}_Resume.pdf".
 ```
 
 ---
@@ -191,504 +203,242 @@ Company cooldown:      10 days
 ## Tech stack
 
 ```
-Language          Python 3.11+
-Scraping          JobSpy (Indeed, Glassdoor)
-Browser           Playwright
-NLP validation    spaCy
-Embeddings        sentence-transformers (all-MiniLM-L6-v2)
-LLM               Gemini 2.0 Flash via Instructor (Pydantic-enforced)
-Database          PostgreSQL (Neon) with pgvector
-DB driver         psycopg3
-ORM               SQLAlchemy 2.0
-Resume building   python-docx (template manipulation)
-PDF conversion    LibreOffice headless
-PDF rendering     reportlab
-Notifications     Telegram Bot API (python-telegram-bot)
-Reporting         gspread, Google Docs API
-Logging           structlog → watchtower → CloudWatch (iter 3+)
-AWS SDK           boto3
-File storage      AWS S3 (iter 2+)
-Region            ap-south-1 (Mumbai)
+Python 3.11+ · JobSpy (listings) · spaCy · sentence-transformers (all-MiniLM-L6-v2)
+Gemini 2.0 Flash via Instructor + Pydantic · PostgreSQL on Neon + pgvector
+psycopg3 · SQLAlchemy 2.0 · python-docx · LibreOffice headless · FastAPI (endpoint)
+boto3 · AWS S3 (cache+backup) · structlog → watchtower → CloudWatch
+Telegram Bot API · gspread + Google Docs API · Region ap-south-1
+NO Playwright (removed in pivot)
 ```
 
-### Why Instructor + Pydantic everywhere
+Every Gemini call returns a Pydantic model via Instructor. Never parse JSON from LLM strings manually.
 
-LLM outputs are unreliable without structure enforcement. Every Gemini call returns a Pydantic model. `max_length`, `Literal` types, and `Field` validators run at the API level — schema violations are physically impossible. Never parse JSON from LLM strings manually; use Instructor.
+---
+
+## The resume endpoint (Layer 6) — new center of gravity
+
+```
+FastAPI app on the Oracle VM.
+GET /resume/{job_id}.pdf
+GET /resume/{job_id}.docx
+
+  1. Check render_cache for {job_id}_{current_template_version}_{ext}
+  2. Hit (within 1-month TTL, template matches) → serve from S3
+  3. Miss:
+       load selection_json from applied
+       load current template
+       assemble DOCX (structural detection, Section 6.3 of arch doc)
+       if pdf: LibreOffice convert
+       upload to S3 cache (1-month expiry), record in render_cache
+       serve
+  4. If stored template_version != current → re-render against current
+
+~5s cold, instant cached. ~100 lines. Foundation for the optional
+Iteration 7 dashboard.
+```
+
+The DOCX assembler lives in `src/endpoint/assembler.py` now (was in the old builder). Header never touched; hyperlinks updated by r:id; tab stops/spacing/fonts/list-refs preserved via XML deep clone.
 
 ---
 
 ## AWS conventions
 
-### Region
-
-All AWS resources MUST live in `ap-south-1` (Mumbai). Don't create resources in other regions. Set `AWS_REGION=ap-south-1` in `.env` and let boto3 inherit from environment.
-
-### Credentials
+Region: `ap-south-1` only. Credentials via `boto3.Session()` from env — never hardcoded.
 
 ```python
-# Good — boto3 reads from environment
-import boto3
-session = boto3.Session()  # uses AWS_ACCESS_KEY_ID / SECRET / REGION
-s3 = session.client('s3')
+# S3 cache (endpoint)
+def cache_put(local_path, cache_key, ext):
+    s3.upload_file(local_path, settings.aws.s3_bucket, f"{ext}_cache/{cache_key}.{ext}")
 
-# Bad — hardcoded keys
-s3 = boto3.client('s3', aws_access_key_id='AKIA...', aws_secret_access_key='...')
+def cache_get(cache_key, ext) -> str | None:
+    # return s3 uri if exists and not expired (check render_cache table)
+
+# selection backup (daily)
+def backup_selections(date_str): ...   # export applied.selection_json to s3://.../backups/
+
+# CloudWatch via watchtower handler at startup (iter 3+)
 ```
 
-### S3 operations
-
-```python
-# Upload — used by Layer 5 after PDF generation
-def upload_resume(local_path: Path, job_id: str, ext: str) -> str:
-    key = f"resumes/applied/{job_id}_{timestamp()}.{ext}"
-    s3.upload_file(local_path, settings.aws.s3_bucket, key)
-    return f"s3://{settings.aws.s3_bucket}/{key}"
-
-# Download — used by Layer 6 before form upload
-def download_for_submission(s3_uri: str, target: Path):
-    key = s3_uri.replace(f"s3://{settings.aws.s3_bucket}/", "")
-    s3.download_file(settings.aws.s3_bucket, key, target)
-
-# Presigned URL — used by Layer 8 (Telegram) and Layer 9 (Sheets)
-def generate_presigned_url(s3_uri: str) -> str:
-    key = s3_uri.replace(f"s3://{settings.aws.s3_bucket}/", "")
-    return s3.generate_presigned_url(
-        'get_object',
-        Params={'Bucket': settings.aws.s3_bucket, 'Key': key},
-        ExpiresIn=settings.aws.presigned_url_expiry_seconds,
-    )
-```
-
-### CloudWatch logging
-
-Use `watchtower` as a structlog handler. Configure once at startup:
-
-```python
-import watchtower
-handler = watchtower.CloudWatchLogHandler(
-    log_group=settings.aws.cloudwatch_log_group,
-    stream_name=f"jobbot-{date.today().isoformat()}",
-)
-```
-
-Don't put a CloudWatch call inside the hot path — let watchtower batch.
-
-### CloudWatch alarms
-
-Configured via Terraform or AWS Console (one-time setup, not in code). Code's job: emit the right structured logs and metrics. Example metric filter:
-
-```
-Filter:  { $.event = "application_submitted" && $.outcome = "APPLY_FAILURE" }
-Metric:  ApplyFailureCount
-Alarm:   sum >= 3 over 24h → SNS topic → Lambda (ping Telegram)
-```
-
-The only Lambda we use is a tiny "ping-telegram-on-alarm" function (free tier covers this comfortably; 1M invocations/month free, we'd use < 100).
+CloudWatch alarms (configured once via console/Terraform, not code): metric filters on `BUILD_FAILURE`, endpoint 5xx, scraper zero-results → tiny ping-Telegram Lambda.
 
 ---
 
 ## Code conventions
 
-### Modularity
+Modularity: each layer its own module; Layer 4 selection is pure functions; all tunables in `config/config.yaml`, never hardcoded.
 
-Each layer is its own module with a clear input/output contract. Layer 4's selection algorithm is pure functions with no I/O. Configuration values live in `config/config.yaml`, never hardcoded.
+Async: FastAPI + Playwright-free endpoint async; DB async (SQLAlchemy 2.0); JobSpy sync (to_thread if needed); Gemini sync; sentence-transformers sync; boto3 sync.
 
-### Imports
+Error handling: specific exceptions, structured logging, no bare except.
 
-```python
-# Standard lib
-import asyncio
-from datetime import datetime
-from typing import Literal
-
-# Third-party
-from sqlalchemy import select
-from pydantic import BaseModel, Field
-import boto3
-
-# Local
-from src.state.models import AllJobs, Applied
-from src.llm.client import gemini_client
-from src.aws.s3 import upload_resume, generate_presigned_url
-```
-
-### Async vs sync
-
-- Playwright code: async
-- Database access: async with SQLAlchemy 2.0 async session
-- JobSpy: sync (asyncio.to_thread if needed)
-- Gemini calls: sync (Instructor is sync)
-- sentence-transformers: sync (local)
-- boto3: sync (boto3 is sync; for high-volume use aioboto3 — we don't need it)
-
-### Error handling
+Config: `config.yaml` for tunables, `.env` for secrets (API keys, DB URL, AWS keys).
 
 ```python
-# Good
-try:
-    result = await submit_application(page, job)
-except PlaywrightTimeoutError as e:
-    log.error("submission_timeout", job_id=job.id, error=str(e))
-    await state.mark_failed(job.id, reason="APPLY_FAILURE", detail=f"timeout: {e}")
-
-# Bad — bare except
-try:
-    result = await submit_application(page, job)
-except:
-    pass
-```
-
-### Configuration
-
-`config/config.yaml` is the source of truth. `.env` is ONLY for secrets (API keys, DATABASE_URL, AWS keys).
-
-```python
-# Good
 from src.config import settings
 threshold = settings.scoring.experience.threshold
 bucket = settings.aws.s3_bucket
-
-# Bad
-threshold = 0.45
-bucket = "job-bot-vishnujan-resumes"
 ```
 
----
-
-## DOCX assembler (Layer 5)
-
-Uses **structural detection** — no markers or template tags. Reads the template's Heading1 structure to identify sections, then clones the first sub-block within each variable section to use as a pattern.
-
-**Preservation guarantees:**
-
-- Header (before first Heading1): NEVER touched — preserves embedded hyperlinks
-- Paragraph properties (tab stops, spacing, indentation, alignment): inherited via XML deep clone
-- Font, size, color, bold, italic: preserved per run
-- Native bullet list references (`<w:numPr>` with `numId`): preserved
-- Project hyperlinks: `r:id` target in relationships file updated to `project.link`, visible "Code →" text unchanged
-- Certificate hyperlinks: `r:id` target updated to `cert.verify_link`, visible "Verify Here" text unchanged
-
-After assembly, upload both DOCX and PDF to S3.
+Pydantic schemas centralized in `src/llm/schemas.py`.
 
 ---
 
 ## The master profile rebuild
 
-`src/state/master_profile.py` owns the rebuild logic:
-
-```
-On every bot run, check master_profile.yaml mtime against master_meta.
-If changed:
-  1. Validate YAML schema (Telegram alert if invalid)
-  2. Generate master_profile.json
-  3. Diff against DB:
-     - new bullets       → embed + insert (is_active=true)
-     - changed bullets   → re-embed + update
-     - removed bullets   → set is_active=false
-     - same for summaries, title aliases
-  4. Update master_meta timestamps
-```
-
-Never hard-delete. Deactivate only.
+`src/state/master_profile.py`: on mtime change → validate → JSON → diff against DB (embed/upsert new+changed, deactivate removed) → update master_meta. Never hard-delete; deactivate only.
 
 ---
 
 ## Logging
 
-Use structlog. From Iteration 3+, structlog ships to CloudWatch via watchtower.
+structlog; ships to CloudWatch via watchtower from Iteration 3+. Critical event names (CloudWatch metric filters depend on them):
 
-```python
-log.info("gemini_call_1a", job_id=job.id, tokens=850, latency_ms=1200)
-log.info("resume_built", job_id=job.id, experiences=3, projects=2)
-log.info("resume_uploaded_to_s3", job_id=job.id, s3_uri=uri, size_kb=size)
-log.info("application_submitted", job_id=job.id, portal="indeed", score=0.81)
-log.error("APPLY_FAILURE", job_id=job.id, portal="indeed", reason="upload_failed")
+```
+BUILD_FAILURE        resume selection build failed
+render_failed        endpoint failed to render
+near_duplicate       JD deduped against an existing job
+gemini_failure       LLM call failed
+s3_cache_failed      cache write failed
+master_profile_validation_failure
 ```
 
-Critical events to log (CloudWatch metric filters depend on these names):
-- `APPLY_FAILURE` — submission failed
-- `BUILD_FAILURE` — resume build failed
-- `MANUAL_REQUIRED` — needs user intervention
-- `session_expired` — portal session dead
-- `s3_upload_failed` — S3 connectivity issue
-- `gemini_failure` — LLM call failed
+```python
+log.info("match_found", job_id=j, score=0.78, source="linkedin")
+log.info("selection_built", job_id=j, experiences=3, projects=2)
+log.info("notification_sent", job_id=j)
+log.info("resume_rendered", job_id=j, fmt="pdf", cache="miss", ms=4800)
+```
 
 ---
 
 ## Testing strategy
 
-### Unit tests
-- Mock LLM client — never hit Gemini in tests
-- Mock database with in-memory SQLite or pytest fixture
-- Mock Playwright — don't launch browsers
-- Mock boto3 with `moto` library (free, popular AWS mocking)
-- Layer 4 selection algorithm is pure Python — test thoroughly with synthetic master profiles and JDs
+Unit: mock LLM client (never hit Gemini), mock DB (in-memory SQLite or fixture), mock boto3 with `moto`, FastAPI via `TestClient`. Layer 4 selection is pure Python — test thoroughly with synthetic profiles + JDs.
 
-### Integration tests
-- Real database (Neon test branch — free)
-- Real Gemini calls used sparingly
-- Real S3 against test bucket (`s3://job-bot-test-{user}/`)
-- Skip Playwright in CI; test manually in dev
+Integration: Neon test branch, sparing real Gemini, real S3 test bucket.
 
-### Dry-run mode
+Dry-run: orchestrator `--dry-run` scrapes/parses/scores/builds selections + sends notifications to a test chat, but the endpoint and links are real. Use for several days before trusting selections.
 
-The orchestrator MUST support `--dry-run`: scrape, parse, score, build, upload to S3, but never submit. Used Iteration 2-3 to verify selections before enabling auto-apply.
-
-### CLI debug commands
-
+CLI:
 ```bash
-python -m src.cli.inspect --job-id=XYZ        # show pipeline state per job
-python -m src.cli.dryrun                       # full pipeline without submission
-python -m src.cli.reparse                      # rebuild master profile from YAML
-python -m src.cli.queue                        # inspect application_queue
-python -m src.cli.aws_check                    # verify S3+IAM+CloudWatch connectivity
+python -m src.cli.inspect --job-id=XYZ     # pipeline state per job
+python -m src.cli.dryrun                    # full pipeline, test chat
+python -m src.cli.reparse                   # rebuild master profile
+python -m src.cli.render --job-id=XYZ       # force re-render a resume
+python -m src.cli.aws_check                 # verify S3 + IAM + CloudWatch
 ```
 
 ---
 
 ## Changelog discipline
 
-The repo has `CHANGELOG.md` at the root. Every code-affecting change MUST be recorded there before the user pushes to git.
+`CHANGELOG.md` at root, Keep a Changelog format. Sections: `Added`, `Changed`, `Fixed`, `Removed` (drop empty ones; no others).
 
-### File format
+INCLUDE: new layers/modules/files, logic changes, schema migrations, config changes, new deps, behavior-changing fixes, removals, spec-doc changes, AWS resource changes.
+EXCLUDE: whitespace/format/comments, local test runs, gitignored files, no-behavior refactors.
 
-Keep a Changelog convention. Initialize at Iteration 0:
+Style: one line, present tense, user perspective, reference the layer.
 
-```markdown
-# Changelog
-
-All notable changes to this project are documented here.
-
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project loosely tracks iterations rather than semver.
-
-## [Unreleased]
-
-### Added
-- (pending entries go here)
-
-### Changed
-- (pending entries go here)
-
-### Fixed
-- (pending entries go here)
-
-### Removed
-- (pending entries go here)
-
----
-
-## [Iteration 0] — YYYY-MM-DD
-
-### Added
-- Initial scaffold: repo structure, requirements.txt, config.yaml,
-  .env.example, smoke test, README, this changelog.
+```
+Good: "Layer 5: output selection_json instead of stored PDF"
+      "Removed: Playwright sender and answer_bank table"
+Bad:  "updated code", "fixed bug", "refactored"
 ```
 
-Use only `Added`, `Changed`, `Fixed`, `Removed`. Drop sections with no entries. Do NOT introduce other categories.
+Append to `[Unreleased]` in the same session as any code-affecting change. Don't batch.
 
-### What goes in
+### Git push protocol
 
-INCLUDE:
-- New layers, modules, files
-- Modifications to logic (selection rules, thresholds, formulas)
-- Schema migrations
-- Config changes
-- New dependencies
-- Bug fixes that change observable behavior
-- Removals
-- Changes to PRD, architecture, or this file
-- AWS resource changes (new buckets, IAM policies, alarms)
+When the user says "I'm going to push" / "pushing" / "ready to push":
+1. Review `[Unreleased]`. If empty, confirm it's up to date.
+2. Convert `[Unreleased]` → dated iteration entry (`Iteration N` or `Iteration N.x` for mid-iteration fixes), today's date `YYYY-MM-DD`.
+3. Recreate empty `[Unreleased]` at top.
+4. Show the dated entry before they push.
+5. Never auto-commit or auto-push — the user runs git.
 
-DO NOT include:
-- Whitespace, formatting, comment-only changes
-- Local test runs or debug logs
-- Files that are gitignored
-- Refactors with no behavior change
-
-### Writing style
-
-One line, present tense, user perspective. Reference layer if relevant.
-
-Good:
-```
-- Layer 5: resumes now upload to S3 instead of local filesystem
-- Layer 4: scoring formula uses top-3 bullet average
-- Config: added aws section with bucket, log group, region
-- Schema: added application_queue table with 12-hour expiry
-- Fixed double-submission bug on network timeout
-- Removed: local resumes/applied/ filesystem references
-```
-
-Bad:
-```
-- updated code         (vague)
-- fixed bug            (which?)
-- refactored Layer 5   (refactor isn't behavior)
-- improved performance (how?)
-```
-
-### When entries get added
-
-EVERY time you make a code-affecting change, append an entry to the appropriate `[Unreleased]` subsection in the same edit session. Don't batch.
-
-### The git push protocol
-
-When the user says "I'm going to push to git" (or "pushing", "ready to push"):
-
-1. Stop and review `[Unreleased]`. If empty, the changelog is up to date — confirm with the user.
-2. Convert `[Unreleased]` into a dated iteration entry. Pick the iteration number based on stage (Iteration 0, 1, 2). Small fixes during an iteration: `Iteration 2.1`.
-3. Date with today's date in `YYYY-MM-DD`.
-4. Re-create empty `[Unreleased]` at top with all four subsections.
-5. Show the dated entry before they push for review.
-6. Do not auto-commit or auto-push. The user runs git commands.
-
-Example transformation when user says "I'm pushing":
-
-BEFORE:
-```markdown
-## [Unreleased]
-
-### Added
-- Layer 2: JobSpy integration with serial rotation
-- Config: added search_rotation_state table
-
-### Fixed
-- Layer 3: spaCy validator no longer crashes on empty JDs
-```
-
-AFTER (today is 2026-06-15):
-```markdown
-## [Unreleased]
-
-## [Iteration 2.1] — 2026-06-15
-
-### Added
-- Layer 2: JobSpy integration with serial rotation
-- Config: added search_rotation_state table
-
-### Fixed
-- Layer 3: spaCy validator no longer crashes on empty JDs
-```
-
-### When you forget
-
-Stop current task. Add missing entries. Then resume. The discipline is brittle if entries get skipped.
-
-### Iteration boundaries
-
-When you complete an iteration, the closing entry marks it clearly:
-
-```markdown
-## [Iteration 1] — 2026-05-30
-
-### Added
-- End-to-end skeleton: all 9 layers wired with stub implementations
-- Telegram dry-run notification confirmed working
-- Iteration 1 acceptance criteria met (see architecture doc Section 9)
-```
+If you forget an entry: stop, add it, resume. If caught missing one: add immediately, no defensiveness.
 
 ---
 
 ## When in doubt
 
 1. Architecture conflict? Architecture doc wins.
-2. Free vs paid? Free wins, every time.
+2. Free vs paid? Free wins.
 3. Interview safety vs match score? Interview safety wins.
-4. More LLM calls vs simpler code? Simpler code wins.
+4. More LLM calls vs simpler code? Simpler wins.
 5. More features vs reliability? Reliability wins.
 6. Convention vs cleverness? Convention wins.
-7. LinkedIn vs anything else? Anything else wins.
+7. Auto-apply temptation vs manual-assist? Manual-assist wins (it's the pivot).
 8. AWS feature that costs money vs alternative? Alternative wins.
+9. Instance-ready config-driven vs hardcoded operator value? Config-driven wins.
+10. Build SaaS now vs keep it modular for later? Modular-for-later wins (don't build SaaS).
 
 ---
 
 ## Things explicitly NOT to do
 
-- Don't write bullet-authoring or bullet-rewriting logic.
-- Don't let the LLM select bullets — sentence-transformers scoring does that.
-- Don't add LinkedIn code paths.
-- Don't add `JDParsed` fields that aren't used by Layer 4 or 5.
-- Don't store credentials anywhere except `.env` (gitignored).
-- Don't add a web dashboard. Iteration 7 may add an MCP server.
-- Don't cache resumes or cover letters. Every build is fresh.
-- Don't hard-delete rows from master_bullets / master_summaries / master_title_aliases.
+- Don't reintroduce auto-apply, form filling, or any automated account action.
+- Don't add Playwright back.
+- Don't log into or act on the user's LinkedIn (listings scraping only).
+- Don't write/rewrite bullets; don't let the LLM select bullets.
+- Don't store rendered PDFs at build time — render on demand.
+- Don't build a permanent PDF pile.
+- Don't add `JDParsed` fields unused by Layer 4 or 5.
+- Don't store credentials outside `.env`.
+- Don't bypass the diff check on renders.
+- Don't hard-delete master_bullets / master_summaries / master_title_aliases.
 - Don't write to master_profile.yaml from code.
-- Don't bypass the diff check on built resumes.
-- Don't add retry loops > 1 attempt on submission.
-- Don't apply to the same company within 10 days (cooldown is automatic).
-- Don't hide the projects section — always shows 2-3.
-- Don't let the LLM return a job title outside safe_title_aliases.
-- Don't let the LLM include a skill not in skills_pool or identified gaps.
+- Don't apply to the same company within 10 days.
+- Don't hide the projects section.
+- Don't let the LLM return a title outside safe_title_aliases or a skill outside skills_pool/gaps.
 - Don't touch the resume header.
-- Don't apply to more than the cycle quota (3 peak / 1 off-peak).
-- Don't introduce paid services. Period.
-- Don't use RDS, Lambda for runtime, ECS, Fargate, EKS, EventBridge as scheduler.
-- Don't store AWS keys in code, in commits, or anywhere except `.env`.
-- Don't grant AWS IAM permissions beyond what Section 5.4 of the architecture doc specifies.
-- Don't create AWS resources outside `ap-south-1` (exception: billing alarms must live in `us-east-1` — AWS billing metrics only publish there).
-- Don't keep local filesystem copies of resumes after S3 upload (use /tmp transient only).
-- Don't disable, delete, or raise the AWS Budget caps. If billing breaches $1, investigate root cause — never just raise the limit to keep the bot running.
-- Don't grant the runtime user permission to modify budgets, alarms, or IAM. The budget kill switch lives on a SEPARATE role (`job-bot-budgets`) precisely so the runtime cannot disable its own circuit breaker.
-- Don't create AWS resources before the billing safeguards are configured and verified. Budgets first, S3/CloudWatch second. Always.
-- Don't skip changelog updates. Every code-affecting change goes into `[Unreleased]` in the same session.
-- Don't auto-commit or auto-push to git. The user does that manually.
+- Don't add a 3rd Gemini call.
+- Don't add quotas — notify every match >= 0.50.
+- Don't use RDS, Lambda for runtime, ECS, Fargate, EKS, EventBridge-as-scheduler, SNS.
+- Don't store AWS keys in code or commits.
+- Don't grant IAM beyond Section 5.4 of the architecture doc.
+- Don't create AWS resources outside ap-south-1.
+- Don't skip changelog updates. Don't auto-commit/push.
+- Don't hardcode operator identity (name, email, filename) in source — derive from config.
+- Don't add user_id columns, auth, accounts, or tenant isolation (instance-ready, not SaaS).
 
 ---
 
 ## Onboarding checklist
 
-For an AI working on this code:
+AI working on this code:
+- [ ] Read `PRD.md`, `job_automation_architecture.md`, this file (incl. Migration Note)
+- [ ] Skim `config/config.yaml` and `src/llm/schemas.py`
+- [ ] Before Iteration 2 work: do the cleanup in the Migration Note first
 
-- [ ] Read `PRD.md`
-- [ ] Read `job_automation_architecture.md`
-- [ ] Read this file
-- [ ] Skim `config/config.yaml` for runtime config
-- [ ] Skim `src/llm/schemas.py` for LLM contracts (after Iteration 2 builds it)
-- [ ] Check `requirements.txt` — don't suggest other libraries without need
-
-For a human contributor:
-
-- [ ] All of the above, plus:
-- [ ] Set up Neon free tier, DATABASE_URL into `.env`
-- [ ] Set up Gemini API key into `.env`
-- [ ] Set up Telegram bot via @BotFather, token + chat_id into `.env`
-- [ ] Set up AWS account in `ap-south-1`:
-      - **Billing safeguards FIRST, before any other AWS resource:**
-        - AWS Budget at $0.01/month → email + Telegram (any-charge tripwire)
-        - AWS Budget at $1/month with Budget Action: auto-detach
-          `job-bot-runtime-policy` from `job-bot-runtime`
-        - CloudWatch billing alarm at $0.50 (us-east-1) → SNS → Lambda → Telegram
-        - Cost Explorer enabled
-      - Create separate IAM role `job-bot-budgets` with ONLY
-        `budgets:*` on the bot's budgets and `iam:DetachUserPolicy`
-        scoped to `user/job-bot-runtime` + `policy/job-bot-runtime-policy`
-      - Create IAM user `job-bot-runtime` with minimal policy (no IAM perms,
-        no budget perms — cannot tamper with its own kill switch)
-      - Create S3 bucket `job-bot-{username}-resumes` (versioned, block public)
-      - Generate access key + secret, save to `.env`
-      - Verify by manually triggering the $0.01 budget alert and confirming
-        Telegram delivery
-- [ ] Write `master_profile.yaml` with bullet pools, safe_title_aliases, skills_pool
-- [ ] Place resume template in `resumes/templates/`
-- [ ] Run `python -m src.cli.aws_check` to verify connectivity
-- [ ] Run `python -m src.cli.reparse`
-- [ ] Run in `--dry-run` for 1 week before enabling auto-apply
+Human contributor:
+- [ ] Above, plus:
+- [ ] Neon free tier → DATABASE_URL in `.env`
+- [ ] Gemini API key in `.env`
+- [ ] Telegram bot (@BotFather) token + chat_id in `.env`
+- [ ] AWS in ap-south-1: IAM user `job-bot-runtime` (minimal policy),
+      S3 bucket `job-bot-{username}` (private, versioning on backups,
+      1-month lifecycle on cache prefixes), access key in `.env`,
+      billing alarm at $1
+- [ ] Write `master_profile.yaml` (bullet pools, safe_title_aliases, skills_pool)
+- [ ] Resume template in `resumes/templates/`
+- [ ] `python -m src.cli.aws_check`, then `python -m src.cli.reparse`
+- [ ] `--dry-run` for several days before trusting selections
 
 ---
 
-## Definition of done for any code change
+## Definition of done for any change
 
 - Implements the requirement from PRD or architecture
-- Violates no hard rule above
-- Has unit tests (mock external services including boto3 via moto)
-- Logs structured events for observability
-- Handles failures explicitly (no bare except)
-- Introduces no new paid dependencies
-- Respects the 3-call Gemini budget
+- Violates no hard rule
+- Unit tests (mock external services incl. boto3 via moto, FastAPI via TestClient)
+- Structured logging
+- Explicit failure handling (no bare except)
+- No new paid dependencies
+- Respects the 2-call Gemini budget
 - Doesn't break existing tests
-- Updates this file or the architecture doc if it changes any locked decision
-- **CHANGELOG.md `[Unreleased]` section updated with an entry describing the change**
+- Updates this file or the architecture doc if it changes a locked decision
+- **CHANGELOG.md `[Unreleased]` updated with an entry describing the change**
 
 ---
 

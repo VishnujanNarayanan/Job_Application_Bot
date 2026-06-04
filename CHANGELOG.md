@@ -7,6 +7,67 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Added
+
+### Changed
+
+### Removed
+
+---
+
+## [Iteration 2.0] — 2026-06-04
+
+### Added
+- Iteration 2 Phase A + Phase B data layer — pivot cleanup plus the real data flow (Layers 2-4 + master_profile rebuild/loader), built layer by layer. Layers 5/6, orchestrator wiring, AWS, and Layers 8/9 remain for later Iteration-2 steps.
+- Config: `src/config.py` — central `settings` accessor loading `config/config.yaml` once with recursive attribute access (`settings.scoring.final.fit`); missing keys raise `AttributeError`. Exposes operator-identity helpers `resume_filename` / `cover_filename`, derived from `operator.full_name` (no operator literal in source — CLAUDE.md rule #21 / NFR-11); validates `operator.full_name` is present at load.
+- Layer 7: `render_cache` model + table (architecture §7.3) tracking S3-backed PDF/DOCX renders (`cache_key` PK, `job_id`, `format`, `template_version`, `s3_uri`, `created_at`, `expires_at` + `idx_render_cache_expiry`).
+- Layer 7: `all_jobs` gains `jd_embedding vector(384)` + `near_duplicate_of` (self-referential FK `fk_all_jobs_near_duplicate_of` → `all_jobs.job_id`, + ivfflat cosine index `idx_all_jobs_embedding`) for near-duplicate detection. The FK means Layer 2 dedup must commit the original before linking a duplicate.
+- Layer 7: migration `0003_pivot_schema.py` (`0002` → `0003`) — reshapes `applied`, adds `render_cache`, extends `all_jobs`. Offline SQL generation verified for the full `0001→0002→0003` chain.
+- Tests: `tests/test_iteration_2_data.py` — config accessor, operator-agnostic filename derivation, fail-fast on missing `full_name`, and the `applied`/`all_jobs`/`render_cache` schema reshape (10 offline tests).
+- `src/reasons.py` — centralised `not_applied.reason_category` constants (architecture §7.4) so every layer and the Iteration-3 CloudWatch metric filters share the same strings.
+- Layer 4: `src/scorer/embeddings.py` — real `embed`/`embed_batch`/`cosine` on sentence-transformers (all-MiniLM-L6-v2, 384-dim); model lazy-loaded and cached so import is cheap and `cosine` is pure (offline-testable).
+- Layer 2: `src/scraper/filters.py` — pure hard-filter predicates (`location_disallowed`, `exceeds_years_ceiling`, `company_in_cooldown`) + thin DB lookups (`existing_job_ids`, `company_last_notified`).
+- Layer 2: `src/scraper/dedup.py` — near-duplicate JD detection (`find_near_duplicate` pure cosine, `>0.95` strict; `resolve_batch` classifies a scraped batch and persists originals before linking duplicates so the `near_duplicate_of` self-FK target always exists, including same-run cross-portal reposts). Duplicates marked `NEAR_DUPLICATE`.
+- Layer 2: `src/scraper/rotation.py` — serial search-term rotation persisted in `search_rotation_state` (`current_term`/`advance`, modulo-wrapping index).
+- Tests: `tests/test_iteration_2_scraper.py` — 15 offline tests for filters, cosine math, dedup (incl. the same-run repost insert-order case via a fake session), rotation (one-table SQLite), and the JobSpy row mapping (faked `jobspy` module).
+- Layer 3: `src/llm/client.py` — real Gemini 2.0 Flash transport via Instructor (`get_client` lazy + cached, `complete(response_model, prompt, system=)` with exponential backoff per `config.llm.backoff`; final failure logs `gemini_failure` and raises `LLMError`). SDK imported lazily so the module is import-cheap and `complete` is injectable for tests.
+- Layer 3: `src/parser.py` replaces the Iteration-1 fixed-`JDParsed` stub with real Gemini Call 1a — `parse(job, complete=)` runs the call, then grounds `required_skills`/`nice_to_have` against the JD text (substring fast path + spaCy-lemma fallback) to drop fabricated skills. Adds pure role-cluster acceptance helpers `cluster_for_term` / `role_accepted` (config `parser.role_clusters`) for the orchestrator's ROLE_MISMATCH decision. `apply_to_row` now also copies `team_or_product`, `job_type`, `location_type`, `salary_min_lpa`, `salary_max_lpa`, `salary_currency`.
+- LLM schema: `JDParsed` extended with `team_or_product`, `job_type`, `location_type`, `apply_url`, `salary_min_lpa`, `salary_max_lpa`, `salary_currency` (all optional; each consumed by Layer 4 scoring or Layer 8 notification).
+- Layer 3: `src/llm/prompts.py` — `jd_parse_system()` (anti-fabrication system instruction) + `jd_parse_prompt(job, role_categories)` builder.
+- Tests: `tests/test_iteration_2_parser.py` — 8 offline tests for parse (stub transport), skill grounding (substring/dedup/lemma fallback), expanded `apply_to_row`, and role-cluster acceptance.
+- Layer 4: `src/scorer/selector.py` — pure, deterministic selection (no LLM): candidate dataclasses (`Profile`, `ExperienceCand`, `ProjectCand`, `SummaryCand`, `SkillCand`, `JDContext`) + `select_experiences` (alias×0.30 + top3-bullet-avg×0.70, threshold 0.45, max 3, force-include top-2), `select_projects` (name×0.20 + topN-bullet-avg×0.80, threshold 0.50, never hidden, bullets min 2/max 3 descending), `select_summary` (role_category-first then cosine, fallback to all), `select_skill_candidates` (top-14 pool by cosine).
+- Layer 4: `src/scorer/ordering.py` — `order_experiences` (best-match at #1 when score gap > 0.20 else recency) + `skills_before_projects` (section order by aggregate JD match).
+- Layer 4: `src/scorer/apply_decision.py` rewritten — replaces the Iteration-1 reject-all `decide()`/`Decision` stub with the real scoring engine: `seniority_score`, `recency_score` (banded), and `evaluate(profile, jd, now=)` returning a `SelectionResult` (fit = best_exp×0.50 + summary×0.20 + avg-skill×0.30; success_prob = seniority×0.60 + recency×0.40; final = fit×0.55 + success_prob×0.30 + recency×0.10 + project×0.05; apply when final >= 0.50). No quotas, no top-N (hard rule #14).
+- Tests: `tests/test_iteration_2_scorer.py` — 17 offline tests with synthetic profiles/JDs covering experience blend + force-include + cap, match-then-recency ordering, projects-never-hidden + descending bullets, category-first summary, skill ranking/cap, seniority/recency primitives, the three-vector `build_jd_context`, and end-to-end `evaluate` apply/skip + section-order flag.
+- Layer 4: `src/scorer/embeddings.py` gains `add(a, b)` (element-wise vector sum) for the JD match vector.
+- Layer 4: `src/scorer/selector.py` `build_jd_context(parsed, posted_at=, embed_batch_fn=)` — the single per-job embed (architecture §4.1): one batched call producing `vec_role = embed(role_summary)`, `vec_skills = embed(required + nice_to_have)`, and `vec_match = vec_skills + vec_resp`.
+- Layer 7 / §3: `src/state/master_profile.py` — full `MasterProfile` Pydantic schema (personal/summaries/work_experience/projects/skills_pool/education/certifications) with validators (actual_title ∈ safe_title_aliases per rule #6, projects ≥2 bullets, globally-unique ids, non-empty skills_pool). `rebuild(session, path=, embed_fn=, force=)`: mtime short-circuit → validate → write canonical `master_profile.json` → embed + diff/upsert into `master_bullets`/`master_summaries`/`master_title_aliases` → deactivate removed (never hard-delete, rule #17) → record `master_meta`. Pure diff brain `plan_sync` (insert/update/reactivate/deactivate/unchanged). Skills stored in `master_bullets` as `parent_type='skill'` and project names as `parent_type='project_name'` (no `master_skills` table per §7.3; honors "only the JD is embedded per run").
+- Layer 7 / Layer 4 bridge: `load_profile(session, json_path=)` — the candidate loader joining canonical-JSON structure (company, dates, project name/link) with active DB embeddings (bullets/skills/project-name/aliases/summaries) into a `scorer.selector.Profile`.
+- Tests: `tests/test_iteration_2_master_profile.py` — 11 offline tests (schema validators, `desired_bullets` incl. skill/project_name rows, `plan_sync` all branches, `rebuild` clean-insert + mtime skip/force via a fake session + injected embed, `load_profile` JSON↔DB join + missing-JSON error).
+
+### Changed
+- Config: renamed `personal:` → `operator:` (`name` → `full_name`, `years_of_experience` → `years_experience`, `timezone`); split hard filters into `filters:` (`job_type`, `years_ceiling`, `visa_filter`, `disallowed_regions`, `company_blocklist`); re-homed the expected-salary default to top-level `salary.default_expected_lpa` (6.0). Dropped the redundant `parser.years_required_ceiling` (now single-sourced at `filters.years_ceiling`). `tests/test_smoke.py` required-section set updated accordingly.
+- Layer 7: reshaped the `applied` model/table (architecture §7.3) — dropped `apply_type`, `resume_s3_uri`, `resume_s3_key`, `cover_letter_used`, `cover_letter_s3_uri`, `application_status`, `failure_reason`; renamed `applied_at` → `built_at`; added `template_version`, `notified_at`, `user_status` (default `pending`). `selection_json` retained as the durable per-job artifact.
+- Layer 2: `src/scraper/jobspy_wrapper.py` replaces the Iteration-1 fake-3-jobs stub with the real JobSpy scrape — `scrape(search_term, *, sites, country, results_wanted, hours_old)` reads public listings across Indeed/Glassdoor/LinkedIn (listings-only; never logs into an account — rule #4), de-duplicates by `job_id` within a call, and returns `AllJobs` rows (caller persists). JobSpy imported lazily; the row→`AllJobs` mapping is pure.
+- Tests: `tests/test_iteration_1.py` trimmed as the skeleton became real — scraper-stub (Layer 2), parser-stub (Layer 3), and reject-all `decide()` (Layer 4) tests removed; only the Layer-7 models-import smoke check remains. Layer 2/3/4 coverage lives in the new Iteration-2 test files.
+- Orchestrator: `src/main.py` Iteration-1 linear skeleton dismantled now that Layers 2/3/4 are real modules — `main()` raises `NotImplementedError` pending the dedicated Step-2 orchestrator wiring (rotation-driven scrape → embed → dedup → filters → parse + role-acceptance → master_profile candidate load → Layer 4 `evaluate` → Layer 5 build → notify), which lands right before the test-chat dry-run. Still importable.
+- Tests: `tests/test_smoke.py` no longer asserts `src/sender/*`, `src/state/queue.py`, `data/sessions`, `data/manual_queue`, or `answer_bank_seed.example.yaml` exist; required-config-section set drops `queue` and `sender`. `tests/test_iteration_1.py` drops the `AnswerBank`/`ApplicationQueue`/`PendingReview` imports. `tests/conftest.py` and `src/state/cleanup.py` docstrings updated to drop Playwright/manual_queue references.
+- `TODO.md`: recorded the Phase B carry-overs (operator-config rename, `applied` reshape, `render_cache`, `all_jobs` near-duplicate columns, salary-default re-home, cover-letter voice re-home, Sheet-tab rename, reportlab/cover_pdf decision) plus the Step-3 Layer-5 scope decisions (selection_json-only build, drop `expected_salary`, add `gap_skills`, defer Layer 6 until a template exists).
+
+### Removed
+- Iteration 2 Phase A — pivot cleanup (removes obsolete auto-apply stubs per the Migration Note). Behaviour-affecting work (real data flow) is Phase B.
+- Layer 6: deleted `src/sender/` entirely — Playwright auto-apply driver (`indeed.py`, `glassdoor.py`), form-field discovery/classification (`fields.py`), four-category question handler (`questions.py`), answer bank (`bank.py`), cover-letter form fill (`cover_letter.py`), cover-letter PDF renderer (`pdf_render.py`), form-answer voice validator (`voice.py`). The system no longer submits applications or acts on any account.
+- Layer 7: deleted `src/state/queue.py` (`application_queue` 12-hour decay stub).
+- Layer 7: dropped the `ApplicationQueue`, `AnswerBank`, and `PendingReview` models from `src/state/models.py`.
+- Layer 7: migration `0002_drop_autoapply_tables.py` drops the `application_queue` (+ `idx_queue_status`), `answer_bank`, and `pending_review` tables (forward-only with `IF EXISTS` guards so it's idempotent; `0001` left intact as history; `downgrade` recreates them).
+- Layer 5: removed the Gemini Call 2 references (form questions) — budget is now 2 calls/job max. `config.llm.max_calls_per_job` 3 → 2; LLM comment block and `src/llm/prompts.py` docstring updated.
+- Layer 4: removed cycle-quota / top-N picking from config and docstrings — `config.scheduler.cycle_quota` and `config.scheduler.peak_hours` deleted, `config.queue` (12-hour decay / `STALE`) deleted; `src/scorer/apply_decision.py` and `src/main.py` docstrings updated to "notify every match >= 0.50, no quotas".
+- Config: deleted the `sender:` section (Playwright upload filenames, `max_form_pages`, `retry_limit`, `question_mode`, `profile_fields`, current-salary answer-bank wiring) and `voice.few_shot_size` (answer-bank reference).
+- Config: removed obsolete keys — `storage.sessions_dir`, `storage.manual_queue_dir`, `storage.cleanup.manual_queue_retention_days`; `notifications.critical_alert_triggers` entries `playwright_crash` and `session_expired`; `analytics.sheets.manual_required_tab`.
+- Removed `playwright==1.49.0` from `requirements.txt`.
+- Removed `answer_bank_seed.example.yaml` and the `data/sessions/` and `data/manual_queue/` directories.
+- `.env.example`: removed the `INDEED_EMAIL` / portal-session-login section.
+
 ---
 
 ## [Iteration 1] — 2026-05-26

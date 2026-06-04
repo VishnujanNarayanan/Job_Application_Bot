@@ -2,53 +2,111 @@
 
 **Owner:** Vishnujan Narayanan
 **Cost:** $0/month forever
-**Status:** Iteration 0 complete, Iteration 0.1 (AWS prep) pending, ready for Iteration 1
+**Build status:** Iterations 0-1 complete. Pivoting design before Iteration 2 (see Migration Note).
+
+---
+
+## Migration Note (read first)
+
+The project pivoted after Iteration 1. The earlier design auto-applied to jobs via Playwright. **It no longer does.**
+
+**What we did (Iterations 0-1):** scaffolded the repo and built an end-to-end skeleton with stub implementations for all 9 layers — including a Playwright-based auto-apply sender (old Layer 6), S3-as-primary-resume-storage, and an Indeed/Glassdoor-only scraper.
+
+**What we're pivoting to (Iteration 2 onward):**
+
+```
+OLD                                  NEW
+auto-apply via Playwright       →    you apply manually; bot hands you
+                                     a tailored resume per match
+store rendered PDFs in S3        →    store tiny selection_json in
+                                     Postgres; render PDF on-demand
+                                     from an endpoint
+no LinkedIn (ban risk)           →    LinkedIn back as a listings source
+                                     (JobSpy reads public listings only;
+                                     never logs into or acts on your
+                                     account, so no account-ban risk)
+cycle quotas (3 peak / 1 off)    →    notify on every match >= 0.50
+4-category form questions        →    removed (no form filling)
+answer bank, form-answer voice   →    removed
+Gemini Call 2 (form questions)   →    removed; max 2 calls per job now
+```
+
+**What the agent must clean up before/early in Iteration 2** (audit the existing stubs and remove what's now obsolete):
+
+```
+REMOVE / REPURPOSE:
+  - The Playwright sender stub (old Layer 6 auto-apply) — gone entirely
+  - Any session-cookie handling for portal login — gone
+  - Any form-field classification / salary-form / yes-no handling — gone
+  - answer_bank table + stubs — gone
+  - pending_review table + review-of-form-answers flow — gone
+    (note: Telegram review of Cat-3 form answers is gone; there are
+     no form answers anymore)
+  - Gemini Call 2 stub — gone
+  - voice.py form-answer validation — gone (cover-letter voice stays)
+  - S3-stores-every-resume logic — replaced by on-demand rendering
+  - The fixed cycle-quota picking (3/1) — replaced by notify-all-matches
+
+KEEP / ADAPT:
+  - Layers 1-4 stubs (scheduler, scraper, parser, scorer) — keep,
+    make real in Iteration 2 (add LinkedIn to scraper sources)
+  - Layer 5 (builder) — adapt: produce selection_json, NOT a stored PDF
+  - Layer 7 (state) — adapt schema: drop answer_bank/pending_review,
+    keep selection storage, add pdf_cache + near_duplicate tracking
+  - Layer 8 (notifications) — adapt: bundle apply-link + resume-link
+  - Layer 9 (analytics) — keep, resume links now point to the endpoint
+
+ADD (new in this pivot):
+  - Resume endpoint (FastAPI on the VM): renders PDF/DOCX on demand
+  - pdf_cache: 1-month TTL, backed by S3 (survives VM restarts)
+  - near-duplicate JD detection (cosine > 0.95)
+```
+
+The rest of this document describes the **target architecture** as it should be after the pivot. Where a section is materially changed by the pivot, it's noted inline. Don't over-index on the history — build toward the target state below.
 
 ---
 
 ## 1. Goal
 
-Fully autonomous job application bot that:
+Take the job market and hand the user a perfectly tailored resume per good match, making applying a two-tap action the user performs themselves.
 
-- Detects new job postings within ~10 minutes of being posted
+The system:
+- Detects new postings within ~10 minutes
 - Scores them via a multi-factor relevance model
-- Builds a custom-tailored resume per JD from a master profile pool
-- Submits applications automatically where possible
-- Logs every scraped job and every applied resume permanently
-- Generates weekly career intelligence reports
-- Runs while the user sleeps
-- Uses real AWS services (S3, CloudWatch, IAM) for operational pieces
-- Costs $0/month
+- Builds a custom-tailored resume (as a compact selection) per matched JD
+- Notifies the user per match with the apply link and a resume link bundled together
+- Renders the resume PDF/DOCX on demand from a tiny endpoint
+- Keeps a permanent, queryable record mapping every resume to its exact job
+- Runs on $0/month infrastructure
+
+**The core value is the JD → tailored-resume engine.** Everything else serves that.
 
 ---
 
-## 2. Personal Configuration
+## 2. Operator Configuration
+
+This system is **instance-ready**: it runs as a single-operator tool, but nothing is hardcoded to a specific person. Every value below comes from `config.yaml`, `.env`, and `master_profile.yaml`. A different person clones the repo, fills their own files, and runs their own independent instance — no code changes. The values shown here are the current operator's (Vishnujan's); they live in config, not in source. See Section 11 (Instance-Readiness).
 
 ```
-Name                     Vishnujan Narayanan
-Years of experience      1.5 years
-Job type                 Fulltime only
-Years required ceiling   5 years
-Location policy          Allow everything except disallowed regions
-Disallowed regions       Delhi NCR (Delhi, Gurgaon, Gurugram, Noida,
-                         Ghaziabad, Faridabad)
-Visa policy              Open to international relocation — no filter
-Resume profile source    master_profile.yaml (gitignored)
+Name                     (config: operator.full_name)
+Years of experience      (config: operator.years_experience)
+Job type                 Fulltime only (config: filters.job_type)
+Years required ceiling   5 (config: filters.years_ceiling)
+Location policy          Allow all except disallowed regions
+Disallowed regions       (config: filters.disallowed_regions)
+                         current: Delhi NCR (Delhi, Gurgaon, Gurugram,
+                         Noida, Ghaziabad, Faridabad)
+Visa policy              No filter (config: filters.visa_filter=false)
 
-Salary
-  Expected default       6 LPA
-  Expected per JD        JD upper bound if specified, else 6 LPA
-  Current text fields    Strategic redirect (no number)
-  Current numeric        100000
+Salary (informational — cover letter + notification only)
+  Expected default       (config: salary.default_expected_lpa) — current 6
+  Expected per JD        JD upper bound if specified, else default
 
-Upload filenames
-  Resume                 Vishnujan_Narayanan_Resume.pdf
-  Cover letter           Vishnujan_Narayanan_Cover_Letter.pdf
-
-Question handling        Safe mode (hold for review on unknown)
-Company blocklist        None
-Familiar With            Max 4 adjacent gap skills
+Resume source            master_profile.yaml (gitignored, per-operator)
+Familiar With            Max 4 adjacent gap skills (config)
 ```
+
+Resume upload filename is derived, never literal: `{operator.full_name with underscores}_Resume.pdf`. No operator-specific string ever appears in source code.
 
 ### 2.1 Target role categories
 
@@ -56,46 +114,35 @@ Familiar With            Max 4 adjacent gap skills
 backend, data, ml, fullstack, devops, finance_market, quant
 ```
 
-### 2.2 Search keywords (rotation order)
+### 2.2 Search keywords
 
 Stored in `config.yaml` under `scraper.search_rotation.terms` — 24 terms covering all 7 categories.
 
 ### 2.3 Role acceptance clusters
 
-Maps each search term to acceptable role titles and Gemini categories for smart matching. Lives in `config.yaml` under `parser.role_clusters`. A search for "backend engineer" accepts jobs titled "software developer" if Gemini classifies them as backend or fullstack.
+In `config.yaml` under `parser.role_clusters`. Maps each search term to acceptable role titles and Gemini categories for smart matching. A "backend engineer" search accepts a "software developer" job if Gemini classifies it backend or fullstack.
 
 ---
 
 ## 3. Master Profile Model
 
-### 3.1 master_profile.yaml structure
+### 3.1 Structure (`master_profile.yaml`, gitignored)
 
-Single gitignored YAML file with:
 - `personal` — contact info and links
-- `summaries` — pre-written summary pool (any size), each tagged with role categories
-- `work_experience` — entries with `bullet_pool` and `safe_title_aliases` allow-list
+- `summaries` — pre-written summary pool, each tagged with role categories
+- `work_experience` — entries with `bullet_pool` and `safe_title_aliases`
 - `projects` — entries with `bullet_pool` and embedded `link`
 - `skills_pool` — flat list of all defensible skills
-- `education` — degree entries with dates and scores
+- `education` — degree entries
 - `certifications` — entries with `verify_link`
 
 ### 3.2 Lifecycle
 
-Bot run detects YAML mtime change. On change:
-
-1. Validate schema → if invalid, Telegram alert, abort run
-2. Generate canonical `master_profile.json`
-3. Diff against DB:
-   - New bullets → embed via sentence-transformers, insert (`is_active=true`)
-   - Changed bullets → re-embed, update
-   - Removed bullets → mark `is_active=false`, set `deactivated_at=now`
-4. Update `master_meta.master_profile_processed_at`
-
-Bullets, summaries, and title aliases are **never** hard-deleted. Deactivation only. Preserves audit trail.
+On bot run, if `master_profile.yaml` mtime changed: validate → generate `master_profile.json` → diff against DB (new/changed bullets embed + upsert, removed bullets marked `is_active=false`) → update `master_meta`. Bullets, summaries, and title aliases are never hard-deleted.
 
 ### 3.3 Pre-computed embeddings
 
-Once at rebuild — every bullet, summary, title alias, and skill gets a `vector(384)` via sentence-transformers, stored in DB.
+Every bullet, summary, title alias, and skill gets a `vector(384)` via sentence-transformers at rebuild, stored in DB. Only the JD is embedded per run.
 
 ---
 
@@ -103,15 +150,17 @@ Once at rebuild — every bullet, summary, title alias, and skill gets a `vector
 
 ```
 LAYER 1   Scheduler
-LAYER 2   Scraper             (Indeed, Glassdoor)
+LAYER 2   Scraper             (Indeed, Glassdoor, LinkedIn — listings only)
 LAYER 3   JD Parser           (Gemini Call 1a)
 LAYER 4   Scoring Engine
-LAYER 5   Resume Builder      (Gemini Call 1b)
-LAYER 6   Application Sender  (Gemini Call 2 if needed)
-LAYER 7   State Management    (PostgreSQL on Neon + AWS S3 for files)
+LAYER 5   Resume Builder      (Gemini Call 1b → selection_json)
+LAYER 6   Application Assist  (notify + on-demand resume endpoint)
+LAYER 7   State Management    (Postgres on Neon + S3 cache/backup)
 LAYER 8   Notifications       (Telegram + CloudWatch alarms)
 LAYER 9   Analytics           (Sheets + Docs)
 ```
+
+Max **2** Gemini calls per job now (Call 1a parse, Call 1b build). Old Call 2 for form questions is removed.
 
 ---
 
@@ -122,51 +171,51 @@ Oracle Cloud cron (Iteration 5 onward), local cron (Iterations 1-4).
 ```
 Peak       Every 40 min, 8am-6pm IST, weekdays
 Off-peak   Every 4 hours, nights and weekends
-Sunday     8am IST → Layer 9 weekly report + storage cleanup
+Sunday     8am IST → weekly report + cache cleanup
 ```
 
-Cycle-aware application quotas:
-```
-8am-11am IST (peak): apply to top 3 from this run's batch
-After 11am: apply to top 1 from this run's batch
-```
+No application quotas — every match >= 0.50 produces a notification.
 
 ---
 
 ### Layer 2 — Scraper
 
-**Sources:** Indeed (Iterations 1+). Glassdoor (Iteration 4). Naukri (Iteration 6). LinkedIn never (account-ban risk).
+**Sources:** Indeed, Glassdoor, LinkedIn — all via JobSpy, **listings only**. Naukri in Iteration 6.
+
+**LinkedIn note:** JobSpy reads public LinkedIn job listings. It does NOT log into the user's account or perform any action on it. The risk profile is "scraper IP could be rate-limited" (infrastructure, recoverable), NOT "user account banned" (which is what the earlier no-LinkedIn rule guarded against, and which no longer applies because there's no auto-apply).
 
 **Serial search rotation with short-circuit:**
 
 ```
-Each run picks up where last run left off
-For each keyword in rotation:
-  Query JobSpy with India + hours_old
+Each run continues rotation from search_rotation_state.current_index
+For each keyword:
+  JobSpy query (India + hours_old) across enabled sources
   Insert every result into all_jobs (permanent archive)
-  Apply hard filters
+  Apply hard filters + near-duplicate check
   Count passing results
-  If passing count >= 20 → advance rotation, stop
+  If passing >= 20 → advance rotation, stop
   Else → next keyword
-Update search_rotation_state.current_index
 ```
 
 **Hard filters:**
 
 ```
 years_required > 5            → reject (HARD_FILTER_LAYER_2)
-location in disallowed list   → reject (HARD_FILTER_LAYER_2)
+location in disallowed list   → reject (LOCATION_DISALLOWED)
 company in cooldown (10d)     → reject (COMPANY_COOLDOWN)
 duplicate job_id              → reject (DUPLICATE)
+near-duplicate JD (>0.95)     → reject (NEAR_DUPLICATE), link to original
 ```
 
-Passed jobs → `processing_queue` with status `queued`.
+Passed jobs → `processing_queue`.
+
+**Near-duplicate detection (new):** before queuing, embed the JD and compare against recent jobs' JD embeddings. If cosine > 0.95 to an already-notified job, mark `NEAR_DUPLICATE`, store a reference to the original job_id, and skip — prevents two notifications for the same role posted across portals or reworded.
 
 ---
 
 ### Layer 3 — JD Parser (Gemini Call 1a)
 
-**Tools:** Gemini 2.0 Flash + Instructor, spaCy validator.
+Gemini 2.0 Flash + Instructor, spaCy validator.
 
 ```python
 class JDParsed(BaseModel):
@@ -186,9 +235,10 @@ class JDParsed(BaseModel):
     salary_min_lpa: float | None
     salary_max_lpa: float | None
     salary_currency: Literal["INR_LPA", "INR_monthly", "USD", "EUR", "OTHER"] | None
+    apply_url: str   # the link the user taps to apply
 ```
 
-spaCy validates extracted skills exist in JD text. Hard filter re-check on structured data. Role acceptance check against clusters.
+spaCy validates extracted skills appear in JD text. Hard filter re-check on structured data. Role acceptance check against clusters.
 
 ---
 
@@ -197,11 +247,13 @@ spaCy validates extracted skills exist in JD text. Hard filter re-check on struc
 #### 4.1 JD embeddings
 
 ```
-jd_vec_skills  = embed(required + nice_to_have)
-jd_vec_resp    = embed(responsibilities + role_summary)
-jd_vec_role    = embed(role_summary)
-jd_vec_match   = jd_vec_skills + jd_vec_resp
+jd_vec_skills = embed(required + nice_to_have)
+jd_vec_resp   = embed(responsibilities + role_summary)
+jd_vec_role   = embed(role_summary)
+jd_vec_match  = jd_vec_skills + jd_vec_resp
 ```
+
+The JD embedding is also stored on `all_jobs` for near-duplicate detection.
 
 #### 4.2 Experience scoring
 
@@ -209,11 +261,10 @@ jd_vec_match   = jd_vec_skills + jd_vec_resp
 def score_experience(exp, jd):
     best_alias = max(cosine(embed(a), jd_vec_role) for a in exp.safe_title_aliases)
     bullet_scores = sorted([cosine(b.embedding, jd_vec_match) for b in exp.active_bullets], reverse=True)
-    top3_avg = mean(bullet_scores[:3])
-    return (best_alias * 0.30) + (top3_avg * 0.70)
+    return (best_alias * 0.30) + (mean(bullet_scores[:3]) * 0.70)
 ```
 
-Rules: threshold 0.45, max 3, min 2, force-include strongest 2. Bullets: exactly 3 per experience, top by score, descending order. Position 1 = highest-scoring IF gap > 0.20, else most recent. Other positions by recency.
+Threshold 0.45, max 3, min 2, force-include strongest 2. Bullets: exactly 3 per experience, top by score, descending. Position 1 = highest-scoring IF gap > 0.20, else most recent; rest by recency.
 
 #### 4.3 Project scoring
 
@@ -223,76 +274,73 @@ def score_project(proj, jd):
     bullet_scores = sorted([cosine(b.embedding, jd_vec_match) for b in proj.active_bullets], reverse=True)
     passing = [s for s in bullet_scores if s >= 0.40]
     n = min(3, max(2, len(passing)))
-    topN_avg = mean(bullet_scores[:n])
-    return (name * 0.20) + (topN_avg * 0.80)
+    return (name * 0.20) + (mean(bullet_scores[:n]) * 0.80)
 ```
 
-Score reflects displayed bullet count. Rules: threshold 0.50, max 3, min 2, force-include best 2. **Section never hidden.** Bullets: min 2 / max 3. Order: score-descending.
+Score reflects displayed bullet count. Threshold 0.50, max 3, min 2, force-include best 2. **Section never hidden.** Bullets min 2 / max 3, descending.
 
 #### 4.4 Summary selection (deterministic)
 
-Filter pool by JD role_category. Pick highest cosine match. No LLM.
+Filter pool by JD role_category, pick highest cosine match. No LLM.
 
 #### 4.5 Skills selection (hybrid)
 
-**Step 1:** Score every skill in `skills_pool` against JD.
-**Step 2:** Take top-14 candidates.
-**Step 3:** Identify and score gap skills (JD requires, not in pool).
-**Step 4:** LLM names 3 categories, assigns 3-5 skills each from candidates, picks up to 4 gap skills for Familiar With.
-**Step 5:** Within each category, order skills by JD score descending.
-**Step 6:** Compute aggregate score per category INCLUDING Familiar With.
-**Step 7:** Order ALL 4 categories (3 LLM-named + Familiar With) by aggregate match, descending. Familiar With NOT pinned.
+```
+Step 1: score every skill in skills_pool against JD
+Step 2: take top-14 candidates
+Step 3: identify + score gap skills (JD requires, not in pool)
+Step 4: LLM names 3 categories, assigns 3-5 skills each from candidates,
+        picks up to 4 gap skills for Familiar With
+Step 5: order skills within each category by score, descending
+Step 6: compute aggregate score per category INCLUDING Familiar With
+Step 7: order all 4 categories by aggregate match, descending —
+        Familiar With NOT pinned
+```
 
-Total: 10-14 pool skills + 0-4 gaps. LLM optimizes grouping, not count.
-
-**Post-validation:**
-1. Category skills must be in top-14 candidates
-2. Familiar With skills must be in identified gaps
-3. No duplicates across categories
-4. Category names not in banned list (Miscellaneous, Other, Soft Skills, etc.)
-5. Regenerate once on violation, else BUILD_FAILURE
+Total 10-14 pool skills + 0-4 gaps. LLM optimizes grouping, not count. Post-validation: category skills from top-14, Familiar With from gaps, no duplicates, no banned category names; regenerate once on violation else BUILD_FAILURE.
 
 #### 4.6 Section ordering
 
 ```
-FIXED:    Summary (1) → Work Experience (2) → ... → Education → Certifications
-VARIABLE: Skills and Projects between Work and Education, ordered by match score
+FIXED:    Summary → Work Experience → ... → Education → Certifications
+VARIABLE: Skills and Projects between Work and Education, by match score
 ```
 
 #### 4.7 Final score
 
 ```python
-fit_score = (
-    best_experience_score * 0.50 +
-    summary_score * 0.20 +
-    avg_skill_pool_match * 0.30
-)
-
+fit_score = best_experience_score * 0.50 + summary_score * 0.20 + avg_skill_pool_match * 0.30
 success_prob = seniority_score * 0.60 + recency_score * 0.40
 # Seniority: junior→1.0, mid→0.80, senior→0.40, lead→0.15
-
-# recency_score bands: <1h→1.0, 1-3h→0.8, 3-6h→0.6, 6-12h→0.4, >12h→0.2
-
-final_score = (
-    fit_score * 0.55 +
-    success_prob * 0.30 +
-    recency_score * 0.10 +
-    best_project_score * 0.05
-)
+# Recency bands: <1h→1.0, 1-3h→0.8, 3-6h→0.6, 6-12h→0.4, >12h→0.2
+final_score = fit_score * 0.55 + success_prob * 0.30 + recency_score * 0.10 + best_project_score * 0.05
 ```
 
-Apply threshold: final_score >= 0.50.
-
-#### 4.8 Cycle-aware picking
+#### 4.8 Match decision (no quotas)
 
 ```
-At end of Layer 4 per run:
-  cycle = "peak" if 8am-11am IST else "regular"
-  N = 3 if peak else 1
-  Combine new eligible (>= 0.50) with active 12-hour queue
-  Sort by final_score, descending
-  Pick top N → Layer 5
-  Unpicked → application_queue (expires after 12h → STALE)
+final_score >= 0.50 → build resume (selection) + notify
+final_score <  0.50 → not_applied (LOW_SCORE)
+```
+
+Every qualifying match triggers Layer 5 (build selection) and a Layer 8 notification. No top-N picking, no application_queue, no 12-hour decay — those were artifacts of rationing auto-applications, which no longer exist.
+
+#### 4.9 Layer 4 output
+
+```python
+class SelectionResult:
+    job_id: str
+    selected_experiences: list[(ExpId, [BulletId], position)]
+    selected_projects: list[(ProjId, [BulletId])]
+    selected_summary_id: str
+    section_order: list[str]
+    top_skill_candidates: list[str]
+    top_skill_scores: dict[str, float]
+    gap_skills: list[str]
+    gap_skill_scores: dict[str, float]
+    title_alias_candidates: dict[ExpId, list[str]]
+    expected_salary_lpa: float
+    final_score: float
 ```
 
 ---
@@ -308,114 +356,68 @@ class ResumeBuildLLMOutput(BaseModel):
     cover_letter_text: str = Field(max_length=900)
 ```
 
-#### 5.2 DOCX assembler — structural detection
+#### 5.2 Output is selection_json, NOT a stored PDF
 
-Clone-and-fill the user's template DOCX. Never rebuild paragraphs from scratch.
+The builder resolves the final selection (experiences, bullets, projects, summary, skill categories, title aliases, cover letter) and writes it to the `applied` table as `selection_json` (~2 KB). **No PDF is rendered or stored here.** PDF/DOCX rendering happens on-demand at the endpoint (Layer 6).
 
-**Region detection:** walk by Heading1 paragraphs to identify sections.
-
-**Header preservation:** paragraphs before WORK EXPERIENCE never touched (preserves GitHub, LinkedIn, Certificates hyperlinks).
-
-**Build flow:**
-1. Open template
-2. Replace summary text
-3. WORK EXPERIENCE: clone first experience block as template, fill per selected experience
-4. SKILLS: clone skill row template, fill per ordered category
-5. PROJECTS: same pattern; update embedded "Code →" hyperlink target via `r:id` modification in `word/_rels/document.xml.rels`
-6. EDUCATION: untouched
-7. CERTIFICATES: clone per certification, update "Verify Here" hyperlink target
-8. Reorder Skills/Projects sections per section_order
-9. Diff validate
-10. Save to S3 at `s3://{bucket}/resumes/applied/{job_id}_{timestamp}.docx`
-11. Convert to PDF via LibreOffice headless
-12. Upload PDF to S3 at `s3://{bucket}/resumes/applied/{job_id}_{timestamp}.pdf`
-13. Record in `applied` table with `resume_s3_uri`
-
-**Preservation guarantees:** tab stops, spacing, fonts, colors, native bullet list refs (numId) — all inherited via XML deep clone. Hyperlinks updated by `r:id` target swap, visible text unchanged.
-
-#### 5.3 PDF storage — AWS S3 (Iteration 2 onward)
-
-```
-Bucket structure:
-  s3://{config.aws.s3_bucket}/
-    resumes/applied/{job_id}_{timestamp}.pdf    permanent
-    resumes/applied/{job_id}_{timestamp}.docx   permanent
-    cover_letters/{job_id}_{timestamp}.pdf      permanent (when applicable)
-
-Lifecycle:
-  resumes/applied/*    NEVER auto-deleted (audit trail)
-  Versioning enabled
-  IAM role with minimal s3:PutObject + s3:GetObject permissions
-  Bucket private (no public access)
-  Presigned URLs generated on demand for Sheets/Telegram links
+```python
+class StoredSelection(BaseModel):
+    job_id: str
+    summary_id: str
+    experiences: list[{exp_id, title_alias, bullet_ids: list[str], position}]
+    projects: list[{proj_id, bullet_ids: list[str]}]
+    skills: {familiar_with: list[str], categories: list[{name, skills}]}
+    section_order: list[str]
+    cover_letter_text: str
+    template_version: str            # which template this was built against
+    built_at: timestamp
 ```
 
-The `applied` table stores the S3 URI, not local paths. PDFs accessible from anywhere via presigned URLs.
+`template_version` lets the endpoint know whether a cached PDF is stale relative to the current template.
+
+#### 5.3 Why selection-not-PDF
+
+- Storage is ~2 KB per job, not 100-300 KB. Effectively never piles up.
+- Improving the template later regenerates every past resume with the new design automatically.
+- The selection IS the tailored resume in compact form; the PDF is just a render.
 
 ---
 
-### Layer 6 — Application Sender
+### Layer 6 — Application Assist (renamed from Sender)
 
-#### 6.1 Decision tree
+Two responsibilities. No Playwright, no form filling, no submission.
 
-```
-Tailored PDF ready in S3
-  ↓ download to local /tmp for Playwright upload
-Indeed Easy Apply           → proceed
-Glassdoor external redirect → MANUAL_REQUIRED
-CAPTCHA / unknown form      → MANUAL_REQUIRED
-```
+#### 6.1 Notification builder
 
-#### 6.2 Session management
+For every job scoring >= 0.50, Layer 8 sends a Telegram message bundling everything (see Layer 8 format). The user applies manually.
 
-First run manual: log in to Indeed, cookies saved to `data/sessions/indeed.json`. Subsequent: load cookies, skip login. Expired: immediate alert, skip portal.
-
-#### 6.3 Multi-page flow
-
-Discover fields per page → classify (profile/salary/upload/question/yesno) → fill non-question fields → collect unknown questions → batch via Gemini Call 2 if needed → safe mode holds for review → submit final page → log to `applied`.
-
-Page signature loop detection. Max 10 pages.
-
-#### 6.4 Field handling
+#### 6.2 Resume endpoint (FastAPI on the VM)
 
 ```
-Resume upload    → download from S3 to /tmp, upload, delete /tmp
-                   Renamed to "Vishnujan_Narayanan_Resume.pdf"
-Profile fields   → master_profile.personal
-Years exp        → 1.5
-Notice period    → Immediate
-Work auth        → Yes
+GET /resume/{job_id}.pdf
+GET /resume/{job_id}.docx
 
-Expected salary
-  text     → f"{expected_salary_lpa} LPA"
-  numeric  → expected_salary_lpa * 100000
-  dropdown → band containing value
-  slider   → expected_salary_lpa * 100000
-
-Current salary
-  text     → strategic redirect
-  numeric  → 100000
-  dropdown → band containing 100000
+Flow:
+  1. Look up pdf_cache (or docx_cache) for this job_id + current template_version
+  2. Cache hit (within 1-month TTL, matching template) → serve from S3
+  3. Cache miss:
+       load StoredSelection from DB
+       load current template
+       render DOCX via assembler (Option A structural detection)
+       if .pdf requested: convert DOCX → PDF via LibreOffice
+       upload rendered file to S3 cache with 1-month expiry
+       serve it
+  4. If StoredSelection's template_version != current template:
+       re-render against current template, refresh cache
 ```
 
-#### 6.5 Cover letter
+Rendering takes ~5s on a cache miss, instant on a hit. The endpoint is small (~100 lines FastAPI) and doubles as the foundation for the optional Iteration 7 dashboard.
 
-Detect field type. Textarea → fill from Call 1b text. File upload → render to PDF, upload to S3, download for form upload as `Vishnujan_Narayanan_Cover_Letter.pdf`. No field → skip.
+#### 6.3 DOCX assembler — structural detection (unchanged from prior design)
 
-#### 6.6 Question handling — 4 categories
+Clone-and-fill the user's template. Header never touched (preserves hyperlinks). Project "Code →" and certificate "Verify Here" hyperlink targets updated via `r:id` modification in `word/_rels/document.xml.rels`, visible text unchanged. Tab stops, spacing, fonts, native bullet list refs preserved via XML deep clone.
 
-```
-Cat 1   Profile lookup       auto-fill from master_profile.personal
-Cat 2   Resume-derived       auto-fill from master profile
-Cat 3   Judgement            bank match → adapt → review
-Cat 4   Legally sensitive    MANUAL_REQUIRED
-```
-
-Cat 3 two-stage: question pattern match → JD context match → auto-fill (>0.80), adapt (<0.80), or fresh draft.
-
-#### 6.7 Human voice
-
-Banned words (leverage, scalable, robust, holistic, etc.) and structures (three-point lists, opening with credentials) checked post-generation. Fabrication check: tech names + numbers must exist in master_profile text. Regenerate up to 2x.
+This assembler now runs inside the endpoint on demand, not in a batch step.
 
 ---
 
@@ -423,31 +425,38 @@ Banned words (leverage, scalable, robust, holistic, etc.) and structures (three-
 
 #### 7.1 Database — PostgreSQL on Neon
 
-3GB free, pgvector, psycopg3, SQLAlchemy 2.0 async, pool_pre_ping enabled.
+3GB free, pgvector, psycopg3, SQLAlchemy 2.0 async, pool_pre_ping.
 
-#### 7.2 File storage — AWS S3 (Iteration 2 onward)
+#### 7.2 S3 — cache + backup (Iteration 2 onward)
 
 ```
-s3://{bucket}/resumes/applied/   permanent, versioned, IAM-restricted
-s3://{bucket}/cover_letters/     permanent
-```
+s3://{bucket}/pdf_cache/{job_id}_{template_version}.pdf     1-month expiry
+s3://{bucket}/docx_cache/{job_id}_{template_version}.docx   1-month expiry
+s3://{bucket}/backups/selection_json/{date}/...             selection_json backup
 
-Local filesystem used only for transient files (Playwright session cookies, screenshots in manual queue, logs being shipped to CloudWatch).
+PDF/DOCX cache survives VM restarts (lives in S3, not VM /tmp).
+selection_json backup: daily export of the applied table's selections
+  to S3, in case Neon data is lost. Neon also backs up independently;
+  this is belt-and-suspenders the user explicitly wanted.
+S3 lifecycle rule auto-expires cache objects after 1 month.
+Bucket private, versioning on backups prefix, IAM-restricted.
+```
 
 #### 7.3 Schema
 
 ```sql
--- All_jobs: permanent archive of every scraped job
 CREATE TABLE all_jobs (
     job_id TEXT PRIMARY KEY,
     company TEXT NOT NULL,
     role TEXT NOT NULL,
-    site TEXT NOT NULL,
+    site TEXT NOT NULL,              -- indeed | glassdoor | linkedin
     location TEXT,
     job_url TEXT,
+    apply_url TEXT,
     posted_at TIMESTAMPTZ,
     scraped_at TIMESTAMPTZ DEFAULT NOW(),
     jd_text TEXT,
+    jd_embedding vector(384),        -- for near-duplicate detection
     required_skills JSONB,
     nice_to_have JSONB,
     responsibilities JSONB,
@@ -461,59 +470,42 @@ CREATE TABLE all_jobs (
     salary_min_lpa REAL,
     salary_max_lpa REAL,
     salary_currency TEXT,
-    outcome TEXT,
+    outcome TEXT,                    -- matched | not_applied
+    near_duplicate_of TEXT NULL,     -- references all_jobs(job_id)
     outcome_at TIMESTAMPTZ
 );
 CREATE INDEX idx_all_jobs_scraped ON all_jobs(scraped_at DESC);
 CREATE INDEX idx_all_jobs_outcome ON all_jobs(outcome);
-CREATE INDEX idx_all_jobs_skills ON all_jobs USING GIN(required_skills);
+CREATE INDEX idx_all_jobs_embedding ON all_jobs USING ivfflat (jd_embedding vector_cosine_ops);
 
--- Applied: jobs successfully submitted, with audit trail
+-- Matched jobs: a resume selection was built and the user notified
 CREATE TABLE applied (
     job_id TEXT PRIMARY KEY REFERENCES all_jobs(job_id),
-    apply_type TEXT,
-    resume_s3_uri TEXT,                -- S3 URI to PDF
-    resume_s3_key TEXT,                -- bucket key for presigned URL generation
+    selection_json JSONB,            -- the StoredSelection (~2 KB)
+    template_version TEXT,
     cover_letter_text TEXT,
-    cover_letter_used BOOLEAN DEFAULT FALSE,
-    cover_letter_s3_uri TEXT NULL,
-    selection_json JSONB,
     expected_salary_lpa REAL,
     fit_score REAL,
     success_prob REAL,
     recency_score REAL,
     final_score REAL,
     gap_skills JSONB,
-    application_status TEXT,
-    failure_reason TEXT,
-    applied_at TIMESTAMPTZ DEFAULT NOW()
+    notified_at TIMESTAMPTZ,
+    user_status TEXT DEFAULT 'pending',  -- pending | applied | skipped (user sets via Telegram/Sheet)
+    built_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Not_applied: structured reasons for every rejected job
 CREATE TABLE not_applied (
     job_id TEXT PRIMARY KEY REFERENCES all_jobs(job_id),
     reason_category TEXT NOT NULL,
     reason_detail TEXT,
     fit_score REAL,
-    success_prob REAL,
-    recency_score REAL,
     final_score REAL,
     gap_skills JSONB,
     in_field BOOLEAN,
     not_applied_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Application queue (12-hour decay)
-CREATE TABLE application_queue (
-    job_id TEXT PRIMARY KEY REFERENCES all_jobs(job_id),
-    final_score REAL,
-    status TEXT,
-    queued_at TIMESTAMPTZ DEFAULT NOW(),
-    expires_at TIMESTAMPTZ
-);
-CREATE INDEX idx_queue_status ON application_queue(status, expires_at);
-
--- Processing queue (transient per-run)
 CREATE TABLE processing_queue (
     job_id TEXT PRIMARY KEY REFERENCES all_jobs(job_id),
     status TEXT,
@@ -521,7 +513,18 @@ CREATE TABLE processing_queue (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Master profile bullets (NEVER hard-deleted)
+-- PDF/DOCX cache tracking (the files live in S3; this tracks them)
+CREATE TABLE render_cache (
+    cache_key TEXT PRIMARY KEY,      -- {job_id}_{template_version}_{ext}
+    job_id TEXT REFERENCES all_jobs(job_id),
+    format TEXT,                     -- pdf | docx
+    template_version TEXT,
+    s3_uri TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ           -- created_at + 1 month
+);
+CREATE INDEX idx_render_cache_expiry ON render_cache(expires_at);
+
 CREATE TABLE master_bullets (
     bullet_id TEXT PRIMARY KEY,
     parent_id TEXT NOT NULL,
@@ -559,42 +562,8 @@ CREATE TABLE master_title_aliases (
 CREATE INDEX idx_aliases_parent ON master_title_aliases(parent_id);
 CREATE INDEX idx_aliases_embedding ON master_title_aliases USING ivfflat (embedding vector_cosine_ops);
 
-CREATE TABLE master_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-
-CREATE TABLE search_rotation_state (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-
-CREATE TABLE answer_bank (
-    id TEXT PRIMARY KEY,
-    question_patterns JSONB,
-    jd_contexts JSONB,
-    answer TEXT,
-    approved_by_user BOOLEAN DEFAULT FALSE,
-    times_used INTEGER DEFAULT 0,
-    last_used TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE pending_review (
-    id TEXT PRIMARY KEY,
-    job_id TEXT,
-    company TEXT,
-    role TEXT,
-    question_text TEXT,
-    question_category INTEGER,
-    bank_match_id TEXT,
-    bank_match_score REAL,
-    gemini_draft TEXT,
-    user_answer TEXT,
-    status TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    reviewed_at TIMESTAMPTZ
-);
+CREATE TABLE master_meta (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE search_rotation_state (key TEXT PRIMARY KEY, value TEXT);
 
 CREATE TABLE portal_health (
     site TEXT PRIMARY KEY,
@@ -610,64 +579,79 @@ CREATE TABLE company_cooldown (
 );
 ```
 
+Tables removed in the pivot: `answer_bank`, `pending_review`, `application_queue`.
+
 #### 7.4 not_applied reason categories
 
 ```
 HARD_FILTER_LAYER_2     Rejected at scrape on raw text
-HARD_FILTER_LAYER_3     Rejected after Gemini parse on structured data
-ROLE_MISMATCH           JD role doesn't match search term cluster
-LOCATION_DISALLOWED     JD location in disallowed regions
-LOW_SCORE               Passed filters, final_score < 0.50
-STALE                   Queued but expired 12-hour decay
+HARD_FILTER_LAYER_3     Rejected after Gemini parse
+ROLE_MISMATCH           Doesn't match search term cluster
+LOCATION_DISALLOWED     Location in disallowed regions
+NEAR_DUPLICATE          JD ~identical to an already-notified job (>0.95)
+LOW_SCORE               final_score < 0.50
 PARSE_FAILURE           Couldn't parse JD
-BUILD_FAILURE           Layer 5 failed
-APPLY_FAILURE           Submission failure
-MANUAL_REQUIRED         Can't auto-apply
-REJECTED_BY_USER        Marked skip during review
-COMPANY_COOLDOWN        Same company applied <10 days ago
-DUPLICATE               Already in all_jobs
+BUILD_FAILURE           Layer 5 selection build failed
+COMPANY_COOLDOWN        Same company <10 days ago
+DUPLICATE               Exact job_id already seen
 ```
+
+Removed: APPLY_FAILURE, MANUAL_REQUIRED, REJECTED_BY_USER, STALE (all auto-apply artifacts).
 
 #### 7.5 Failure handling
 
 ```
-Network blip          → pool_pre_ping auto-recovers
-Neon down             → backoff 3x → buffer to data/pending_writes.jsonl
-S3 down               → keep DOCX/PDF locally in /tmp, retry upload next run
-                        Record applied with placeholder S3 URI flagged for retry
-Cold start            → ~500ms accepted
+Neon down        → backoff 3x → buffer writes to data/pending_writes.jsonl
+S3 down          → endpoint serves a freshly-rendered file without caching
+                   it (degraded but functional); backup export retries next run
+CloudWatch down  → log locally, ship next run (non-blocking)
+Cold start       → ~500ms accepted
 ```
 
 ---
 
 ### Layer 8 — Notifications
 
-**Telegram morning digest (8am IST):**
-- Applied last 24h with final_score and presigned S3 URLs to resumes
-- Skipped counts by category
-- Manual-required jobs with apply URLs and resume PDF presigned links
-- Failures, portal health, Sheets link
+**Per-match Telegram message (every job >= 0.50, as found):**
 
-**Telegram review requests (immediate, Cat 3 questions):** inline approve/edit/skip.
+```
+🎯 0.78
+Senior Python Engineer
+Acme Fintech · Remote · 12 LPA · via LinkedIn
 
-**CloudWatch alarms (Iteration 3 onward):**
-- APPLY_FAILURE rate > 3 in 24h → SNS → Telegram
-- Session expired → immediate Telegram (CloudWatch logs + alarm)
-- 3 consecutive zero-result scrapes → Telegram
-- master_profile validation failure → Telegram
+[📋 Apply]   → apply_url (LinkedIn/Indeed/Glassdoor listing)
+[📄 PDF]     → https://{vm}/resume/{job_id}.pdf
+[📝 DOCX]    → https://{vm}/resume/{job_id}.docx
 
-Telegram remains the primary user-facing channel. CloudWatch provides the operational backbone (alarms, metric filters on structured logs) without replacing Telegram.
+Why: strong backend + financial-data match
+Gap skills they want: Kafka, Airflow
+```
+
+The message bundles apply link and resume links together — it IS the linkage between JD and resume. Tap Apply to go to the listing; tap PDF/DOCX to view/save the tailored resume.
+
+**Optional inline buttons:** "Mark applied" / "Skip" — updates `applied.user_status` so the Sheet reflects what you've acted on.
+
+**CloudWatch alarms (Iteration 3+):** endpoint down, error rate spike, scraper consecutive-zeros, master_profile validation failure → route to Telegram.
 
 ---
 
 ### Layer 9 — Analytics
 
-**Sheets (live view from Postgres):**
-- Sheet 1: Applied jobs with presigned S3 URLs to PDFs
-- Sheet 2: Relevant skipped jobs
-- Sheet 3: Manual-required jobs
+**Sheets (live from Postgres) — your master "which-resume-for-which-job" index:**
 
-**Google Docs (monthly):** Sunday report synthesized by Gemini covering skill demand, recurring gaps (30%+ alert), companies hiring, salary ranges.
+```
+Sheet 1 — Matches
+  Date | Company | Role | Match | Salary | Source | Apply Link |
+  PDF Link | DOCX Link | Status (pending/applied/skipped) | Gap Skills
+
+You never browse raw files. This sheet is the index. Every row links
+to the apply page and the on-demand resume.
+
+Sheet 2 — Relevant skipped (LOW_SCORE but in-field)
+Sheet 3 — Near-duplicates (what got deduped, linked to originals)
+```
+
+**Google Docs (monthly):** Gemini Sunday report — skill demand, recurring gaps (30%+ alert), companies hiring, salary ranges.
 
 ---
 
@@ -676,185 +660,59 @@ Telegram remains the primary user-facing channel. CloudWatch provides the operat
 ### 5.1 Services used
 
 ```
-S3              Iteration 2  → DOCX/PDF resumes, cover letters
-                              versioned, IAM-restricted, presigned URLs
-IAM             Iteration 2  → role for Oracle VM with minimal S3 permissions
-                              Iteration 3: extend with CloudWatch logs/metrics
-CloudWatch      Iteration 3  → structured log ingestion, metric filters,
-                              alarms on APPLY_FAILURE rate and session expiry
-SQS             Iteration 6  → decouple scraper from parser/scorer workers
-                              ONLY if volume justifies (multi-portal scaling)
+S3          Iteration 2  → PDF/DOCX render cache (1-month TTL, survives
+                          VM restart) + daily selection_json backup
+IAM         Iteration 2  → minimal role: S3 cache/backup + CloudWatch
+CloudWatch  Iteration 3  → endpoint + pipeline observability, alarms
+SQS         Iteration 6  → scraper/worker decoupling, only if volume needs
 ```
 
 ### 5.2 Services explicitly NOT used
 
 ```
-RDS             Neon free tier is forever free with pgvector
-Lambda          Bad fit for Playwright + Chromium
-ECS / Fargate   Oracle Always Free VM cheaper and persistent
-EventBridge     Cron on Oracle VM is sufficient
-EKS             Massive overkill
-SNS             Telegram is the user channel; CloudWatch alarms invoke
-                Telegram bot directly via webhook
+RDS, Lambda (runtime), ECS, Fargate, EKS, EventBridge (as scheduler), SNS
+(reasons: Neon is forever-free with pgvector; Oracle VM is the persistent
+host; Telegram + a tiny alarm hook cover notifications)
 ```
+
+Note: a single tiny Lambda (ping-Telegram-on-CloudWatch-alarm) is the one acceptable Lambda use — free tier covers it (~100 invocations/month vs 1M free).
 
 ### 5.3 Cost model
 
 ```
-Service           Tier type         Bot usage          Cost projection
-─────────────────────────────────────────────────────────────────────────────
-S3 storage        12-month free     ~1GB after year 1  $0 for first 12 months,
-                  (5GB)                                  then ~$0.025/GB-month
-                                                         (~$0.30/year)
-S3 requests       Always-free       ~50/day            $0 forever
-                  (20K GET / 2K
-                  PUT per month)
-CloudWatch logs   Always-free       <100MB/month       $0 forever
-                  (5GB ingest)
-CloudWatch alarms Always-free       ~5 alarms          $0 forever
-                  (10 alarms)
-IAM               Always-free       1 user + 1 role    $0 forever
-SQS               Always-free       <10K/month         $0 forever
-                  (1M requests)
-Budgets           Always-free       2 budgets          $0 forever
-                  (first 2)
-Billing alarm     Always-free       1 alarm            $0 forever
-Lambda (alerts)   Always-free       <100 invocations   $0 forever
-                  (1M / month)        per year
-
-Expected total    Year 1:  $0/month
-                  Year 2+: ~$0.025/month (~$0.30/year)
-Hard cap          $1/month — Budget Action auto-stops bot if breached
+S3          cache ~1GB peak + backups ~tens of MB. Free tier 5GB. → $0
+CloudWatch  ~100MB/month logs. Free tier 5GB ingest. → $0
+IAM, SQS    free / negligible
+Total AWS   $0/month. Billing alarm at $1; if it fires, disable the
+            offending service, never pay.
 ```
 
-The bot CANNOT exceed $1/month: at that threshold a Budget Action detaches the runtime IAM policy, preventing further S3 writes. Existing storage continues to accrue ~$0.025/GB-month until manually addressed, but new growth stops. A breached budget is treated as an incident, never resolved by raising the cap.
-
-### 5.4 IAM policy (minimal)
+### 5.4 IAM minimal permissions
 
 ```
-Role:    job-bot-oracle-vm-role
-Trust:   Oracle Cloud VM (via AWS access key + secret on VM,
-         rotated quarterly — or via AWS SSO if Oracle integrates)
-
-Permissions:
-  s3:PutObject, s3:GetObject, s3:DeleteObject  on the bot's bucket
-  logs:CreateLogStream, logs:PutLogEvents      on the bot's log group
-  cloudwatch:PutMetricData                     on the bot's namespace
-  
-Explicitly DENIED:
-  s3:*Bucket actions (no bucket-level ops from runtime)
-  iam:* (no privilege escalation)
-  ec2:*, rds:*, lambda:* (not in scope)
+s3:PutObject, s3:GetObject, s3:DeleteObject   on the bot's bucket
+logs:CreateLogStream, logs:PutLogEvents       on the bot's log group
+cloudwatch:PutMetricData                      on the bot's namespace
+DENIED: bucket-level ops, iam:*, ec2:*, rds:*, lambda:* (except the
+        alarm Lambda's own minimal role)
 ```
 
-### 5.5 Billing safeguards (Iteration 0.1 — MUST be in place before any S3/CloudWatch resource)
+### 5.5 Region
 
-```
-Layer 1 — Tripwire (informational)
-  AWS Budget                      $0.01/month, monthly cycle
-  Notification                    Email + Telegram on actual or forecasted breach
-  Purpose                         Tells you the moment AWS charges anything
-
-Layer 2 — Warning
-  CloudWatch billing alarm        $0.50/month threshold
-  Region                          us-east-1 (billing metrics only publish there)
-  Routing                         SNS → Lambda (jobbot-billing-to-telegram)
-                                  → Telegram chat
-  Purpose                         Early human review before hard stop
-
-Layer 3 — Hard stop
-  AWS Budget                      $1.00/month with Budget Action
-  Action                          iam:DetachUserPolicy on
-                                  user/job-bot-runtime
-                                  policy/job-bot-runtime-policy
-  Executor role                   job-bot-budgets (SEPARATE from runtime)
-  Effect                          Runtime user loses S3/CloudWatch write
-                                  permissions instantly; bot APPLY_FAILURE
-                                  alarm fires within minutes from the
-                                  failing S3 PutObject calls
-  Purpose                         Bot physically cannot spend past $1
-```
-
-**Separation of concerns:**
-
-```
-job-bot-runtime         Permissions: S3 PutObject/GetObject/DeleteObject
-                        on bucket, CloudWatch logs/metrics on namespace
-                        Cannot: modify budgets, alarms, IAM, or itself
-                        This is the daily runtime identity.
-
-job-bot-budgets         Permissions: budgets:* on the bot's budgets,
-                        iam:DetachUserPolicy scoped to job-bot-runtime
-                        + job-bot-runtime-policy ONLY
-                        Cannot: read S3, write logs, run anything
-                        This identity exists ONLY to execute the kill
-                        switch when the $1 budget breaches.
-
-Owner (you)             Full account access via root + MFA.
-                        Re-attaches runtime policy after a kill switch
-                        fires, only after investigating root cause.
-```
-
-**Incident response when a budget fires:**
-
-```
-$0.01 fired   → Telegram alert "AWS billing began"
-                Open Cost Explorer, identify the service.
-                Likely just expected post-12-month S3 storage.
-                No action needed unless unexpected.
-
-$0.50 fired   → Telegram alarm "AWS billing exceeded $0.50 warning"
-                Cost Explorer review mandatory within 24h.
-                If runaway pattern: manually detach runtime policy
-                before the $1 budget does it automatically.
-
-$1.00 fired   → Bot stops. Telegram receives both the Budget Action
-                notification and the APPLY_FAILURE alarm shortly after.
-                MUST investigate root cause before re-attaching policy.
-                NEVER raise the cap. Likely causes: bug looping
-                S3 writes, master_profile churn re-embedding everything,
-                someone got the AWS keys.
-```
-
-**Verification before going live:**
-
-```
-1. Manually trigger the $0.01 path: lower the budget to $0.001, wait
-   for actual usage to cross it, confirm Telegram delivery.
-2. Manually trigger the kill switch: lower the $1 budget to $0.01
-   temporarily, confirm IAM policy gets detached, re-attach manually,
-   reset budget to $1.
-3. Document the manual policy re-attach steps in README.md so you
-   can recover the bot at 3am without thinking.
-```
-
-### 5.6 Failure handling for AWS dependency
-
-```
-S3 transient failure   → retry 3x with exponential backoff
-S3 persistent failure  → keep file locally in /tmp/pending_uploads/
-                         → applied row created with s3_uri NULL and
-                           flag pending_upload=true
-                         → next successful run drains pending uploads
-CloudWatch failure     → log locally to data/logs/, ship next run
-                         (CloudWatch is informational, not blocking)
-IAM credential expired → immediate Telegram alert, bot halts until fixed
-                         (no S3 = no resume storage = no applications)
-```
+All AWS resources in `ap-south-1` (Mumbai).
 
 ---
 
-## 6. Gemini Call Strategy — 3 calls max per job
+## 6. Gemini Call Strategy — 2 calls max per job
 
 ```
-CALL 1a — JD parse (ALWAYS)                          ~800 tokens
-CALL 1b — title + skills + cover letter              ~1800 tokens
-          (only if final_score >= 0.50 AND picked)
-CALL 2  — batched form questions                     ~2000 tokens
-          (only if unknown form questions)
+CALL 1a — JD parse (ALWAYS)                  ~800 tokens
+CALL 1b — title + skills + cover letter      ~1800 tokens
+          (only if final_score >= 0.50)
 
-Per-job: 1 / 2 / 3 calls depending on path
-Daily expected: ~600 calls (free tier 1500/day)
+Per-job: 1 call (rejected) or 2 calls (matched)
+Daily expected: well within 1500/day free tier
+(Old Call 2 for form questions removed.)
 ```
 
 ---
@@ -863,25 +721,25 @@ Daily expected: ~600 calls (free tier 1500/day)
 
 ```
 Language          Python 3.11+
-Scraping          JobSpy (Indeed, Glassdoor)
-Browser           Playwright
+Scraping          JobSpy (Indeed, Glassdoor, LinkedIn — listings only)
 NLP validation    spaCy
 Embeddings        sentence-transformers (all-MiniLM-L6-v2)
 LLM               Gemini 2.0 Flash via Instructor + Pydantic
-Database          PostgreSQL on Neon (free tier, pgvector)
+Database          PostgreSQL on Neon (free, pgvector)
 DB driver         psycopg3
 ORM               SQLAlchemy 2.0
-Resume building   python-docx
-PDF conversion    LibreOffice headless
-PDF rendering     reportlab (cover letter)
-File storage      AWS S3 (Iteration 2+)
-Observability     structlog → CloudWatch (Iteration 3+)
-Auth              AWS IAM role (Iteration 2+)
+Resume building   python-docx (in the on-demand endpoint)
+PDF conversion    LibreOffice headless (in the endpoint)
+Endpoint          FastAPI (serves /resume/{job_id}.pdf|.docx)
+Cache + backup    AWS S3 (Iteration 2+)
+Observability     structlog → watchtower → CloudWatch (Iteration 3+)
+AWS SDK           boto3
 Notifications     Telegram Bot API
 Reporting         gspread, Google Docs API
 Hosting iter 1-4  Local machine
 Hosting iter 5+   Oracle Cloud Always Free VM
-AWS Region        ap-south-1 (Mumbai) for latency
+Region            ap-south-1
+NO Playwright     (removed in the pivot)
 Total cost        $0/month
 ```
 
@@ -897,10 +755,7 @@ job-bot/
 │       ├── resume_template.docx
 │       └── cover_template.docx
 ├── data/
-│   ├── sessions/                   (Playwright cookies, gitignored)
-│   ├── manual_queue/               (screenshots, gitignored)
 │   ├── logs/                       (gitignored, shipped to CloudWatch)
-│   ├── pending_uploads/            (S3 upload buffer, gitignored)
 │   └── pending_writes.jsonl        (DB outage buffer, gitignored)
 ├── config/
 │   └── config.yaml                 (includes parser.role_clusters, aws.*)
@@ -910,43 +765,37 @@ job-bot/
 │   │   ├── __init__.py
 │   │   ├── jobspy_wrapper.py
 │   │   ├── rotation.py
-│   │   └── filters.py
+│   │   ├── filters.py
+│   │   └── dedup.py                (near-duplicate detection)
 │   ├── parser.py
 │   ├── scorer/
 │   │   ├── __init__.py
 │   │   ├── embeddings.py
 │   │   ├── selector.py
-│   │   ├── ordering.py
-│   │   └── apply_decision.py
+│   │   └── ordering.py
 │   ├── builder/
 │   │   ├── __init__.py
 │   │   ├── llm_call.py
 │   │   ├── skills_validator.py
-│   │   ├── assembler.py
-│   │   ├── hyperlinks.py
-│   │   └── pdf_convert.py
-│   ├── sender/
+│   │   └── selection.py            (produces StoredSelection)
+│   ├── endpoint/                   (NEW — replaces old sender/)
 │   │   ├── __init__.py
-│   │   ├── indeed.py
-│   │   ├── glassdoor.py
-│   │   ├── fields.py
-│   │   ├── questions.py
-│   │   ├── bank.py
-│   │   ├── cover_letter.py
-│   │   ├── pdf_render.py
-│   │   └── voice.py
+│   │   ├── app.py                  (FastAPI, /resume routes)
+│   │   ├── assembler.py            (DOCX structural detection)
+│   │   ├── hyperlinks.py
+│   │   ├── pdf_convert.py
+│   │   └── cache.py                (S3 cache get/put + TTL)
 │   ├── state/
 │   │   ├── __init__.py
 │   │   ├── models.py
 │   │   ├── migrations/
 │   │   ├── master_profile.py
-│   │   ├── queue.py
 │   │   └── cleanup.py
 │   ├── aws/
 │   │   ├── __init__.py
-│   │   ├── s3.py                   (upload, presigned URL generation)
-│   │   ├── cloudwatch.py           (log shipping, custom metrics)
-│   │   └── iam_session.py          (boto3 session, credential handling)
+│   │   ├── s3.py                   (cache objects + backup export)
+│   │   ├── cloudwatch.py
+│   │   └── iam_session.py
 │   ├── notifications.py
 │   ├── analytics.py
 │   ├── llm/
@@ -964,189 +813,98 @@ job-bot/
 └── README.md
 ```
 
+Removed from the old structure: `src/sender/` (Playwright, fields, questions, bank, voice-for-forms). The cover-letter text generation stays (in builder/llm_call), but cover-letter PDF rendering, if a user wants it, happens in the endpoint.
+
 ---
 
 ## 9. Build Sequence
 
-The build proceeds in iterations, not layer-by-layer. Each iteration produces an end-to-end testable system. AWS services are introduced exactly when their purpose becomes real — no intermediate filesystem code that gets replaced by S3 later.
-
 ### ITERATION 0 — SCAFFOLD ✅ COMPLETE
+### ITERATION 1 — END-TO-END SKELETON ✅ COMPLETE (old design — see Migration Note)
 
-Repo structure, requirements.txt, config.yaml (initial), .env.example, tests/conftest.py + smoke test, src/main.py orchestrator docstring, README.md, CHANGELOG.md initialized.
-
-### ITERATION 0.1 — AWS PREPARATION (RETROACTIVE)
-
-Before Iteration 1 begins, the scaffold needs these additions to support AWS integration starting at Iteration 2:
+### ITERATION 2 — PIVOT CLEANUP + REAL DATA FLOW
 
 ```
-1. config.yaml gets an aws: section:
+A. CLEANUP (do first — remove obsolete Iteration-1 stubs)
+   - Delete src/sender/ (Playwright, fields, questions, bank, voice-for-forms)
+   - Drop answer_bank, pending_review, application_queue from models +
+     migrations (write a migration that drops them if already created)
+   - Remove Gemini Call 2 stub and references
+   - Remove cycle-quota picking from the scorer
+   - Update CHANGELOG [Unreleased] with all removals
 
-   aws:
-     region: "ap-south-1"
-     s3_bucket: ""              # to be filled before Iteration 2
-     s3_resume_prefix: "resumes/applied/"
-     s3_cover_letter_prefix: "cover_letters/"
-     cloudwatch_log_group: "/jobbot/main"
-     cloudwatch_metric_namespace: "JobBot"
-     iam_role_arn: ""           # populated when role is created
-     presigned_url_expiry_seconds: 604800   # 7 days
+B. REAL DATA FLOW
+   - Layer 2 real: JobSpy on Indeed + Glassdoor + LinkedIn (listings),
+     serial rotation, short-circuit, near-duplicate detection (dedup.py)
+   - Layer 7: master_profile rebuild (validate, embed, upsert);
+     add render_cache table; add jd_embedding + near_duplicate_of to all_jobs
+   - Layer 3 real: Gemini Call 1a + spaCy + role acceptance
+   - Layer 4 real: selection algorithm; match decision (no quotas)
+   - Layer 5 real: Call 1b → StoredSelection written to applied table
+     (NO PDF rendered here)
+   - Layer 6 (endpoint): FastAPI app with /resume/{job_id}.pdf|.docx,
+     assembler, pdf_convert, S3 cache (cache.py)
+   - AWS: src/aws/s3.py (cache put/get + selection_json backup export),
+     iam_session.py; S3 bucket with 1-month lifecycle on cache prefixes
+   - Layer 8: per-match Telegram notification bundling apply + resume links
+   - Layer 9: Sheets index with apply/PDF/DOCX links + status column
 
-2. .env.example gets AWS keys:
-
-   AWS_ACCESS_KEY_ID=
-   AWS_SECRET_ACCESS_KEY=
-   AWS_REGION=ap-south-1
-   S3_BUCKET=
-
-3. requirements.txt gets:
-   boto3
-   watchtower         # structlog → CloudWatch handler
-
-4. .gitignore gets:
-   data/pending_uploads/
-
-5. New folder: src/aws/ with __init__.py only
-   (modules will populate in Iteration 2-3)
-
-6. AWS account setup (user task before Iteration 2):
-   - Create IAM user (or role) named job-bot-runtime
-   - Attach minimal policy (see Section 5.4)
-   - Create S3 bucket job-bot-{username}-resumes in ap-south-1
-   - Enable versioning, block public access
-   - Generate access key + secret for the IAM user
-   - Save to local .env
-
-7. CHANGELOG.md [Unreleased] entry:
-   ### Added
-   - AWS configuration block in config.yaml
-   - AWS credentials in .env.example
-   - boto3 and watchtower in requirements.txt
-   - src/aws/ package skeleton
+Acceptance:
+   - Real listings scraped from all three sources
+   - Near-duplicates correctly deduped (verify cross-portal repost)
+   - Matches produce StoredSelection in DB (no PDF pile)
+   - Telegram notification arrives per match with working links
+   - Clicking PDF/DOCX renders and serves the tailored resume (~5s cold,
+     instant cached); cache survives a VM restart (S3-backed)
+   - Sheet shows every match mapped to its resume + apply link
+   - Run for several days, review selections, tune thresholds in config
 ```
 
-**Acceptance:** AWS account ready, .env has working credentials, `aws s3 ls s3://{bucket}` works from local machine.
-
-### ITERATION 1 — END-TO-END SKELETON
-
-Goal: minimal cross-layer stubs so the pipeline runs end-to-end. Nothing applies to real portals; nothing makes real LLM calls. AWS not used yet (no resumes built yet to store).
+### ITERATION 3 — CLOUDWATCH OBSERVABILITY
 
 ```
-1. Layer 7: SQLAlchemy models + Alembic migrations for ALL tables.
-   Run migrations against Neon.
-2. Layer 1: python -m src.main --dry-run walks 9 layers in sequence.
-3. Layer 2 stub: returns 2-3 hardcoded fake jobs, writes to all_jobs.
-4. Layer 3 stub: returns fixed JDParsed object.
-5. Layer 4 stub: rejects all (since master_bullets is empty), logs
-   to not_applied with LOW_SCORE.
-6. Layers 5, 6: no-ops with valid function signatures.
-7. Layer 8: real Telegram message at end of run.
-8. Layer 9: no-op.
+- structlog → CloudWatch via watchtower
+- Metric filters: BUILD_FAILURE, endpoint 5xx, scraper zero-results
+- Alarms → tiny ping-Telegram Lambda → user
+- IAM extended with CloudWatch permissions
 ```
 
-**Acceptance:** dry-run completes, 3 fake jobs in all_jobs and not_applied, Telegram delivered, pytest green.
-
-User writes master_profile.yaml in parallel.
-
-### ITERATION 2 — REAL DATA FLOW + S3 + IAM
-
-Goal: replace stubs with real implementations. Resumes get built and stored in S3. Still no auto-applying.
+### ITERATION 4 — POLISH
 
 ```
-1. Layer 2 real: JobSpy on Indeed only, serial rotation, short-circuit.
-2. Layer 7 extended: master_profile rebuild script (validate, embed, write).
-3. Layer 3 real: Gemini Call 1a + spaCy + role acceptance.
-4. Layer 4 real: full selection algorithm, cycle picking, queue management.
-5. Layer 5 partial: selector + Call 1b + DOCX assembler + PDF conversion.
-6. AWS integration:
-   - src/aws/iam_session.py: boto3 session from .env
-   - src/aws/s3.py: upload_resume(), upload_cover_letter(),
-                     generate_presigned_url()
-   - Resume saved DIRECTLY to S3 (no local filesystem version kept,
-     except for transient /tmp during LibreOffice conversion)
-   - applied.resume_s3_uri stored in DB
-7. Layer 6: still no-op (no submission yet).
-8. Layer 8 extended: morning digest with presigned S3 URLs.
-9. Layer 9 minimal: Sheets with presigned S3 URLs in resume column.
-```
-
-**Acceptance:**
-- Real Indeed jobs scraped and parsed
-- Resumes built and uploaded to S3 (verify in AWS console)
-- Sheets shows clickable presigned URLs
-- Telegram digest delivered
-- Dry-run mode for 2-3 days, review every selection, tune thresholds
-
-### ITERATION 3 — ENABLE SUBMISSION + CLOUDWATCH
-
-Goal: auto-apply to Indeed. Operational observability via CloudWatch.
-
-```
-1. Layer 6 real: Indeed Easy Apply via Playwright.
-   - Resume downloaded from S3 to /tmp before form upload
-   - /tmp file deleted after upload
-2. Layer 6 fields, cover letter, questions, manual-required flow.
-3. Gemini Call 2 for unknown form questions.
-4. AWS CloudWatch integration:
-   - src/aws/cloudwatch.py: structlog → CloudWatch handler via watchtower
-   - Log group: /jobbot/main
-   - Metric filters on: APPLY_FAILURE, BUILD_FAILURE, MANUAL_REQUIRED
-   - Alarm: APPLY_FAILURE rate > 3 in 24h → CloudWatch alarm → Lambda
-     (only Lambda usage: tiny ping-Telegram function) → user Telegram
-   - Alarm: session_expired event count > 0 in 1h → same path
-5. IAM role extended with logs:CreateLogStream, logs:PutLogEvents,
-   cloudwatch:PutMetricData.
-```
-
-**Acceptance:**
-- First successful auto-apply confirmed (verify on Indeed)
-- CloudWatch logs visible in AWS console
-- Test alarm firing reaches Telegram
-- Safe mode triggers on unknown questions correctly
-- applied table populated with full audit trail
-
-### ITERATION 4 — FEATURE COMPLETION
-
-```
-1. Glassdoor scraper (most results MANUAL_REQUIRED — fine, S3 stores PDFs)
-2. Monthly Google Doc with Gemini Sunday report
-3. answer_bank growth from approved Telegram responses
-4. Storage cleanup cron (S3 lifecycle for screenshots/logs >90d;
-   resumes/applied/ NEVER deleted)
-5. Portal health monitoring
-6. CLI debug commands: inspect.py, dryrun.py, queue.py
+- Monthly Google Doc Sunday report (Gemini synthesis)
+- Sheet "mark applied/skipped" round-trip from Telegram buttons
+- render_cache cleanup job (expire >1-month entries; S3 lifecycle backstops)
+- portal_health monitoring + alerts
+- CLI: inspect.py, dryrun.py, render.py (force re-render a job), aws_check.py
 ```
 
 ### ITERATION 5 — PRODUCTION DEPLOYMENT
 
 ```
-1. Provision Oracle Cloud Always Free VM
-2. Install Python, LibreOffice, Playwright + Chromium, boto3
-3. Transfer code, .env (with IAM credentials), resume template
-4. Re-login Indeed manually on VM, save session cookies
-5. Set up cron (peak 40min, off-peak 4h, Sunday 8am IST)
-6. Set up systemd service for crash recovery
-7. CloudWatch confirms logs streaming from VM
+- Oracle Cloud Always Free VM
+- Install Python, LibreOffice, boto3, FastAPI (uvicorn/gunicorn)
+- Run the endpoint as a service (systemd) + the cron pipeline
+- HTTPS for the endpoint (Caddy or nginx + Let's Encrypt) so Telegram
+  links are clickable and secure
+- CloudWatch confirms logs streaming from VM
 ```
-
-**Acceptance:** Bot runs 7 days unattended, Telegram digest daily, zero manual intervention.
 
 ### ITERATION 6 — EXPANSION (OPTIONAL)
 
-Only when single-portal volume justifies the complexity.
-
 ```
-1. Naukri scraper + sender
-2. SQS between scraper and parser/scorer:
-   - Scraper publishes job_ids to JobsScraped queue
-   - Worker consumes, parses, scores
-   - Decouples scraping rate from processing rate
-   - Enables multiple workers in parallel
-3. Residential proxy if Indeed/Naukri blocks
+- Naukri as a listings source
+- SQS scraper→worker decoupling if volume justifies
+- Residential proxy if any source throttles the scraper IP
 ```
 
 ### ITERATION 7 — OPTIONAL
 
-Custom MCP server exposing bot stats so Claude can act as a conversational dashboard.
+```
+- Expand the endpoint into a small dashboard (it already renders resumes;
+  add views over matches, statuses, analytics)
+- Optional MCP server so Claude can query bot stats conversationally
+```
 
 ---
 
@@ -1154,52 +912,112 @@ Custom MCP server exposing bot stats so Claude can act as a conversational dashb
 
 | Edge case | Mitigation |
 |---|---|
-| Laptop sleeps | Oracle Cloud VM, not local (Iteration 5) |
-| Same job across portals | Dedup via all_jobs job_id |
+| Laptop sleeps | Oracle VM (Iteration 5) |
+| Same job across portals | job_id dedup + near-duplicate (>0.95) detection |
+| Reworded repost | Near-duplicate detection catches it |
 | JobSpy HTML breaks | portal_health alert |
-| Indeed IP blocks | Iteration 6 residential proxy |
-| Gemini hallucinates skills | spaCy validator catches |
+| Scraper IP throttled by LinkedIn | Infrastructure-only risk; fall back to other sources; Iteration 6 proxy. User account never touched. |
+| Gemini hallucinates skills | spaCy validator |
 | Gemini exceeds Familiar With cap | Pydantic max_length=4 |
-| Gemini picks unauthorized title | Literal[tuple(aliases)] enforces |
-| Gemini puts skill not in candidates | Post-validation rejects, regenerate |
-| Gemini puts gap skill not in JD gaps | Post-validation rejects, regenerate |
+| Gemini picks unauthorized title | Literal[tuple(aliases)] |
+| Gemini skill not in candidates | Post-validation rejects, regenerate |
 | master_profile YAML invalid | Validation fails, alert, abort run |
-| Bullet referenced by old applied row | Stays as is_active=false, never deleted |
-| User edits master_profile | Auto-detected on mtime, rebuild next run |
-| Fewer than 2 experiences pass threshold | Force-include strongest 2 |
-| Fewer than 2 projects pass threshold | Force-include best 2, never hide section |
-| Project has <2 qualifying bullets | Force-include best 2 |
-| No keyword hits 20 jobs in a run | Process what was found, continue rotation |
-| All eligible already in queue | Pick from queue, don't double-count |
-| Queue grows unbounded | 12-hour expiry, Sunday cleanup |
-| Apply button missing | MANUAL_REQUIRED |
-| External redirect mid-flow | MANUAL_REQUIRED |
-| CAPTCHA | MANUAL_REQUIRED |
-| Session cookie expired | CloudWatch alarm → Telegram (Iteration 3+) |
-| Unknown field type | Screenshot, MANUAL_REQUIRED |
-| Unknown question | Gemini draft → hold for review (safe mode) |
-| Cat 4 question | MANUAL_REQUIRED |
-| JD specifies salary above 6 LPA | Use JD upper bound |
-| JD specifies salary below 6 LPA | Use JD upper bound (apply anyway) |
-| JD silent on salary | Default 6 LPA |
-| Cover letter textarea | Fill text from Call 1b |
-| Cover letter file upload | Render PDF, upload to S3, download for form |
-| No cover letter field | Skip |
-| AI-sounding answer | Banned-pattern check, regenerate up to 2x |
-| Fabricated content | master_profile text validation, regenerate |
-| LLM JSON parse fails | Instructor enforces schema |
+| Bullet referenced by old selection | Stays is_active=false, never deleted |
+| User edits master_profile | mtime rebuild; old selections keep their template_version |
+| Template improved | Endpoint re-renders past resumes against new template automatically |
+| <2 experiences pass threshold | Force-include strongest 2 |
+| <2 projects pass threshold | Force-include best 2, never hide section |
+| Project <2 qualifying bullets | Force-include best 2 |
+| No keyword hits 20 in a run | Process what's found, continue rotation |
+| Cache miss on resume click | Render fresh (~5s), cache, serve |
+| Cache stale vs new template | template_version mismatch → re-render |
+| VM restarts | S3-backed cache survives; selection_json safe in Postgres |
 | Neon cold start | ~500ms accepted |
 | Neon down | Buffer to local jsonl, drain next run |
-| S3 down | Buffer to data/pending_uploads/, retry next run |
-| S3 region outage | Same as S3 down (region-bound bucket) |
-| CloudWatch down | Logs buffered locally, ship next run (non-blocking) |
-| IAM credentials expired | Immediate Telegram alert, halt bot |
+| S3 down | Endpoint renders without caching (degraded but works) |
+| CloudWatch down | Local logs, ship next run (non-blocking) |
+| IAM credentials expired | Telegram alert; endpoint still renders (cache writes fail gracefully) |
 | AWS bill alarm fires | Disable offending service, never pay |
-| Wrong filename on upload | Verified rename before upload |
-| Multi-page form unknown Q | Atomic abandon-and-restart on approval |
-| Page loop in Playwright | Page signature tracking, max 10 |
-| DOCX template structure changes | Document expected structure clearly |
-| Embedded hyperlinks broken on clone | Explicit r:id target update logic |
+| Embedded hyperlinks broken on clone | Explicit r:id target update; tested every render |
+| DOCX template structure changes | Document expected structure; assembler reads it dynamically |
+
+---
+
+## 11. Instance-Readiness
+
+The system is built so a different person can run their own independent copy by swapping files — no code changes. This is **instance-ready**, NOT multi-tenant SaaS. Each instance is one person, one deployment, fully isolated.
+
+### What this requires of the code
+
+```
+1. ZERO hardcoded operator identity
+   No operator name, email, filename, region, or preference literal
+   appears in source. All of it comes from config.yaml / .env /
+   master_profile.yaml.
+   - Resume filename: derived as "{operator.full_name→underscores}_Resume.pdf"
+   - Cover filename: "{operator.full_name→underscores}_Cover_Letter.pdf"
+   - No "Vishnujan" string anywhere in src/
+
+2. ALL operator data in swappable files
+   config.yaml          → name, filters, preferences, AWS bucket, region
+   .env                 → that operator's secrets (Gemini, Neon, Telegram,
+                          AWS keys)
+   master_profile.yaml  → that operator's career
+   resumes/templates/   → that operator's resume + cover templates
+
+3. NO shared state between instances
+   Each instance has its own Neon DB, own Telegram bot, own AWS bucket,
+   own VM, own Google Sheet/Doc. Nothing is keyed by user_id because
+   there is only ever one operator per instance.
+
+4. Setup is documented and repeatable
+   README walks a new operator through: clone → create their accounts →
+   fill .env + config.yaml + master_profile.yaml + template → run.
+   The onboarding checklist in CLAUDE.md is operator-agnostic.
+```
+
+### What is explicitly deferred (NOT built now)
+
+```
+Multi-tenant SaaS — one running system serving many users — is OUT OF
+SCOPE. That would need: authentication, user accounts, per-user data
+isolation in every table, per-user scheduling, a signup/onboarding UI,
+billing, and shared-infrastructure cost management. None of that is
+built. Do not add user_id columns, auth, or tenant isolation.
+```
+
+### Seams that keep SaaS a clean future option
+
+Without building SaaS, these existing design choices keep the door open:
+
+```
+- The 9-layer modular split means a future "user context" object could
+  be threaded through layers without restructuring them.
+- All operator config already lives in structured files — a future
+  SaaS would load these per-user from a store instead of from disk.
+- selection_json + master_profile are already self-contained per-operator
+  artifacts — naturally partition by user later.
+- The resume endpoint is already stateless per request (job_id in,
+  resume out) — trivially becomes per-user with a path/token prefix later.
+
+These are observations, not work items. Build the single-operator
+instance well; the SaaS path stays open by virtue of clean modularity.
+```
+
+### The practical test
+
+```
+"Could a second person use this?"
+  → Clone repo
+  → Create their own Neon, Gemini key, Telegram bot, AWS bucket, Sheet
+  → Fill .env, config.yaml, master_profile.yaml, drop in their template
+  → Run it
+  → Get their own tailored resumes for their own job matches
+  → Zero source code edits
+
+If any step would require editing source, that's a hardcoded-identity
+bug to fix.
+```
 
 ---
 

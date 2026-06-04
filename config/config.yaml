@@ -4,17 +4,29 @@
 # The user owns master_profile.yaml (gitignored); this file is checked in.
 
 # ---------------------------------------------------------------------------
-# Personal — locked per architecture doc Section 2
+# Operator identity — architecture doc Section 2 / NFR-11 (instance-ready)
+# These are the CURRENT operator's values; they live in config, never in
+# src/. A different person swaps this block (+ .env, master_profile.yaml,
+# resumes/templates/) and runs their own instance with zero code edits.
+# Resume/cover filenames are DERIVED from full_name (see src/config.py),
+# never hardcoded.
 # ---------------------------------------------------------------------------
-personal:
-  name: "Vishnujan Narayanan"
-  years_of_experience: 1.5
-  # Reject any job posting that requires more years than this.
-  years_required_ceiling: 5
+operator:
+  full_name: "Vishnujan Narayanan"   # drives derived resume/cover filenames
+  years_experience: 1.5
+  timezone: "Asia/Kolkata"
+
+# ---------------------------------------------------------------------------
+# Hard filters — Layer 2/3 job rejection (architecture doc Section 2)
+# ---------------------------------------------------------------------------
+filters:
   job_type: "fulltime"
+  # Reject any JD requiring more years than this. Single source of truth —
+  # re-checked on the Gemini-structured field in Layer 3.
+  years_ceiling: 5
   # Open to international relocation; no visa filter applied.
   visa_filter: null
-  # Reject scrapped jobs whose location string contains any of these
+  # Reject scraped jobs whose location string contains any of these
   # (case-insensitive substring match). Delhi NCR is excluded.
   disallowed_regions:
     - "Delhi"
@@ -24,20 +36,22 @@ personal:
     - "Ghaziabad"
     - "Faridabad"
   company_blocklist: []   # no companies currently blocked
-  timezone: "Asia/Kolkata"
+
+# ---------------------------------------------------------------------------
+# Salary — informational only (cover letter + notification text). Never
+# auto-filled on any form (FR-12). Expected = JD upper bound if specified,
+# else this default.
+# ---------------------------------------------------------------------------
+salary:
+  default_expected_lpa: 6.0
 
 # ---------------------------------------------------------------------------
 # Scheduler — Layer 1
 # ---------------------------------------------------------------------------
 scheduler:
-  cycle_quota:
-    # How many applications to send per run, cycle-aware.
-    peak: 3       # 8am–11am IST
-    off_peak: 1   # all other times
-  peak_hours:
-    # 24-hour IST. Start inclusive, end exclusive: [8, 11).
-    start: 8
-    end: 11
+  # No application quotas: every match >= 0.50 produces a notification
+  # (CLAUDE.md hard rule #14). The old cycle_quota / peak_hours window
+  # rationed auto-applications, which no longer exist.
   # Cron cadence is managed at the OS / Oracle Cloud level, not from Python.
   # These values are documentation for the cron entries to configure.
   cadence:
@@ -47,8 +61,9 @@ scheduler:
     weekly_report_hour_ist: 8
 
 # ---------------------------------------------------------------------------
-# Scraper — Layer 2
-# Indeed only through Iteration 3; Glassdoor enabled in Iteration 4.
+# Scraper — Layer 2 (JobSpy, listings only). LinkedIn is read-only public
+# listings — JobSpy never logs into or acts on the operator's account
+# (CLAUDE.md hard rule #4 / FR-15).
 # ---------------------------------------------------------------------------
 scraper:
   hours_old:
@@ -62,7 +77,13 @@ scraper:
   country: "india"
   sites:
     - "indeed"
-    # - "glassdoor"   # Iteration 4
+    - "glassdoor"
+    - "linkedin"
+  # Near-duplicate detection: skip a JD whose embedding is at least this
+  # cosine-similar to an already-notified job (architecture §4.1 / FR-2).
+  near_duplicate_threshold: 0.95
+  # How many recent jobs to compare against for near-duplicate detection.
+  near_duplicate_lookback: 500
   # Serial search rotation — one term per run, advances on short-circuit.
   # Rotation state persisted in search_rotation_state DB table.
   search_terms:
@@ -101,9 +122,9 @@ scraper:
 # "software developer" as long as Gemini classifies it as backend/fullstack.
 # ---------------------------------------------------------------------------
 parser:
-  # Re-check years ceiling on the Gemini-structured field (catches cases
-  # where raw scrape text was ambiguous but structured data is clear).
-  years_required_ceiling: 5
+  # Years ceiling is single-sourced at filters.years_ceiling; Layer 3
+  # re-checks it on the Gemini-structured field (catches cases where raw
+  # scrape text was ambiguous but the structured data is clear).
   role_clusters:
     backend:
       keywords:
@@ -284,14 +305,6 @@ scoring:
     over_12h: 0.20
 
 # ---------------------------------------------------------------------------
-# Application queue — Layer 4 cycle-aware picking
-# ---------------------------------------------------------------------------
-queue:
-  # Queue entries expire this many hours after queued_at.
-  decay_hours: 12
-  stale_reason: "STALE"   # not_applied.reason_category on expiry
-
-# ---------------------------------------------------------------------------
 # Resume builder — Layer 5
 # ---------------------------------------------------------------------------
 builder:
@@ -305,34 +318,10 @@ builder:
   cover_letter_max_chars: 900
 
 # ---------------------------------------------------------------------------
-# Application sender — Layer 6
-# ---------------------------------------------------------------------------
-sender:
-  upload_filename_resume: "Vishnujan_Narayanan_Resume.pdf"
-  upload_filename_cover: "Vishnujan_Narayanan_Cover_Letter.pdf"
-  # Safety limit: abandon the form if it exceeds this many pages.
-  max_form_pages: 10
-  # Hard rule: never retry submission more than once.
-  retry_limit: 1
-  network_timeout_retry_seconds: 30
-  # safe = hold unknown Category-3 questions for Telegram review.
-  # bold = auto-fill and continue.
-  question_mode: "safe"
-  salary:
-    expected_default_lpa: 6.0          # used when JD specifies no salary
-    current_numeric: 100000            # honest value for numeric current-salary fields
-    # answer_bank key for the strategic-redirect text answer to current-salary
-    # text fields (no number disclosed).
-    current_text_bank_key: "current_salary_redirect"
-  profile_fields:
-    work_auth: "Yes"
-    notice_period: "Immediate"
-    years_experience_numeric: 1.5
-    years_experience_band: "1-2 yrs"
-
-# ---------------------------------------------------------------------------
-# Voice / fabrication guard — Layer 6
-# Applied to all LLM-generated cover letter and question answer text.
+# Voice / fabrication guard — cover letter text (Layer 5)
+# Applied to the LLM-generated cover letter. The old form-answer voice
+# validation was removed with auto-apply; the banned-word list stays and
+# will be re-homed into the builder in Phase B.
 # ---------------------------------------------------------------------------
 voice:
   banned_words:
@@ -348,8 +337,6 @@ voice:
     - "with X years of experience in"
     - "as a [role]"
   # Post-validation: regenerate up to builder.llm_regenerate_attempts times.
-  # If still failing: hold for review with violations highlighted.
-  few_shot_size: 5   # number of recent approved bank answers sent to LLM
 
 # ---------------------------------------------------------------------------
 # Cover letter PDF render contract — Layer 6 pdf_render.py
@@ -376,15 +363,15 @@ spacy:
   model: "en_core_web_sm"
 
 # ---------------------------------------------------------------------------
-# LLM — Gemini 2.0 Flash (3-call budget max per job)
-# Call 1a: JD parse (always). Call 1b: title+skills+cover (if picked).
-# Call 2: batched form questions (if unknown questions exist).
+# LLM — Gemini 2.0 Flash (2-call budget max per job)
+# Call 1a: JD parse (always). Call 1b: title+skills+cover (if score >= 0.50).
+# Old Call 2 (batched form questions) removed with auto-apply.
 # ---------------------------------------------------------------------------
 llm:
   provider: "gemini"
   model: "gemini-2.0-flash"
   daily_call_budget: 1500   # free tier ceiling; expected ~600/day
-  max_calls_per_job: 3
+  max_calls_per_job: 2
   backoff:
     initial_seconds: 2
     max_seconds: 60
@@ -402,12 +389,9 @@ database:
 
 storage:
   resumes_applied_dir: "resumes/applied"    # NEVER auto-cleaned (audit trail)
-  sessions_dir: "data/sessions"
-  manual_queue_dir: "data/manual_queue"
   logs_dir: "data/logs"
   cleanup:
     logs_retention_days: 365
-    manual_queue_retention_days: 90
     resumes_applied_retention_days: null   # null = keep forever
 
 # ---------------------------------------------------------------------------
@@ -417,8 +401,6 @@ notifications:
   digest_hour_ist: 8
   # Telegram alert sent immediately when any of these conditions trigger.
   critical_alert_triggers:
-    - "playwright_crash"
-    - "session_expired"
     - "gemini_api_failure"
     - "database_connection_failure"
     - "master_profile_validation_failure"
@@ -433,7 +415,6 @@ analytics:
   sheets:
     applied_tab: "Applied"
     skipped_tab: "Skipped"
-    manual_required_tab: "ManualRequired"
   docs:
     monthly_report_enabled: true
     # Skills appearing in >= this fraction of weekly JDs trigger a
