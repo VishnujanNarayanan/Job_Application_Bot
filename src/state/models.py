@@ -55,6 +55,7 @@ class AllJobs(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     jd_text: Mapped[str | None] = mapped_column(Text)
+    jd_embedding: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM))
     required_skills: Mapped[Any | None] = mapped_column(JSONB)
     nice_to_have: Mapped[Any | None] = mapped_column(JSONB)
     responsibilities: Mapped[Any | None] = mapped_column(JSONB)
@@ -69,6 +70,12 @@ class AllJobs(Base):
     salary_max_lpa: Mapped[float | None] = mapped_column(Float)
     salary_currency: Mapped[str | None] = mapped_column(Text)
     outcome: Mapped[str | None] = mapped_column(Text)
+    # The original this JD duplicates (>0.95 cosine). Self-referential FK:
+    # the DB guarantees the target row exists, so the scraper must insert +
+    # commit the original before linking a near-duplicate to it.
+    near_duplicate_of: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("all_jobs.job_id")
+    )
     outcome_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
@@ -83,27 +90,33 @@ class AllJobs(Base):
 
 
 class Applied(Base):
+    """Matched jobs: a resume selection was built and the user notified.
+
+    Pivot reshape (architecture §7.3): the auto-apply columns are gone
+    (apply_type, resume/cover S3 URIs, cover_letter_used,
+    application_status, failure_reason). The durable per-job artifact is
+    ``selection_json`` (~2 KB); the PDF/DOCX is rendered on demand.
+    ``user_status`` is set by the operator via Telegram/Sheet.
+    """
+
     __tablename__ = "applied"
 
     job_id: Mapped[str] = mapped_column(
         Text, ForeignKey("all_jobs.job_id"), primary_key=True
     )
-    apply_type: Mapped[str | None] = mapped_column(Text)
-    resume_s3_uri: Mapped[str | None] = mapped_column(Text)
-    resume_s3_key: Mapped[str | None] = mapped_column(Text)
-    cover_letter_text: Mapped[str | None] = mapped_column(Text)
-    cover_letter_used: Mapped[bool] = mapped_column(Boolean, default=False)
-    cover_letter_s3_uri: Mapped[str | None] = mapped_column(Text)
     selection_json: Mapped[Any | None] = mapped_column(JSONB)
+    template_version: Mapped[str | None] = mapped_column(Text)
+    cover_letter_text: Mapped[str | None] = mapped_column(Text)
     expected_salary_lpa: Mapped[float | None] = mapped_column(Float)
     fit_score: Mapped[float | None] = mapped_column(Float)
     success_prob: Mapped[float | None] = mapped_column(Float)
     recency_score: Mapped[float | None] = mapped_column(Float)
     final_score: Mapped[float | None] = mapped_column(Float)
     gap_skills: Mapped[Any | None] = mapped_column(JSONB)
-    application_status: Mapped[str | None] = mapped_column(Text)
-    failure_reason: Mapped[str | None] = mapped_column(Text)
-    applied_at: Mapped[datetime] = mapped_column(
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # pending | applied | skipped (operator sets via Telegram/Sheet).
+    user_status: Mapped[str] = mapped_column(Text, default="pending")
+    built_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
@@ -130,22 +143,6 @@ class NotApplied(Base):
 # ---------------------------------------------------------------------------
 # Queues
 # ---------------------------------------------------------------------------
-
-
-class ApplicationQueue(Base):
-    __tablename__ = "application_queue"
-
-    job_id: Mapped[str] = mapped_column(
-        Text, ForeignKey("all_jobs.job_id"), primary_key=True
-    )
-    final_score: Mapped[float | None] = mapped_column(Float)
-    status: Mapped[str | None] = mapped_column(Text)
-    queued_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-    __table_args__ = (Index("idx_queue_status", "status", "expires_at"),)
 
 
 class ProcessingQueue(Base):
@@ -237,41 +234,6 @@ class SearchRotationState(Base):
     value: Mapped[str | None] = mapped_column(Text)
 
 
-class AnswerBank(Base):
-    __tablename__ = "answer_bank"
-
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
-    question_patterns: Mapped[Any | None] = mapped_column(JSONB)
-    jd_contexts: Mapped[Any | None] = mapped_column(JSONB)
-    answer: Mapped[str | None] = mapped_column(Text)
-    approved_by_user: Mapped[bool] = mapped_column(Boolean, default=False)
-    times_used: Mapped[int] = mapped_column(Integer, default=0)
-    last_used: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-
-
-class PendingReview(Base):
-    __tablename__ = "pending_review"
-
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
-    job_id: Mapped[str | None] = mapped_column(Text)
-    company: Mapped[str | None] = mapped_column(Text)
-    role: Mapped[str | None] = mapped_column(Text)
-    question_text: Mapped[str | None] = mapped_column(Text)
-    question_category: Mapped[int | None] = mapped_column(Integer)
-    bank_match_id: Mapped[str | None] = mapped_column(Text)
-    bank_match_score: Mapped[float | None] = mapped_column(Float)
-    gemini_draft: Mapped[str | None] = mapped_column(Text)
-    user_answer: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
 class PortalHealth(Base):
     __tablename__ = "portal_health"
 
@@ -287,3 +249,27 @@ class CompanyCooldown(Base):
 
     company: Mapped[str] = mapped_column(Text, primary_key=True)
     last_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# ---------------------------------------------------------------------------
+# Render cache — the PDF/DOCX files live in S3; this table tracks them
+# (architecture §7.3). Cache key is {job_id}_{template_version}_{ext}.
+# ---------------------------------------------------------------------------
+
+
+class RenderCache(Base):
+    __tablename__ = "render_cache"
+
+    cache_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    job_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("all_jobs.job_id")
+    )
+    format: Mapped[str | None] = mapped_column(Text)  # pdf | docx
+    template_version: Mapped[str | None] = mapped_column(Text)
+    s3_uri: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("idx_render_cache_expiry", "expires_at"),)

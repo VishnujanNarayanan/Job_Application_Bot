@@ -1,6 +1,6 @@
 """Pytest configuration for the job application bot.
 
-All external services (Gemini, Neon, Telegram, Playwright) are mocked
+All external services (Gemini, Neon, Telegram, AWS) are mocked
 in unit tests. Real services are only touched in integration tests run
 manually outside CI.
 """

@@ -13,14 +13,16 @@ Pipeline sequence (architecture doc Section 4) — preserved for reference
 and to be filled in iteration by iteration:
 
 LAYER 1 — Scheduler
-    Determine cycle: "peak" if 8am <= now_IST < 11am, else "regular".
-    N = 3 (peak) or 1 (regular) — applications to send this run.
+    Iteration 1: single linear run.
+    Iteration 2+: cron cadence (peak/off-peak scrape frequency). No
+        application quotas — every match >= 0.50 notifies.
     Acquire single-run lock to prevent overlapping cron executions.
 
-LAYER 2 — Scraper (Indeed; Glassdoor in Iteration 4)
+LAYER 2 — Scraper (Indeed, Glassdoor, LinkedIn — listings only)
     Iteration 1: stub returning 3 fake jobs.
-    Iteration 2+: JobSpy on Indeed with serial term rotation,
-        hard filters (years, region, cooldown, dup), short-circuit at 20.
+    Iteration 2+: JobSpy across all three sources with serial term
+        rotation, hard filters (years, region, cooldown, dup),
+        near-duplicate detection (>0.95 cosine), short-circuit at 20.
 
 LAYER 3 — JD Parser (Gemini Call 1a — runs for EVERY passing job)
     Iteration 1: stub returning a fixed JDParsed.
@@ -30,31 +32,34 @@ LAYER 3 — JD Parser (Gemini Call 1a — runs for EVERY passing job)
 LAYER 4 — Scoring & Selection
     Iteration 1: rejects every job (master_bullets empty).
     Iteration 2+: full Section 4 algorithm — experience selection,
-        project selection, summary pick, skills hybrid, final_score,
-        cycle-aware top-N picking with queue management.
+        project selection, summary pick, skills hybrid, final_score.
+        Every match >= 0.50 builds + notifies; no quotas, no top-N.
 
-LAYER 5 — Resume Builder (Gemini Call 1b — ONLY for picked jobs)
+LAYER 5 — Resume Builder (Gemini Call 1b — ONLY for matched jobs)
     Iteration 1: no-op.
-    Iteration 2+: skills hybrid, title alias pick, DOCX assembly with
-        structural detection, LibreOffice PDF conversion, S3 upload.
+    Iteration 2+: skills hybrid, title alias pick, cover letter →
+        selection_json (~2 KB) written to `applied`. NO PDF rendered here.
 
-LAYER 6 — Application Sender (Gemini Call 2 — only for unknown questions)
+LAYER 6 — Application Assist (notify + on-demand resume endpoint)
     Iteration 1: no-op (dry-run only).
-    Iteration 3+: Playwright Indeed Easy Apply, manual queue, retry≤1.
+    Iteration 2+: FastAPI endpoint renders PDF/DOCX on demand from
+        selection_json + current template, cached in S3. No auto-apply,
+        no Playwright, no form filling (removed in the pivot).
 
 LAYER 7 — State Management (always running)
-    Iteration 1: SQLAlchemy 2.0 sync session against Neon, all 13 tables
-        created via Alembic migration 0001_initial.
+    Iteration 1: SQLAlchemy 2.0 sync session against Neon, base schema
+        created via Alembic migration 0001_initial (auto-apply tables
+        dropped in 0002).
 
 LAYER 8 — Notifications (Telegram)
     Iteration 1: dry-run summary delivered at end of run.
-    Iteration 2+: morning digest with presigned S3 URLs.
-    Iteration 3+: critical-alert triggers, CloudWatch-bridged Lambda alerts.
+    Iteration 2+: per-match message bundling apply link + resume links.
+    Iteration 3+: CloudWatch-bridged alarm alerts.
 
 LAYER 9 — Analytics (Google Sheets + Docs)
     Iteration 1: no-op.
-    Iteration 2+: Sheets tabs (Applied / Skipped / ManualRequired) with
-        presigned S3 URLs; Sunday Gemini-synthesised Docs report.
+    Iteration 2+: Sheets index mapping every match to apply / PDF / DOCX
+        links + status; Sunday Gemini-synthesised Docs report.
 """
 
 from __future__ import annotations
@@ -64,14 +69,6 @@ import logging
 import sys
 
 import structlog
-
-from src.notifications import send_dry_run_summary
-from src.parser import apply_to_row as apply_parsed_to_row
-from src.parser import parse as parse_jd
-from src.scorer.apply_decision import decide
-from src.scraper.jobspy_wrapper import scrape
-from src.state.db import session_scope
-from src.state.models import NotApplied
 
 
 def _configure_logging() -> None:
@@ -104,71 +101,23 @@ def main(argv: list[str] | None = None) -> int:
 
     _configure_logging()
     log = structlog.get_logger()
-    log.info("run_started", dry_run=args.dry_run, iteration=1)
+    log.info("run_started", dry_run=args.dry_run, iteration=2)
 
-    # Layer 2 — scraper
-    jobs = scrape()
-    log.info("layer2_scrape_done", scraped=len(jobs))
-
-    skipped = 0
-    applied = 0
-
-    with session_scope() as session:
-        # Persist scraped rows so subsequent inserts (NotApplied) can FK them.
-        session.add_all(jobs)
-        session.flush()  # assign defaults / surface FK errors before child writes
-
-        for job in jobs:
-            # Layer 3 — parse
-            parsed = parse_jd(job)
-            apply_parsed_to_row(job, parsed)
-            log.info(
-                "layer3_parse_done",
-                job_id=job.job_id,
-                role_category=parsed.role_category,
-            )
-
-            # Layer 4 — decide
-            decision = decide(session)
-            log.info(
-                "layer4_decision",
-                job_id=job.job_id,
-                apply=decision.apply,
-                reason=decision.reason_category,
-            )
-
-            if decision.apply:
-                # Layer 5 + 6 land in later iterations.
-                applied += 1
-                log.info("layer5_layer6_noop", job_id=job.job_id)
-            else:
-                # Layer 7 — record skip
-                session.add(
-                    NotApplied(
-                        job_id=job.job_id,
-                        reason_category=decision.reason_category,
-                        reason_detail=decision.reason_detail,
-                        final_score=decision.final_score,
-                    )
-                )
-                skipped += 1
-
-    # Layer 8 — Telegram. Outside session_scope: DB writes are already
-    # committed; a failed Telegram send must not roll them back.
-    try:
-        send_dry_run_summary(scraped=len(jobs), skipped=skipped, applied=applied)
-        log.info("layer8_telegram_sent")
-    except Exception as exc:  # noqa: BLE001 — log and continue
-        log.error("layer8_telegram_failed", error=str(exc))
-
-    # Layer 9 — analytics no-op in Iter 1.
-    log.info(
-        "run_complete",
-        scraped=len(jobs),
-        skipped=skipped,
-        applied=applied,
+    # The Iteration-1 linear skeleton (fake scrape → fixed parse → reject-all
+    # decide) has been dismantled now that Layers 2/3/4 are real modules:
+    #   Layer 2  src.scraper.{jobspy_wrapper,filters,dedup,rotation}
+    #   Layer 3  src.parser  (Gemini Call 1a)
+    #   Layer 4  src.scorer.{selector,ordering,apply_decision.evaluate}
+    # The end-to-end pipeline — rotation-driven scrape, embed, dedup, hard
+    # filters, parse + role-acceptance, candidate loading from the rebuilt
+    # master_profile, Layer 4 evaluate, Layer 5 build, notify — is assembled
+    # in the dedicated orchestrator step that lands right before the test-chat
+    # dry-run (the candidate loader depends on the master_profile rebuild).
+    raise NotImplementedError(
+        "Iteration 2 orchestrator rewiring in progress. Layers 2/3/4 exist as "
+        "real, tested modules; the end-to-end wiring + master_profile candidate "
+        "loader land before the dry-run. Drive the layers directly meanwhile."
     )
-    return 0
 
 
 if __name__ == "__main__":
