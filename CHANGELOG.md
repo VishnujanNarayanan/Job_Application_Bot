@@ -8,10 +8,11 @@ and this project loosely tracks iterations rather than semver.
 ## [Unreleased]
 
 ### Added
+- `master_summaries.yaml` — operator's curated summary pool (50+ entries across data, ml, quant/fintech, backend, fullstack roles); strict slot-order template (role, doing, in, using, Tools); grounding notes enforce no fabricated metrics (fraud model is LR/notebook-only, trading bot is Binance testnet, no AWS/CI-CD claimed). Supersedes `master_summaries_pool.yaml` (kept as learning reference, not used by the bot). Source of truth for Layer 4 summary selection.
+- `master_resume_extract.yaml` — structured extraction of raw resume material (bullet pool, job-title aliases, skills pool, project summaries) used to build `master_summaries.yaml` and `master_profile.yaml`; not consumed by the bot directly.
 
 ### Changed
-
-### Removed
+- `.gitignore`: added `master_resume_extract.yaml`, `master_summaries.yaml`, `master_summaries_pool.yaml` to the user-owned-source-of-truth section (per CLAUDE.md rule #21, these live on the operator's disk, never committed to version control).
 
 ---
 

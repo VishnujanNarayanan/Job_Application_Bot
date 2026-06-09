@@ -5,6 +5,9 @@ config/google_service_account.json
 # --- User-owned source of truth (gitignored per spec) -----------------------
 master_profile.yaml
 master_profile.json
+master_resume_extract.yaml
+master_summaries.yaml
+master_summaries_pool.yaml
 answer_bank_seed.yaml
 
 # --- Permanent audit trail (lives on Oracle Cloud VM disk, never committed) -
