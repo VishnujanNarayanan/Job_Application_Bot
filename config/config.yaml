@@ -369,7 +369,7 @@ spacy:
 # ---------------------------------------------------------------------------
 llm:
   provider: "gemini"
-  model: "gemini-2.0-flash"
+  model: "gemini-2.5-flash"
   daily_call_budget: 1500   # free tier ceiling; expected ~600/day
   max_calls_per_job: 2
   backoff:
