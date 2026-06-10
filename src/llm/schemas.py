@@ -1,13 +1,12 @@
 """Pydantic schemas for all Gemini call inputs and outputs.
 
 Every LLM call returns a Pydantic model — Instructor enforces the schema
-at the API boundary so malformed responses are physically impossible
-(CLAUDE.md: "Why Instructor + Pydantic everywhere").
+at the API boundary so malformed responses are physically impossible.
 
-Iteration 1 ships only the minimum: ``JDParsed`` with the fields Layer 4
-needs to make a scoring decision. Cover-letter / skills / form-question
-schemas land in Iterations 2 and 3 alongside their respective Gemini
-calls.
+Call 1a: ``JDParsed`` (Layer 3 — always run).
+Call 1b: ``ResumeBuildLLMOutput`` (Layer 5 — matched jobs only).
+``StoredSelection`` is the ~2 KB blob written to ``applied.selection_json``
+and consumed by the endpoint assembler at render time.
 """
 
 from __future__ import annotations
@@ -75,3 +74,108 @@ class JDParsed(BaseModel):
     salary_currency: str | None = Field(
         default=None, max_length=8, description="Salary currency code, if stated"
     )
+
+
+# ---------------------------------------------------------------------------
+# Gemini Call 1b — title alias + skills selection + cover letter (Layer 5)
+# ---------------------------------------------------------------------------
+
+
+class SkillCategory(BaseModel):
+    """One named skills grouping chosen by the LLM from pool candidates."""
+
+    name: str = Field(
+        ...,
+        max_length=60,
+        description="Short category label (e.g. 'Backend & APIs'). Must not be "
+        "a generic banned name like 'Miscellaneous' or 'Other'.",
+    )
+    skills: list[str] = Field(
+        ...,
+        min_length=3,
+        max_length=5,
+        description="3-5 skills drawn from the provided top-14 pool candidates.",
+    )
+
+
+class StoredSkills(BaseModel):
+    """Skills section of a resume selection."""
+
+    categories: list[SkillCategory] = Field(
+        ..., min_length=3, max_length=3, description="Exactly 3 skill categories."
+    )
+    familiar_with: list[str] = Field(
+        default_factory=list,
+        max_length=4,
+        description="0-4 gap skills the JD wants but that are not in the pool.",
+    )
+
+
+class ResumeBuildLLMOutput(BaseModel):
+    """Structured output of Gemini Call 1b (title alias + skills + cover letter).
+
+    The LLM picks one title alias per selected experience from the allow-list,
+    names 3 skill categories and assigns pool-candidate skills to each, selects
+    up to 4 gap skills for 'Familiar With', and writes a short cover letter.
+    """
+
+    title_choices: dict[str, str] = Field(
+        ...,
+        description="Mapping of experience id → chosen title alias. Must be "
+        "one of the provided safe_title_aliases for that experience.",
+    )
+    skills_selection: StoredSkills
+    cover_letter_text: str = Field(
+        ...,
+        max_length=900,
+        description="Short cover-letter paragraph (plain text, no headers). "
+        "Must not contain any banned words.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# StoredSelection — written to applied.selection_json (~2 KB)
+# ---------------------------------------------------------------------------
+
+
+class SelectedExpEntry(BaseModel):
+    """One selected work-experience entry."""
+
+    exp_id: str
+    title_alias: str
+    bullet_ids: list[str] = Field(..., description="3 ordered bullet IDs.")
+
+
+class SelectedProjEntry(BaseModel):
+    """One selected project entry."""
+
+    proj_id: str
+    link: str = Field(..., description="Project URL used for the 'Code →' hyperlink.")
+    bullet_ids: list[str] = Field(
+        ..., description="2-3 ordered bullet IDs, descending by score."
+    )
+
+
+class StoredSelection(BaseModel):
+    """The durable per-job artifact written to applied.selection_json.
+
+    The endpoint assembler reads this to render the resume on demand.
+    Bullet texts are looked up from master_bullets by id; profile
+    structure (company, dates, project names) from master_profile.json.
+    """
+
+    job_id: str
+    summary_id: str
+    experiences: list[SelectedExpEntry]
+    projects: list[SelectedProjEntry]
+    skills: StoredSkills
+    section_order: list[str] = Field(
+        ...,
+        description="Variable section names in display order. "
+        "E.g. ['Work', 'Skills', 'Projects'] or ['Work', 'Projects', 'Skills'].",
+    )
+    cover_letter_text: str
+    template_version: str = Field(
+        ..., description="MD5[:8] of the template file at build time."
+    )
+    built_at: str = Field(..., description="ISO-8601 timestamp.")

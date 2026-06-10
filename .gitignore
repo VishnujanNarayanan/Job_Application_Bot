@@ -10,6 +10,11 @@ master_summaries.yaml
 master_summaries_pool.yaml
 answer_bank_seed.yaml
 
+# Operator's resume/cover templates carry personal info + real hyperlinks
+# (name, contact, GitHub/LinkedIn/certificate links). Operator-owned source,
+# dropped in per instance (rule #21); never committed.
+resumes/templates/
+
 # --- Permanent audit trail (lives on Oracle Cloud VM disk, never committed) -
 resumes/applied/
 
@@ -21,6 +26,7 @@ data/manual_queue/*
 data/logs/*
 !data/logs/.gitkeep
 data/pending_writes.jsonl
+data/run.lock
 
 # --- Python -----------------------------------------------------------------
 __pycache__/
