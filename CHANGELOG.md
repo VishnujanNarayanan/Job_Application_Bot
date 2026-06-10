@@ -9,6 +9,9 @@ and this project loosely tracks iterations rather than semver.
 
 ### Added
 - `master_summaries.yaml` — operator's curated summary pool (50 entries, 10 each across data, ml, quant/fintech, backend, fullstack roles); outside-in slot template (role, doing, in, using, Tools); grounding notes enforce no fabricated metrics (fraud model is LR/notebook-only, trading bot is Binance testnet, no AWS/CI-CD claimed). Supersedes `master_summaries_pool.yaml` (kept as learning reference, not used by the bot). Source of truth for Layer 4 summary selection.
+
+### Changed (operator data)
+- `master_profile.yaml` summaries section: merged all 50 summaries from `master_summaries.yaml` into `master_profile.yaml`, replacing the single placeholder `summary_001`. Flattened the per-category structure to a flat list. Mapped `roles` → `role_categories` (schema field); added matching `tags` field. Preserved `surfaces` and `anchored_in` as extra YAML fields (Pydantic drops them at load time; kept for future matcher upgrades). Work experience, projects, skills pool, education, and certifications unchanged.
 - `master_resume_extract.yaml` — structured extraction of raw resume material (bullet pool, job-title aliases, skills pool, project summaries) used to build `master_summaries.yaml` and `master_profile.yaml`; not consumed by the bot directly.
 
 ### Changed
