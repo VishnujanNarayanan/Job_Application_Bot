@@ -33,6 +33,7 @@ and this project loosely tracks iterations rather than semver.
 - `requirements.txt`: added `fastapi==0.115.6`, `uvicorn==0.34.0`, `httpx==0.28.1` for the Layer 6 resume endpoint (httpx backs `fastapi.testclient.TestClient`).
 
 ### Fixed
+- `src/state/db.py` + `src/state/migrations/env.py`: strip all whitespace from `DATABASE_URL` at read time so editor-introduced spaces (e.g. `"require "` from a stale LazyVim buffer) never cause a connection failure.
 - Layer 8 / orchestrator: `src/main.py` parse-failure log used reserved structlog kwarg `event=` (collides with the positional event name → `TypeError`); renamed to `reason=`.
 - Layer 6: `src/endpoint/pdf_convert.py` render-failure log had the same `event=` collision; renamed to `stage=`.
 - Layer 2: `src/main.py` `_write_not_applied()` could violate the `not_applied.job_id` → `all_jobs.job_id` FK and abort the whole commit when a pre-filter-rejected job was never inserted into `all_jobs`; it now writes rows only for job_ids present in `all_jobs`.

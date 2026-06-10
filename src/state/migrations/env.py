@@ -29,6 +29,9 @@ if not database_url:
     raise RuntimeError(
         "DATABASE_URL is not set. Add it to .env (see .env.example)."
     )
+# Strip all whitespace — editors occasionally save a stale buffer that
+# reintroduces spaces into the URL (e.g. "require ").
+database_url = "".join(database_url.split())
 
 # .env stores the standard `postgresql://` URL (works with psql and Neon's
 # console). SQLAlchemy defaults that scheme to psycopg2 — we use psycopg3,

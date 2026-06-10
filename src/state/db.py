@@ -29,6 +29,9 @@ def _resolve_database_url() -> str:
         raise RuntimeError(
             "DATABASE_URL is not set. Add it to .env (see .env.example)."
         )
+    # Strip all whitespace — editors (e.g. LazyVim) occasionally save a
+    # stale buffer that reintroduces spaces into the URL (e.g. "require ").
+    raw = "".join(raw.split())
     # Same prefix rewrite as src/state/migrations/env.py — keeps .env portable.
     if raw.startswith("postgresql://"):
         raw = "postgresql+psycopg://" + raw[len("postgresql://"):]
