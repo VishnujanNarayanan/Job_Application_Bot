@@ -75,6 +75,30 @@ scraper:
   # JobSpy results_wanted cap per query term.
   results_wanted_per_term: 50
   country: "india"
+  # LinkedIn returns listings WITHOUT the description body unless each one is
+  # fetched individually (an extra request per job). Without it jd_text is
+  # empty, which (a) starves the Gemini parser and (b) collapses near-duplicate
+  # detection — every empty-text embedding is identical (cosine 1.0), so all
+  # LinkedIn jobs get flagged as duplicates of the first. Fetching costs more
+  # requests → higher throttle risk, bounded by the rate_limit settings below.
+  linkedin_fetch_description: true
+  # Anti-rate-limit measures (recoverable scraper-IP throttling, hard rule #4).
+  rate_limit:
+    # Scrape each site in its own JobSpy call so one site's throttling or
+    # error doesn't discard the other sites' results.
+    per_site: true
+    # Per-site retry with exponential backoff + jitter on failure.
+    max_retries: 3
+    backoff_base_seconds: 5
+    # Randomised pause between site calls to avoid bursty request patterns.
+    inter_site_delay_seconds: 4
+    # Fetching LinkedIn descriptions multiplies requests; cap LinkedIn lower
+    # than results_wanted_per_term to bound the request volume per run.
+    linkedin_results_wanted: 25
+    # Optional rotating proxies passed to JobSpy (empty = direct connection).
+    # Free tier has no proxies; this is a hook for the operator to add their
+    # own if scraper-IP throttling becomes a problem.
+    proxies: []
   sites:
     - "indeed"
     - "glassdoor"
@@ -363,13 +387,13 @@ spacy:
   model: "en_core_web_sm"
 
 # ---------------------------------------------------------------------------
-# LLM — Gemini 2.0 Flash (2-call budget max per job)
+# LLM — Gemini 2.5 Flash Lite (2-call budget max per job, higher free-tier RPD)
 # Call 1a: JD parse (always). Call 1b: title+skills+cover (if score >= 0.50).
 # Old Call 2 (batched form questions) removed with auto-apply.
 # ---------------------------------------------------------------------------
 llm:
   provider: "gemini"
-  model: "gemini-2.5-flash"
+  model: "gemini-2.5-flash-lite"
   daily_call_budget: 1500   # free tier ceiling; expected ~600/day
   max_calls_per_job: 2
   backoff:

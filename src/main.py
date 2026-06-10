@@ -131,6 +131,7 @@ def _run(dry_run: bool, log) -> int:
         hours_old = int(cfg.scraper.hours_old.peak if is_peak else cfg.scraper.hours_old.off_peak)
 
         log.info("scrape_start", term=term, hours_old=hours_old, dry_run=dry_run)
+        rl = cfg.scraper.rate_limit
         try:
             raw_jobs = jobspy_wrapper.scrape(
                 term,
@@ -138,6 +139,13 @@ def _run(dry_run: bool, log) -> int:
                 country=str(cfg.scraper.country),
                 results_wanted=int(cfg.scraper.results_wanted_per_term),
                 hours_old=hours_old,
+                linkedin_fetch_description=bool(cfg.scraper.linkedin_fetch_description),
+                linkedin_results_wanted=int(rl.linkedin_results_wanted),
+                per_site=bool(rl.per_site),
+                max_retries=int(rl.max_retries),
+                backoff_base_seconds=float(rl.backoff_base_seconds),
+                inter_site_delay_seconds=float(rl.inter_site_delay_seconds),
+                proxies=list(rl.proxies),
             )
         except Exception as exc:
             log.error("scraper_error", term=term, error=str(exc))
@@ -156,6 +164,14 @@ def _run(dry_run: bool, log) -> int:
         for job in raw_jobs:
             if job.job_id in existing_ids:
                 not_applied_queue.append((job, DUPLICATE, None))
+                continue
+            if not (job.jd_text or "").strip():
+                # No description body (e.g. throttled LinkedIn fetch). Drop
+                # before embedding so a degenerate empty-text embedding can't
+                # collapse near-duplicate detection (all empties are cosine
+                # 1.0). Not persisted — the empty is usually transient, so it
+                # gets re-scraped (and hopefully fetched) on the next run.
+                log.info("empty_jd_skipped", job_id=job.job_id, site=job.site)
                 continue
             if filters.location_disallowed(job.location, disallowed):
                 not_applied_queue.append((job, LOCATION_DISALLOWED, job.location))
@@ -369,10 +385,27 @@ def _compute_gap_skills(required: list[str], pool: list[str]) -> list[str]:
 
 
 def _write_not_applied(session, queue: list, now: datetime) -> None:
-    from src.state.models import NotApplied
+    """Persist not_applied rows, but only for jobs already in all_jobs.
+
+    `not_applied.job_id` is a NOT NULL FK to all_jobs.job_id. Post-parse
+    rejections went through `dedup.resolve_batch` so they exist; pre-filter
+    rejections (DUPLICATE/LOCATION/COOLDOWN) may not — writing those would
+    violate the FK and abort the whole commit, so we skip absent rows.
+    """
+    from sqlalchemy import select
+
+    from src.state.models import AllJobs, NotApplied
+
+    job_ids = [job.job_id for job, _reason, _detail in queue]
+    if not job_ids:
+        return
+    present = set(
+        session.execute(
+            select(AllJobs.job_id).where(AllJobs.job_id.in_(job_ids))
+        ).scalars()
+    )
     for job, reason, detail in queue:
-        # Only write if the job exists (DUPLICATE rows may not be in DB yet)
-        if reason == "DUPLICATE":
+        if job.job_id not in present:
             continue
         session.merge(NotApplied(
             job_id=job.job_id,
