@@ -19,9 +19,14 @@ and this project loosely tracks iterations rather than semver.
 - Tests: `tests/test_iteration_2_builder.py` (10 tests — skills_validator and llm_call with stub transport), `tests/test_iteration_2_endpoint.py` (7 tests — assembler, hyperlinks, cache, FastAPI routes), `tests/test_iteration_2_notifications.py` (2 tests — match notification content).
 
 ### Changed
+- Layer 2: `src/scraper/jobspy_wrapper.py` — `scrape()` now fetches LinkedIn descriptions (`linkedin_fetch_description`) so LinkedIn jobs carry real `jd_text` (previously empty, which starved the parser and made every empty-text embedding identical → mass false near-duplicates). Added anti-rate-limit measures (hard rule #4): per-site scraping isolation, per-site retry with exponential backoff + jitter, randomised inter-site delay, a lower LinkedIn results cap, and optional proxies — so one throttled portal no longer discards the others' results.
+- Layer 2: `src/main.py` — drops listings with empty `jd_text` before embedding (`EMPTY_JD`, logged, not persisted so a transient throttle is retried next run); passes the new `scraper.rate_limit` config into `scrape()`.
+- `config.yaml`: added `scraper.linkedin_fetch_description` and the `scraper.rate_limit` block (`per_site`, `max_retries`, `backoff_base_seconds`, `inter_site_delay_seconds`, `linkedin_results_wanted`, `proxies`).
+- `src/reasons.py`: added `EMPTY_JD` reason constant.
+- Tests: `tests/test_iteration_2_scraper.py` — added per-site failure-isolation/retry test and LinkedIn cap + description-flag test.
 - `src/main.py` — replaced `NotImplementedError` stub with full end-to-end pipeline: single-run lock → master_profile rebuild → scrape → L2 hard filters → batch embed → near-duplicate dedup → L3 parse + role acceptance → L4 scoring → L5 build selection → persist `applied` + company cooldown → L8 notify → advance rotation.
 - `config.yaml` `builder.template_path`: corrected filename to `resumes/templates/Templete.docx` (matches actual file on disk).
-- `src/builder/assembler.py`, `hyperlinks.py`, `pdf_convert.py`: updated stubs to note that implementations moved to `src/endpoint/` in the pivot.
+- Tests: `tests/test_smoke.py` expected-paths list now includes `src/endpoint/` and `src/aws/` modules.
 - `src/llm/schemas.py` docstring updated to document both Call 1a and Call 1b.
 - `src/llm/prompts.py` docstring updated; `SelectionResult` import added.
 - `.gitignore`: added `resumes/templates/` (operator-owned resume/cover templates carry personal info + real hyperlinks — rule #21) and `data/run.lock` (single-run lock file written by the orchestrator).
@@ -30,6 +35,10 @@ and this project loosely tracks iterations rather than semver.
 ### Fixed
 - Layer 8 / orchestrator: `src/main.py` parse-failure log used reserved structlog kwarg `event=` (collides with the positional event name → `TypeError`); renamed to `reason=`.
 - Layer 6: `src/endpoint/pdf_convert.py` render-failure log had the same `event=` collision; renamed to `stage=`.
+- Layer 2: `src/main.py` `_write_not_applied()` could violate the `not_applied.job_id` → `all_jobs.job_id` FK and abort the whole commit when a pre-filter-rejected job was never inserted into `all_jobs`; it now writes rows only for job_ids present in `all_jobs`.
+
+### Removed
+- Layer 5: deleted the docstring-only stub modules `src/builder/assembler.py`, `src/builder/hyperlinks.py`, `src/builder/pdf_convert.py` — the real implementations live in `src/endpoint/` after the pivot; the empty placeholders served no purpose.
 
 - `master_summaries.yaml` — operator's curated summary pool (50 entries, 10 each across data, ml, quant/fintech, backend, fullstack roles); outside-in slot template (role, doing, in, using, Tools); grounding notes enforce no fabricated metrics (fraud model is LR/notebook-only, trading bot is Binance testnet, no AWS/CI-CD claimed). Supersedes `master_summaries_pool.yaml` (kept as learning reference, not used by the bot). Source of truth for Layer 4 summary selection.
 

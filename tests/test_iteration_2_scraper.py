@@ -300,3 +300,73 @@ def test_scrape_dedups_within_call(monkeypatch) -> None:
         hours_old=2,
     )
     assert [j.job_id for j in jobs] == ["indeed-1", "indeed-2"]
+
+
+class _FakeDF:
+    def __init__(self, records):
+        self._records = records
+
+    def to_dict(self, orient):  # noqa: ARG002 - mimic pandas signature
+        return self._records
+
+
+def test_scrape_per_site_isolates_failures(monkeypatch) -> None:
+    """A throttled site is retried then skipped; other sites still return."""
+    monkeypatch.setattr("src.scraper.jobspy_wrapper.time.sleep", lambda *_: None)
+    calls: list[list[str]] = []
+
+    def fake_scrape_jobs(**kwargs):
+        site = kwargs["site_name"]
+        calls.append(site)
+        if site == ["linkedin"]:
+            raise RuntimeError("429 throttled")
+        return _FakeDF([{"site": "indeed", "id": "1", "company": "A", "title": "DE"}])
+
+    fake_module = types.ModuleType("jobspy")
+    fake_module.scrape_jobs = fake_scrape_jobs
+    monkeypatch.setitem(sys.modules, "jobspy", fake_module)
+
+    from src.scraper.jobspy_wrapper import scrape
+
+    jobs = scrape(
+        "data engineer",
+        sites=["indeed", "linkedin"],
+        country="india",
+        results_wanted=50,
+        hours_old=2,
+        per_site=True,
+        max_retries=2,
+    )
+    # indeed succeeded once, linkedin retried twice then gave up — no crash.
+    assert [j.job_id for j in jobs] == ["indeed-1"]
+    assert calls.count(["linkedin"]) == 2
+
+
+def test_scrape_linkedin_cap_and_fetch_flag(monkeypatch) -> None:
+    """LinkedIn uses its own results cap + description fetch; others don't."""
+    monkeypatch.setattr("src.scraper.jobspy_wrapper.time.sleep", lambda *_: None)
+    seen: dict[str, dict] = {}
+
+    def fake_scrape_jobs(**kwargs):
+        seen[kwargs["site_name"][0]] = kwargs
+        return _FakeDF([])
+
+    fake_module = types.ModuleType("jobspy")
+    fake_module.scrape_jobs = fake_scrape_jobs
+    monkeypatch.setitem(sys.modules, "jobspy", fake_module)
+
+    from src.scraper.jobspy_wrapper import scrape
+
+    scrape(
+        "data engineer",
+        sites=["indeed", "linkedin"],
+        country="india",
+        results_wanted=50,
+        hours_old=2,
+        per_site=True,
+        linkedin_fetch_description=True,
+        linkedin_results_wanted=25,
+    )
+    assert seen["linkedin"]["results_wanted"] == 25
+    assert seen["linkedin"]["linkedin_fetch_description"] is True
+    assert seen["indeed"]["results_wanted"] == 50
