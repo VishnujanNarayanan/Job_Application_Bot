@@ -27,6 +27,13 @@ python-docx==1.1.2
 reportlab==4.2.5
 # PDF conversion uses LibreOffice headless (system binary, not pip).
 
+# --- Resume endpoint (Layer 6) ----------------------------------------------
+# FastAPI serves /resume/{job_id}.pdf|.docx on demand; uvicorn is the ASGI
+# server; httpx backs fastapi.testclient.TestClient in unit tests.
+fastapi==0.115.6
+uvicorn==0.34.0
+httpx==0.28.1
+
 # --- Notifications ----------------------------------------------------------
 python-telegram-bot==21.7
 

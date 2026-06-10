@@ -43,7 +43,7 @@ def to_pdf(docx_path: str | Path, output_dir: str | Path) -> Path:
     if result.returncode != 0:
         log.error(
             "render_failed",
-            event="pdf_convert_error",
+            stage="pdf_convert",
             returncode=result.returncode,
             stderr=result.stderr[:500],
         )

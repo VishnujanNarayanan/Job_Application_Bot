@@ -203,7 +203,7 @@ def _run(dry_run: bool, log) -> int:
             except LLMError as exc:
                 log.error(
                     "gemini_failure",
-                    event=PARSE_FAILURE,
+                    reason=PARSE_FAILURE,
                     job_id=job.job_id,
                     error=str(exc),
                 )

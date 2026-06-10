@@ -25,6 +25,11 @@ and this project loosely tracks iterations rather than semver.
 - `src/llm/schemas.py` docstring updated to document both Call 1a and Call 1b.
 - `src/llm/prompts.py` docstring updated; `SelectionResult` import added.
 - `.gitignore`: added `resumes/templates/` (operator-owned resume/cover templates carry personal info + real hyperlinks — rule #21) and `data/run.lock` (single-run lock file written by the orchestrator).
+- `requirements.txt`: added `fastapi==0.115.6`, `uvicorn==0.34.0`, `httpx==0.28.1` for the Layer 6 resume endpoint (httpx backs `fastapi.testclient.TestClient`).
+
+### Fixed
+- Layer 8 / orchestrator: `src/main.py` parse-failure log used reserved structlog kwarg `event=` (collides with the positional event name → `TypeError`); renamed to `reason=`.
+- Layer 6: `src/endpoint/pdf_convert.py` render-failure log had the same `event=` collision; renamed to `stage=`.
 
 - `master_summaries.yaml` — operator's curated summary pool (50 entries, 10 each across data, ml, quant/fintech, backend, fullstack roles); outside-in slot template (role, doing, in, using, Tools); grounding notes enforce no fabricated metrics (fraud model is LR/notebook-only, trading bot is Binance testnet, no AWS/CI-CD claimed). Supersedes `master_summaries_pool.yaml` (kept as learning reference, not used by the bot). Source of truth for Layer 4 summary selection.
 
