@@ -308,7 +308,7 @@ scoring:
 # Resume builder — Layer 5
 # ---------------------------------------------------------------------------
 builder:
-  template_path: "resumes/templates/resume_template.docx"
+  template_path: "resumes/templates/Templete.docx"   # actual filename (typo in name kept)
   output_dir: "resumes/applied"
   # Diff check: reject any build that modifies content outside permitted
   # regions. Header (before first WORK EXPERIENCE Heading1) is never touched.
@@ -420,6 +420,25 @@ analytics:
     # Skills appearing in >= this fraction of weekly JDs trigger a
     # "consider learning" alert in the Sunday report.
     skill_demand_alert_threshold: 0.30
+
+# ---------------------------------------------------------------------------
+# AWS — S3 cache + backup (Iteration 2+). Region ap-south-1 always.
+# Credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) live in .env only.
+# ---------------------------------------------------------------------------
+aws:
+  region: "ap-south-1"
+  # Bucket name is operator-specific (not a secret). Override here per instance.
+  s3_bucket: "job-bot-vishnujan"
+
+# ---------------------------------------------------------------------------
+# Resume endpoint — FastAPI (Layer 6). Serves /resume/{job_id}.pdf|.docx.
+# base_url: localhost for dev/dry-run; set to https://{vm-ip} for prod.
+# ---------------------------------------------------------------------------
+endpoint:
+  base_url: "http://localhost:8000"
+  port: 8000
+  # Template path is config-driven so any instance can swap the file.
+  template_path: "resumes/templates/Templete.docx"
 
 # ---------------------------------------------------------------------------
 # Logging

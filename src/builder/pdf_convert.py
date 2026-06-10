@@ -1,1 +1,1 @@
-"""Layer 5 — LibreOffice headless DOCX-to-PDF conversion. Iteration 0 stub."""
+"""PDF converter — moved to src/endpoint/pdf_convert.py in the Iteration 2 pivot."""

@@ -1,65 +1,19 @@
-"""Orchestrator entry point — invoked by the Layer 1 scheduler.
+"""Orchestrator entry point — invoked by the Layer 1 scheduler (cron).
 
 Usage:
-    python -m src.main             # live run (Iteration 3+)
-    python -m src.main --dry-run   # scrape/score/build but never submit
+    python -m src.main             # live run
+    python -m src.main --dry-run   # scrape/score/build, notify to test chat
 
-Iteration 1 implements the end-to-end skeleton: Layers 2-4 + 7 + 8 run
-real code, Layers 5-6 + 9 are explicit no-ops. Every job is rejected
-with reason LOW_SCORE (master_bullets empty until Iteration 2's
-master-profile rebuild lands).
+Pipeline (architecture doc §4):
 
-Pipeline sequence (architecture doc Section 4) — preserved for reference
-and to be filled in iteration by iteration:
-
-LAYER 1 — Scheduler
-    Iteration 1: single linear run.
-    Iteration 2+: cron cadence (peak/off-peak scrape frequency). No
-        application quotas — every match >= 0.50 notifies.
-    Acquire single-run lock to prevent overlapping cron executions.
-
-LAYER 2 — Scraper (Indeed, Glassdoor, LinkedIn — listings only)
-    Iteration 1: stub returning 3 fake jobs.
-    Iteration 2+: JobSpy across all three sources with serial term
-        rotation, hard filters (years, region, cooldown, dup),
-        near-duplicate detection (>0.95 cosine), short-circuit at 20.
-
-LAYER 3 — JD Parser (Gemini Call 1a — runs for EVERY passing job)
-    Iteration 1: stub returning a fixed JDParsed.
-    Iteration 2+: Instructor-enforced JDParsed + spaCy hallucination
-        check + role-acceptance gate against role_clusters.
-
-LAYER 4 — Scoring & Selection
-    Iteration 1: rejects every job (master_bullets empty).
-    Iteration 2+: full Section 4 algorithm — experience selection,
-        project selection, summary pick, skills hybrid, final_score.
-        Every match >= 0.50 builds + notifies; no quotas, no top-N.
-
-LAYER 5 — Resume Builder (Gemini Call 1b — ONLY for matched jobs)
-    Iteration 1: no-op.
-    Iteration 2+: skills hybrid, title alias pick, cover letter →
-        selection_json (~2 KB) written to `applied`. NO PDF rendered here.
-
-LAYER 6 — Application Assist (notify + on-demand resume endpoint)
-    Iteration 1: no-op (dry-run only).
-    Iteration 2+: FastAPI endpoint renders PDF/DOCX on demand from
-        selection_json + current template, cached in S3. No auto-apply,
-        no Playwright, no form filling (removed in the pivot).
-
-LAYER 7 — State Management (always running)
-    Iteration 1: SQLAlchemy 2.0 sync session against Neon, base schema
-        created via Alembic migration 0001_initial (auto-apply tables
-        dropped in 0002).
-
-LAYER 8 — Notifications (Telegram)
-    Iteration 1: dry-run summary delivered at end of run.
-    Iteration 2+: per-match message bundling apply link + resume links.
-    Iteration 3+: CloudWatch-bridged alarm alerts.
-
-LAYER 9 — Analytics (Google Sheets + Docs)
-    Iteration 1: no-op.
-    Iteration 2+: Sheets index mapping every match to apply / PDF / DOCX
-        links + status; Sunday Gemini-synthesised Docs report.
+  LAYER 1   Scheduler — single-run lock (data/run.lock), cron cadence
+  LAYER 2   Scraper — JobSpy, serial rotation, hard filters, dedup
+  LAYER 3   JD Parser — Gemini Call 1a (always), role-acceptance gate
+  LAYER 4   Scoring — deterministic selection + final score formula
+  LAYER 5   Resume Builder — Gemini Call 1b (matched jobs), selection_json
+  LAYER 6   Notification — apply link + resume links via Telegram
+  LAYER 7   State — Neon Postgres, master_profile rebuild on mtime change
+  LAYER 8   Notifications — per-match Telegram message
 """
 
 from __future__ import annotations
@@ -67,17 +21,16 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 import structlog
 
+_ROOT = Path(__file__).resolve().parents[1]
+
 
 def _configure_logging() -> None:
-    """One-time structlog setup. JSON output to stderr."""
-    logging.basicConfig(
-        format="%(message)s", stream=sys.stderr, level=logging.INFO
-    )
-    # httpx/httpcore log full request URLs at INFO, which leaks the bot
-    # token embedded in Telegram API calls. Raise to WARNING.
+    logging.basicConfig(format="%(message)s", stream=sys.stderr, level=logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     structlog.configure(
@@ -92,32 +45,341 @@ def _configure_logging() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="src.main")
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Scrape/score/build but never submit. Default for Iteration 1.",
-    )
+    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 
     _configure_logging()
     log = structlog.get_logger()
     log.info("run_started", dry_run=args.dry_run, iteration=2)
 
-    # The Iteration-1 linear skeleton (fake scrape → fixed parse → reject-all
-    # decide) has been dismantled now that Layers 2/3/4 are real modules:
-    #   Layer 2  src.scraper.{jobspy_wrapper,filters,dedup,rotation}
-    #   Layer 3  src.parser  (Gemini Call 1a)
-    #   Layer 4  src.scorer.{selector,ordering,apply_decision.evaluate}
-    # The end-to-end pipeline — rotation-driven scrape, embed, dedup, hard
-    # filters, parse + role-acceptance, candidate loading from the rebuilt
-    # master_profile, Layer 4 evaluate, Layer 5 build, notify — is assembled
-    # in the dedicated orchestrator step that lands right before the test-chat
-    # dry-run (the candidate loader depends on the master_profile rebuild).
-    raise NotImplementedError(
-        "Iteration 2 orchestrator rewiring in progress. Layers 2/3/4 exist as "
-        "real, tested modules; the end-to-end wiring + master_profile candidate "
-        "loader land before the dry-run. Drive the layers directly meanwhile."
+    # Single-run lock — prevents overlapping cron executions.
+    lock_path = _ROOT / "data" / "run.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import fcntl
+        lock_file = open(lock_path, "w")
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (ImportError, OSError):
+        # Lock already held by another run (or Windows where fcntl is absent).
+        log.info("run_skipped", reason="lock_held")
+        return 0
+
+    try:
+        return _run(args.dry_run, log)
+    finally:
+        import fcntl as _fcntl
+        _fcntl.flock(lock_file, _fcntl.LOCK_UN)
+        lock_file.close()
+
+
+def _run(dry_run: bool, log) -> int:
+    from src.builder.llm_call import build as build_selection
+    from src.config import settings
+    from src.llm.client import LLMError
+    from src.notifications import send_dry_run_summary, send_match_notification
+    from src.parser import (
+        apply_to_row,
+        cluster_for_term,
+        grounded_skills,
+        parse,
+        role_accepted,
     )
+    from src.reasons import (
+        BUILD_FAILURE,
+        COMPANY_COOLDOWN,
+        DUPLICATE,
+        HARD_FILTER_LAYER_3,
+        LOCATION_DISALLOWED,
+        NEAR_DUPLICATE,
+        LOW_SCORE,
+        PARSE_FAILURE,
+        ROLE_MISMATCH,
+    )
+    from src.scorer.apply_decision import evaluate
+    from src.scorer.embeddings import embed_batch
+    from src.scorer.selector import build_jd_context
+    from src.scraper import dedup, filters, jobspy_wrapper, rotation
+    from src.state import master_profile
+    from src.state.db import session_scope
+    from src.state.models import AllJobs, Applied, CompanyCooldown, NotApplied
+
+    cfg = settings
+    now = datetime.now(timezone.utc)
+
+    with session_scope() as session:
+        # --- Layer 7: master profile rebuild (mtime short-circuit) ---
+        try:
+            rebuild_report = master_profile.rebuild(session)
+            if not rebuild_report.skipped:
+                log.info("master_profile_rebuilt", **{
+                    k: v for k, v in vars(rebuild_report).items()
+                    if not k.startswith("_")
+                })
+        except Exception as exc:
+            log.error(
+                "master_profile_validation_failure",
+                error=str(exc),
+            )
+            return 1
+
+        profile = master_profile.load_profile(session)
+
+        # --- Layer 2: scraper ---
+        terms = list(cfg.scraper.search_terms)
+        term = rotation.current_term(session, terms)
+        is_peak = True  # TODO: detect from time-of-day in Layer 1
+        hours_old = int(cfg.scraper.hours_old.peak if is_peak else cfg.scraper.hours_old.off_peak)
+
+        log.info("scrape_start", term=term, hours_old=hours_old, dry_run=dry_run)
+        try:
+            raw_jobs = jobspy_wrapper.scrape(
+                term,
+                sites=list(cfg.scraper.sites),
+                country=str(cfg.scraper.country),
+                results_wanted=int(cfg.scraper.results_wanted_per_term),
+                hours_old=hours_old,
+            )
+        except Exception as exc:
+            log.error("scraper_error", term=term, error=str(exc))
+            raw_jobs = []
+
+        log.info("scrape_done", term=term, raw_count=len(raw_jobs))
+
+        # --- Layer 2: hard filters (raw fields) ---
+        existing_ids = filters.existing_job_ids(session, [j.job_id for j in raw_jobs])
+        disallowed = list(cfg.filters.disallowed_regions)
+        cooldown_days = int(cfg.scraper.cooldown_days)
+
+        passing: list[AllJobs] = []
+        not_applied_queue: list[tuple[AllJobs, str, str | None]] = []
+
+        for job in raw_jobs:
+            if job.job_id in existing_ids:
+                not_applied_queue.append((job, DUPLICATE, None))
+                continue
+            if filters.location_disallowed(job.location, disallowed):
+                not_applied_queue.append((job, LOCATION_DISALLOWED, job.location))
+                continue
+            last_notified = filters.company_last_notified(session, job.company)
+            if filters.company_in_cooldown(last_notified, now, cooldown_days):
+                not_applied_queue.append((job, COMPANY_COOLDOWN, job.company))
+                continue
+            passing.append(job)
+
+        # --- Layer 2: embed JD texts in a single batch ---
+        if passing:
+            jd_texts = [j.jd_text or "" for j in passing]
+            embeddings = embed_batch(jd_texts)
+            for job, emb in zip(passing, embeddings):
+                job.jd_embedding = emb
+
+        # --- Layer 2: near-duplicate detection ---
+        outcomes = dedup.resolve_batch(
+            session,
+            passing,
+            threshold=float(cfg.scraper.near_duplicate_threshold),
+            lookback=int(cfg.scraper.near_duplicate_lookback),
+        )
+        # Session already flushed originals+duplicates inside resolve_batch.
+
+        # Collect cluster key for this search term (for role acceptance check).
+        role_clusters = cfg.parser.role_clusters.as_dict()
+        cluster_key = cluster_for_term(term, role_clusters)
+
+        matched_count = 0
+        skipped_count = 0
+        short_circuit = int(cfg.scraper.short_circuit_count)
+
+        for outcome in outcomes:
+            job = outcome.job
+            if outcome.is_duplicate:
+                not_applied_queue.append((job, NEAR_DUPLICATE, outcome.original_id))
+                skipped_count += 1
+                continue
+
+            # --- Layer 3: parse ---
+            try:
+                parsed = parse(job)
+            except LLMError as exc:
+                log.error(
+                    "gemini_failure",
+                    event=PARSE_FAILURE,
+                    job_id=job.job_id,
+                    error=str(exc),
+                )
+                not_applied_queue.append((job, PARSE_FAILURE, str(exc)))
+                skipped_count += 1
+                continue
+
+            apply_to_row(job, parsed)
+
+            # Role-cluster acceptance
+            if cluster_key and not role_accepted(parsed.role_category, cluster_key, role_clusters):
+                not_applied_queue.append((job, ROLE_MISMATCH, parsed.role_category))
+                skipped_count += 1
+                continue
+
+            # Layer 3 hard filter: years ceiling on structured field
+            if filters.exceeds_years_ceiling(parsed.years_required, int(cfg.filters.years_ceiling)):
+                not_applied_queue.append((job, HARD_FILTER_LAYER_3, str(parsed.years_required)))
+                skipped_count += 1
+                continue
+
+            # --- Layer 4: scoring ---
+            jd_context = build_jd_context(parsed, posted_at=job.posted_at)
+            result = evaluate(profile, jd_context)
+
+            if not result.apply:
+                not_applied_queue.append((job, LOW_SCORE, str(result.final_score)))
+                skipped_count += 1
+                continue
+
+            # --- Layer 5: build selection_json ---
+            # Gap skills: JD required skills not in operator's pool
+            skills_pool = [sc.skill for sc in profile.skills]
+            gap_skills = _compute_gap_skills(
+                list(parsed.required_skills or []), skills_pool
+            )
+
+            selection = build_selection(
+                result=result,
+                profile=profile,
+                jd_role_summary=parsed.role_summary,
+                jd_required_skills=list(parsed.required_skills or []),
+                jd_team_or_product=parsed.team_or_product,
+            )
+
+            if selection is None:
+                log.error(BUILD_FAILURE, job_id=job.job_id)
+                not_applied_queue.append((job, BUILD_FAILURE, None))
+                skipped_count += 1
+                continue
+
+            # Fill job_id into selection before persisting
+            selection.job_id = job.job_id
+
+            # --- Layer 7: persist applied row ---
+            title_alias = (
+                selection.experiences[0].title_alias
+                if selection.experiences
+                else job.role
+            )
+            expected_salary = (
+                parsed.salary_max_lpa
+                or float(cfg.salary.default_expected_lpa)
+            )
+            session.add(Applied(
+                job_id=job.job_id,
+                selection_json=selection.model_dump(),
+                template_version=selection.template_version,
+                cover_letter_text=selection.cover_letter_text,
+                expected_salary_lpa=expected_salary,
+                fit_score=result.fit,
+                success_prob=result.success_prob,
+                recency_score=result.recency,
+                final_score=result.final_score,
+                gap_skills=gap_skills,
+                user_status="pending",
+            ))
+            job.outcome = "matched"
+            job.outcome_at = now
+
+            # Update company cooldown
+            cooldown_row = session.get(CompanyCooldown, job.company)
+            if cooldown_row is None:
+                session.add(CompanyCooldown(company=job.company, last_applied_at=now))
+            else:
+                cooldown_row.last_applied_at = now
+
+            session.flush()
+
+            # --- Layer 8: notify ---
+            if not dry_run:
+                try:
+                    send_match_notification(
+                        job=job,
+                        parsed=parsed,
+                        result=result,
+                        gap_skills=gap_skills,
+                        endpoint_base_url=str(cfg.endpoint.base_url),
+                        title_alias=title_alias,
+                    )
+                except Exception as exc:
+                    log.error("notification_error", job_id=job.job_id, error=str(exc))
+            else:
+                log.info(
+                    "dry_run_match",
+                    job_id=job.job_id,
+                    company=job.company,
+                    role=job.role,
+                    score=result.final_score,
+                    title_alias=title_alias,
+                )
+
+            matched_count += 1
+            log.info(
+                "selection_built",
+                job_id=job.job_id,
+                score=result.final_score,
+                experiences=len(selection.experiences),
+                projects=len(selection.projects),
+            )
+
+            if matched_count + skipped_count >= short_circuit:
+                log.info("short_circuit", threshold=short_circuit)
+                break
+
+        # --- Persist not-applied records ---
+        _write_not_applied(session, not_applied_queue, now)
+
+        # --- Advance rotation ---
+        rotation.advance(session, terms)
+
+        session.commit()
+
+    # --- Layer 8: dry-run summary ---
+    total = len(raw_jobs)
+    try:
+        send_dry_run_summary(
+            scraped=total,
+            skipped=skipped_count,
+            applied=matched_count,
+        )
+    except Exception as exc:
+        log.error("telegram_summary_error", error=str(exc))
+
+    log.info(
+        "run_complete",
+        dry_run=dry_run,
+        scraped=total,
+        matched=matched_count,
+        skipped=skipped_count,
+    )
+    return 0
+
+
+def _compute_gap_skills(required: list[str], pool: list[str]) -> list[str]:
+    """Required skills not present in the skills pool (substring match)."""
+    pool_lower = {s.casefold() for s in pool}
+    return [
+        s for s in required
+        if s.casefold() not in pool_lower
+        and not any(s.casefold() in p for p in pool_lower)
+    ]
+
+
+def _write_not_applied(session, queue: list, now: datetime) -> None:
+    from src.state.models import NotApplied
+    for job, reason, detail in queue:
+        # Only write if the job exists (DUPLICATE rows may not be in DB yet)
+        if reason == "DUPLICATE":
+            continue
+        session.merge(NotApplied(
+            job_id=job.job_id,
+            reason_category=reason,
+            reason_detail=detail,
+            not_applied_at=now,
+        ))
 
 
 if __name__ == "__main__":

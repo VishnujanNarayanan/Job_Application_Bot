@@ -8,6 +8,24 @@ and this project loosely tracks iterations rather than semver.
 ## [Unreleased]
 
 ### Added
+- Layer 5: `src/builder/llm_call.py` — Gemini Call 1b driver (title alias + skills categories + cover letter → `StoredSelection`); regenerates up to `config.builder.llm_regenerate_attempts` times on validation or voice failure before returning `None` (BUILD_FAILURE).
+- Layer 5: `src/builder/skills_validator.py` — post-generation validation of Call 1b skills output against pool candidates and gap-skills source sets (hard rules #1, #7).
+- Layer 5: `src/llm/schemas.py` — added `SkillCategory`, `StoredSkills`, `ResumeBuildLLMOutput` (Call 1b schema), `SelectedExpEntry`, `SelectedProjEntry`, `StoredSelection` (~2 KB selection blob written to `applied.selection_json`).
+- Layer 5: `src/llm/prompts.py` — added `build_prompt()` and `build_system()` for Gemini Call 1b.
+- Layer 6: `src/endpoint/` — FastAPI app serving `/resume/{job_id}.pdf|.docx` on demand (`app.py`), DOCX assembler with structural detection and section reorder (`assembler.py`), project hyperlink updater (`hyperlinks.py`), LibreOffice PDF converter (`pdf_convert.py`), S3 render-cache orchestrator with 1-month TTL (`cache.py`).
+- Layer 7: `src/aws/` — `iam_session.py` (cached `boto3.Session` from env, hard rule #18) + `s3.py` (S3 cache put/get and daily selection_json backup export).
+- Layer 8: `send_match_notification()` in `src/notifications.py` — per-match Telegram message with apply + PDF + DOCX inline keyboard buttons (architecture §8 format).
+- `config.yaml`: added `aws.region` / `aws.s3_bucket` and `endpoint.base_url` / `endpoint.port` / `endpoint.template_path` sections.
+- Tests: `tests/test_iteration_2_builder.py` (10 tests — skills_validator and llm_call with stub transport), `tests/test_iteration_2_endpoint.py` (7 tests — assembler, hyperlinks, cache, FastAPI routes), `tests/test_iteration_2_notifications.py` (2 tests — match notification content).
+
+### Changed
+- `src/main.py` — replaced `NotImplementedError` stub with full end-to-end pipeline: single-run lock → master_profile rebuild → scrape → L2 hard filters → batch embed → near-duplicate dedup → L3 parse + role acceptance → L4 scoring → L5 build selection → persist `applied` + company cooldown → L8 notify → advance rotation.
+- `config.yaml` `builder.template_path`: corrected filename to `resumes/templates/Templete.docx` (matches actual file on disk).
+- `src/builder/assembler.py`, `hyperlinks.py`, `pdf_convert.py`: updated stubs to note that implementations moved to `src/endpoint/` in the pivot.
+- `src/llm/schemas.py` docstring updated to document both Call 1a and Call 1b.
+- `src/llm/prompts.py` docstring updated; `SelectionResult` import added.
+- `.gitignore`: added `resumes/templates/` (operator-owned resume/cover templates carry personal info + real hyperlinks — rule #21) and `data/run.lock` (single-run lock file written by the orchestrator).
+
 - `master_summaries.yaml` — operator's curated summary pool (50 entries, 10 each across data, ml, quant/fintech, backend, fullstack roles); outside-in slot template (role, doing, in, using, Tools); grounding notes enforce no fabricated metrics (fraud model is LR/notebook-only, trading bot is Binance testnet, no AWS/CI-CD claimed). Supersedes `master_summaries_pool.yaml` (kept as learning reference, not used by the bot). Source of truth for Layer 4 summary selection.
 
 ### Changed (operator data)
