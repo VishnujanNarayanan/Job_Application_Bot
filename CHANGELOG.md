@@ -9,8 +9,7 @@ and this project loosely tracks iterations rather than semver.
 
 ### Changed
 - `src/main.py`: bump the `run_started` log field `iteration` from `2` to `3` to match the current iteration.
-
-## [Iteration 3] — 2026-06-11
+- Doc: `job_automation_architecture.md` Iteration 5 (Production Deployment) section rewritten to specify a **Docker-based** deployment — one `python:3.11-slim` + `libreoffice-writer` image, two compose services (always-on `endpoint` via uvicorn + on-demand `pipeline` via `python -m src.main`), Layer 1 scheduler as host cron firing `docker compose run --rm pipeline` (replaces the prior systemd plan). Documents that the same image/compose file doubles as the instance-ready distributable for a second operator, and the arch-aware torch handling (x86 `+cpu` wheel vs arm64 PyPI build) for either Oracle shape.
 
 ### Added
 - Layer 8: `src/aws/cloudwatch.py` — `build_handler()` wires a watchtower `CloudWatchLogHandler` to the existing `get_session()` boto3 session. Stream name is `YYYY-MM-DD` (one stream per day). Gracefully returns `None` (never raises) when `AWS_CLOUDWATCH_LOG_GROUP` is unset or any AWS error occurs, so local dev works without credentials. `create_log_group=False` enforces that the log group must pre-exist (IAM constraint — runtime user has `logs:CreateLogStream/PutLogEvents` only).

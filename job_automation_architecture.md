@@ -887,14 +887,40 @@ Acceptance:
 
 ### ITERATION 5 — PRODUCTION DEPLOYMENT
 
+Deployment is **Docker-based**. A single image bundles Python, the pinned deps
+(CPU torch + the spaCy model wheel via `requirements.txt`) and the one system
+binary the pip stack can't provide — **LibreOffice headless** (DOCX→PDF in Layer
+6). The same image serves two roles, selected by entry command:
+
 ```
-- Oracle Cloud Always Free VM
-- Install Python, LibreOffice, boto3, FastAPI (uvicorn/gunicorn)
-- Run the endpoint as a service (systemd) + the cron pipeline
-- HTTPS for the endpoint (Caddy or nginx + Let's Encrypt) so Telegram
-  links are clickable and secure
-- CloudWatch confirms logs streaming from VM
+- Oracle Cloud Always Free VM (the persistent host; replaces the laptop)
+- One Dockerfile (python:3.11-slim + libreoffice-writer + fonts + requirements.txt)
+- docker-compose with two services from that image:
+    endpoint  — uvicorn src.endpoint.app:app, restart: unless-stopped, port 8000
+                (always-on; Telegram resume/apply links resolve here)
+    pipeline  — python -m src.main, profile "manual", invoked on demand
+- Layer 1 scheduler = host cron firing `docker compose run --rm pipeline` at the
+  cadence documented in config.yaml `scheduler:` (cron is the scheduler — no
+  EventBridge/Lambda, per the free-tier rule). Replaces the old systemd plan.
+- One-time on first deploy: `alembic upgrade head` (Neon), `cli.reparse`
+  (master profile → DB), `cli.aws_check` (verify S3 + IAM + CloudWatch).
+- HTTPS for the endpoint (Caddy or nginx + Let's Encrypt) so Telegram links are
+  clickable and secure; set config.yaml `endpoint.base_url` to the VM's URL.
+- CloudWatch confirms logs streaming from VM.
 ```
+
+**Why Docker (beyond the VM):** the codebase is instance-ready (§ rule #21 — no
+operator identity in source), so the *same* image + compose file is the
+distributable artifact a second person uses to run their own independent copy.
+They clone, supply their own `.env` + `master_profile.yaml` + template + Google
+service-account JSON (all gitignored, mounted as volumes / `env_file`), and
+`docker compose up` — no venv/LibreOffice/spaCy install to fight, no code edits.
+Neon stays external (reached via `DATABASE_URL`), so the container is just the app.
+
+**Arch note:** the `torch==2.12.0+cpu` pin is an x86_64 wheel; on an arm64 shape
+(Ampere A1) plain `torch==2.12.0` from PyPI is the CPU build. Keep the torch line
+arch-aware via environment markers and build the image on the VM so pip resolves
+for the host arch — one `requirements.txt` works on either Oracle shape.
 
 ### ITERATION 6 — EXPANSION (OPTIONAL)
 
