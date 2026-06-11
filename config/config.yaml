@@ -348,7 +348,7 @@ analytics:
 aws:
   region: "ap-south-1"
   # Bucket name is operator-specific (not a secret). Override here per instance.
-  s3_bucket: "job-bot-vishnujan"
+  s3_bucket: "application-bot-vishnujan-resumes"
 
 # ---------------------------------------------------------------------------
 # Resume endpoint — FastAPI (Layer 6). Serves /resume/{job_id}.pdf|.docx.
