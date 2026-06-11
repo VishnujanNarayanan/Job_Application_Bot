@@ -143,6 +143,29 @@ def test_row_to_job_rejects_rows_without_company_or_title() -> None:
     assert _row_to_job({"site": "indeed", "company": "Acme"}) is None
 
 
+def test_row_to_job_strips_leading_punctuation_from_title() -> None:
+    from src.scraper.jobspy_wrapper import _row_to_job
+
+    job = _row_to_job(
+        {"site": "indeed", "id": "x", "company": "Acme",
+         "title": ": Data Engineer – Snowflake | Azure"}
+    )
+    assert job is not None
+    assert job.role == "Data Engineer – Snowflake | Azure"  # only leading junk removed
+
+
+def test_clean_title_edge_cases() -> None:
+    from src.scraper.jobspy_wrapper import _clean_title
+
+    assert _clean_title("- Senior SWE") == "Senior SWE"
+    assert _clean_title("  •  Backend Engineer") == "Backend Engineer"
+    assert _clean_title("Data Analyst") == "Data Analyst"   # already clean
+    assert _clean_title("(Remote) Backend") == "(Remote) Backend"  # bracket kept
+    assert _clean_title("  (Senior) SWE") == "(Senior) SWE"        # ws before bracket
+    assert _clean_title(":::") is None                      # all punctuation → None
+    assert _clean_title(None) is None
+
+
 def test_row_to_job_handles_nan_and_url_fallback() -> None:
     from src.scraper.jobspy_wrapper import _row_to_job
 
