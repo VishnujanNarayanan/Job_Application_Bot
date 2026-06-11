@@ -31,6 +31,11 @@ jobs:
           pip install -r requirements.txt
 
       # 4. Run the suite. No secrets needed: tests mock Gemini, the DB,
-      #    boto3 (moto), and FastAPI (TestClient).
+      #    boto3 (moto), and FastAPI (TestClient). DATABASE_URL is a throwaway
+      #    value — src/state/db.py builds the engine at import time, but the
+      #    engine is lazy (never connects here) and the DB tests mock
+      #    session_scope. The value only needs to exist so imports succeed.
       - name: Run tests
+        env:
+          DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
         run: pytest -v
