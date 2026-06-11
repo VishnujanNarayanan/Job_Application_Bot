@@ -6,17 +6,17 @@ FR-15) — LinkedIn is a read-only listings source, so the only risk is
 recoverable scraper-IP throttling.
 
 The contract is ``scrape(search_term, ...) -> list[AllJobs]``: rows are
-returned, not persisted — the caller embeds them and hands them to
-``dedup.resolve_batch`` (which owns add/flush so the self-FK insert order
-holds). JobSpy is imported lazily and the DataFrame→AllJobs mapping
-(:func:`_row_to_job`) is pure, so unit tests run without the dependency or
-network by feeding plain dicts.
+returned, not persisted — the caller embeds them and persists them. JobSpy
+is imported lazily and the DataFrame→AllJobs mapping (:func:`_row_to_job`)
+is pure, so unit tests run without the dependency or network by feeding
+plain dicts.
 """
 
 from __future__ import annotations
 
 import hashlib
 import random
+import re
 import time
 from collections.abc import Sequence
 from datetime import date, datetime, timezone
@@ -38,6 +38,28 @@ def _as_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+# Leading junk on scraped titles: whitespace, punctuation, separators, bullets
+# (e.g. Indeed's ``": Data Engineer | Azure"``). Stripped from the front only.
+# Opening brackets ``(`` / ``[`` are preserved — they pair with content, so a
+# title like ``"(Remote) Backend"`` keeps its bracket instead of leaving a
+# dangling ``)``.
+_LEADING_JUNK = re.compile(r"^[^\w([]+", re.UNICODE)
+
+
+def _clean_title(value: Any) -> str | None:
+    """Trim a scraped title, then strip any leading punctuation/separators.
+
+    Whitespace and leading non-alphanumeric characters (``:``, ``-``, ``|``,
+    bullets, etc.) are removed so the title starts at its first real word. A
+    title that is entirely punctuation collapses to None (unusable, like a
+    blank title)."""
+    text = _as_str(value)
+    if text is None:
+        return None
+    cleaned = _LEADING_JUNK.sub("", text)
+    return cleaned or None
 
 
 def _as_posted_at(value: Any) -> datetime | None:
@@ -81,7 +103,7 @@ def _row_to_job(row: dict[str, Any]) -> AllJobs | None:
     """
     site = _as_str(row.get("site")) or "unknown"
     company = _as_str(row.get("company"))
-    role = _as_str(row.get("title"))
+    role = _clean_title(row.get("title"))
     if not company or not role:
         return None
     job_url = _as_str(row.get("job_url"))

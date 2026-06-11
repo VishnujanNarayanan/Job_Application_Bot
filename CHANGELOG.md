@@ -7,6 +7,11 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [Iteration 2.4] — 2026-06-11
+
+### Changed
+- Layer 2 (scraper): `_row_to_job` now strips leading punctuation/separators/whitespace from scraped titles via the new `_clean_title` helper (e.g. Indeed's `": Data Engineer | Azure"` → `"Data Engineer | Azure"`). Opening brackets `(`/`[` are preserved so `"(Remote) Backend"` keeps its bracket; a title that is entirely punctuation collapses to None (unusable, dropped like a blank title). Also fixed a stale `dedup.resolve_batch` reference in the module docstring.
+
 ## [Iteration 2.3] — 2026-06-11
 
 ### Added
