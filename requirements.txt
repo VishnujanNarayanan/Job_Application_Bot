@@ -5,10 +5,15 @@ python-jobspy==1.1.80
 
 # --- NLP validation ---------------------------------------------------------
 spacy==3.8.2
-# spaCy model installed separately:
-#   python -m spacy download en_core_web_sm
+# en_core_web_sm: small English model for tokenization/lemmatization in the parser.
+# Not on PyPI — installed via direct wheel URL (must match spacy version above).
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 
 # --- Embeddings (local, free) -----------------------------------------------
+# torch: CPU-only build (~200 MB vs ~2 GB for CUDA). Must be listed before
+# sentence-transformers so pip resolves the CPU wheel, not the default CUDA one.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.12.0+cpu
 sentence-transformers==3.3.1
 
 # --- LLM (Gemini 2.0 Flash) + Pydantic structuring --------------------------
