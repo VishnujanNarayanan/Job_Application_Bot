@@ -7,7 +7,13 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Added
+- Layer 8: `src/aws/cloudwatch.py` — `build_handler()` wires a watchtower `CloudWatchLogHandler` to the existing `get_session()` boto3 session. Stream name is `YYYY-MM-DD` (one stream per day). Gracefully returns `None` (never raises) when `AWS_CLOUDWATCH_LOG_GROUP` is unset or any AWS error occurs, so local dev works without credentials. `create_log_group=False` enforces that the log group must pre-exist (IAM constraint — runtime user has `logs:CreateLogStream/PutLogEvents` only).
+- Layer 8: wired `build_handler()` into `_configure_logging()` in `src/main.py` and `src/cli/reparse.py` — every structlog JSON event now ships to CloudWatch Logs when `AWS_CLOUDWATCH_LOG_GROUP` is set.
+- Tests: `tests/test_cloudwatch_handler.py` — 4 moto-backed tests: absent env var returns None, configured handler returns CloudWatchLogHandler with correct group/stream, session error returns None gracefully, full JSON round-trip verifies events land in the mocked stream.
+
 ### Fixed
+- `config.yaml`: corrected `aws.s3_bucket` from the non-existent `job-bot-vishnujan` to the real bucket `application-bot-vishnujan-resumes` (matches `.env`'s `AWS_S3_BUCKET`). The app reads the bucket from config (`settings.aws.s3_bucket`), so it was previously targeting a bucket that doesn't exist; `aws_check.py` (which reads `AWS_S3_BUCKET` from env) had been silently verifying a different name.
 - Layer 5: prompt instruction 2 now explicitly states each skill may appear in AT MOST ONE category. Gemini was repeatedly placing the same skill (e.g. `Python`, `SQL`) in multiple categories, causing `BUILD_FAILURE` after all 3 retries. The validator already caught the violation; the prompt now prevents it.
 
 ### Changed
