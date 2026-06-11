@@ -7,6 +7,9 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Changed
+- `src/main.py`: bump the `run_started` log field `iteration` from `2` to `3` to match the current iteration.
+
 ## [Iteration 3] — 2026-06-11
 
 ### Added
