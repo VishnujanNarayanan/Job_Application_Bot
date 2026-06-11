@@ -10,6 +10,10 @@ and this project loosely tracks iterations rather than semver.
 ### Added
 - CI: `.github/workflows/ci.yml` — GitHub Actions pipeline running on every push to `main` and every pull request. Checks out the repo into a clean Ubuntu runner, sets up Python 3.11 (with pip wheel caching), installs `requirements.txt` from scratch (honest reproducibility check for rule #21), and runs the full `pytest` suite. No secrets required — tests mock Gemini, the DB, boto3 (moto), and FastAPI (TestClient).
 
+### Fixed
+- CI: add a tracked `resumes/applied/.gitkeep` so the gitignored, normally-empty `resumes/applied/` directory exists on a clean checkout (mirrors `resumes/templates/`); fixes `test_repo_layout` failing on the runner.
+- CI: supply a throwaway `DATABASE_URL` to the `pytest` step in `ci.yml`. `src/state/db.py` builds the SQLAlchemy engine at import time, so importing `src.endpoint.app` requires the var even though the engine never connects and the DB tests mock `session_scope`; fixes the three endpoint tests failing with `RuntimeError: DATABASE_URL is not set` on the runner.
+
 ### Changed
 - `requirements.txt`: pin torch to the CPU-only wheel (`torch==2.12.0+cpu` via `--extra-index-url https://download.pytorch.org/whl/cpu`, listed before `sentence-transformers`) so installs pull the ~200 MB CPU build instead of the ~2 GB default CUDA build (no GPU in use — dry-run runs `device_name: cpu`).
 - `requirements.txt`: install the `en_core_web_sm` spaCy model via direct wheel URL (pinned `3.8.0` to match `spacy==3.8.2`) so a single `pip install -r requirements.txt` provisions everything — no separate `python -m spacy download` step.
