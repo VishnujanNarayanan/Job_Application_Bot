@@ -7,8 +7,6 @@ matched jobs (final_score >= 0.50).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 from src.scorer.apply_decision import SelectionResult
 from src.state.models import AllJobs
 
@@ -25,26 +23,21 @@ def jd_parse_system() -> str:
     return _PARSE_SYSTEM
 
 
-def jd_parse_prompt(job: AllJobs, role_categories: Sequence[str]) -> str:
-    """Render the Call 1a user prompt for one scraped job.
-
-    ``role_categories`` is the set of allowed ``role_category`` values
-    (the config ``parser.role_clusters`` keys); the model must pick the
-    closest one.
-    """
-    categories = ", ".join(role_categories)
+def jd_parse_prompt(job: AllJobs) -> str:
+    """Render the Call 1a user prompt for one scraped job."""
     return (
         f"Job title: {job.role}\n"
         f"Company: {job.company}\n"
         f"Location (from listing): {job.location or 'unspecified'}\n\n"
         "Job description:\n"
         f"{job.jd_text or '(no description text was scraped)'}\n\n"
-        "Extract the structured fields. For role_category choose the single "
-        f"closest of: {categories}. For role_level pick junior, mid, senior, "
-        "or lead. For years_required give the minimum years demanded (0 if "
-        "none stated). Salary only if explicitly stated; convert annual "
-        "figures to LPA (lakhs per annum). apply_url only if a literal URL "
-        "appears in the description."
+        "Extract the structured fields. For role_category give a short slug "
+        "classifying the role type (e.g. backend, data, ml, fullstack, devops, "
+        "quant). For role_level pick junior, mid, senior, or lead. For "
+        "years_required give the minimum years demanded (0 if none stated). "
+        "Salary only if explicitly stated; convert annual figures to LPA "
+        "(lakhs per annum). apply_url only if a literal URL appears in the "
+        "description."
     )
 
 

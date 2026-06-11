@@ -16,6 +16,7 @@ from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     Float,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     Integer,
     Text,
     func,
+    text as sa_text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -77,6 +79,11 @@ class AllJobs(Base):
         Text, ForeignKey("all_jobs.job_id")
     )
     outcome_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        server_default=sa_text("nextval('all_jobs_id_seq')"),
+        nullable=False,
+    )
 
     __table_args__ = (
         Index("idx_all_jobs_scraped", scraped_at.desc()),

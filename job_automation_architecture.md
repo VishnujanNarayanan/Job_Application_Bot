@@ -247,13 +247,18 @@ spaCy validates extracted skills appear in JD text. Hard filter re-check on stru
 #### 4.1 JD embeddings
 
 ```
-jd_vec_skills = embed(required + nice_to_have)
-jd_vec_resp   = embed(responsibilities + role_summary)
-jd_vec_role   = embed(role_summary)
-jd_vec_match  = jd_vec_skills + jd_vec_resp
+jd_skill_vecs   = [embed(s) for s in (required + nice_to_have)]   # per-skill
+jd_vec_skills   = embed(required + nice_to_have)   # blended, only for vec_match
+jd_vec_resp     = embed(responsibilities + role_summary)
+jd_vec_role     = embed(role_summary)
+jd_vec_match    = jd_vec_skills + jd_vec_resp
 ```
 
-The JD embedding is also stored on `all_jobs` for near-duplicate detection.
+Skills are embedded **individually** (`jd_skill_vecs`): each pool skill scores
+against its best-matching individual JD skill (§4.5), so an exact match scores
+~1.0 instead of being diluted across a blended centroid. The blended
+`jd_vec_skills` is retained only as one component of `jd_vec_match`, which
+matches bullets holistically (work done vs. what the JD wants) — §4.2/§4.3.
 
 #### 4.2 Experience scoring
 
@@ -286,7 +291,8 @@ Filter pool by JD role_category, pick highest cosine match. No LLM.
 #### 4.5 Skills selection (hybrid)
 
 ```
-Step 1: score every skill in skills_pool against JD
+Step 1: score every pool skill = max(cosine(pool_skill, jd_skill)
+        for jd_skill in jd_skill_vecs)   # best individual match, not centroid
 Step 2: take top-14 candidates
 Step 3: identify + score gap skills (JD requires, not in pool)
 Step 4: LLM names 3 categories, assigns 3-5 skills each from candidates,

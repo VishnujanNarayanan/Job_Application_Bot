@@ -19,7 +19,8 @@ Selection rules (CLAUDE.md "Selection rules — locked"):
                 threshold 0.50, max 3, min 2 (force-include), never hidden
                 bullets: >= floor, min 2, max 3, descending
     SUMMARY     role_category match then highest cosine (fallback: all)
-    SKILLS      top-14 pool candidates by cosine (Layer 5 groups them)
+    SKILLS      top-14 pool candidates, each scored by max cosine against the
+                best individual JD skill (Layer 5 groups them)
 """
 
 from __future__ import annotations
@@ -91,19 +92,23 @@ class Profile:
 class JDContext:
     """Everything Layer 4 needs about the job being scored.
 
-    Three JD query vectors (architecture §4.1), each matched against a
-    different candidate facet:
-      * ``vec_role``   = embed(role_summary)            — titles, project
-                          names, summary (role-level identity)
-      * ``vec_skills`` = embed(required + nice_to_have) — skills_pool
-      * ``vec_match``  = vec_skills + vec_resp          — bullets (concrete
-                          work vs what the JD wants done)
+    JD query facets (architecture §4.1), each matched against a different
+    candidate facet:
+      * ``vec_role``       = embed(role_summary)        — titles, project
+                              names, summary (role-level identity)
+      * ``jd_skill_vecs``  = [embed(s) for s in required+nice_to_have] —
+                              skills_pool. Each pool skill is scored against
+                              the BEST individual JD skill (max cosine), not a
+                              blended centroid, so exact matches score ~1.0.
+      * ``vec_match``      = embed(required+nice_to_have) + vec_resp —
+                              bullets (concrete work vs what the JD wants done;
+                              intentionally holistic, architecture §4.2)
     Build one with :func:`build_jd_context`.
     """
 
     vec_role: Vector
     vec_match: Vector
-    vec_skills: Vector
+    jd_skill_vecs: tuple[Vector, ...]
     role_category: str | None = None
     role_level: str | None = None
     posted_at: datetime | None = None
@@ -296,9 +301,22 @@ def select_summary(
 def select_skill_candidates(
     skills: list[SkillCand], jd: JDContext
 ) -> list[tuple[str, float]]:
-    """Top-N skills_pool candidates by JD cosine (N = config top_candidates)."""
+    """Top-N skills_pool candidates by JD cosine (N = config top_candidates).
+
+    Each pool skill scores against the BEST individual JD skill (max cosine
+    over ``jd.jd_skill_vecs``), so an exact match (e.g. pool ``Python`` vs a
+    JD that requires ``Python``) scores ~1.0 instead of being diluted across a
+    blended skill centroid. If the JD listed no skills, every pool skill
+    scores 0.0.
+    """
     cfg = settings.selection.skills
-    scored = [(s.skill, cosine(s.embedding, jd.vec_skills)) for s in skills]
+    if jd.jd_skill_vecs:
+        scored = [
+            (s.skill, max(cosine(s.embedding, jv) for jv in jd.jd_skill_vecs))
+            for s in skills
+        ]
+    else:
+        scored = [(s.skill, 0.0) for s in skills]
     scored.sort(key=lambda t: t[1], reverse=True)
     return scored[: cfg.top_candidates]
 
@@ -314,21 +332,28 @@ def build_jd_context(
     posted_at: datetime | None = None,
     embed_batch_fn=None,
 ) -> JDContext:
-    """Embed a parsed JD into the three query vectors Layer 4 scores against.
+    """Embed a parsed JD into the query facets Layer 4 scores against.
 
-    One batched embed call per job (skills / responsibilities+summary / role
-    summary); ``vec_match`` is the element-wise sum of the first two. The embed
-    function is injectable so scoring tests run without the model.
+    One batched embed call per job. The batch is
+    ``[blended_skills, responsibilities+summary, role_summary, *each_skill]``:
+    the first three give ``vec_match`` (blended skills + responsibilities, for
+    holistic bullet matching) and ``vec_role``; the trailing per-skill vectors
+    are kept individually as ``jd_skill_vecs`` so each pool skill scores against
+    its best individual JD-skill match. The embed function is injectable so
+    scoring tests run without the model.
     """
     embed_batch_fn = embed_batch_fn or embed_batch
-    skills_text = " ".join([*parsed.required_skills, *parsed.nice_to_have])
+    skill_list = [*parsed.required_skills, *parsed.nice_to_have]
+    skills_text = " ".join(skill_list)
     resp_text = " ".join([*parsed.responsibilities, parsed.role_summary])
     role_text = parsed.role_summary
-    vec_skills, vec_resp, vec_role = embed_batch_fn([skills_text, resp_text, role_text])
+    base = embed_batch_fn([skills_text, resp_text, role_text, *skill_list])
+    vec_skills_blended, vec_resp, vec_role = base[0], base[1], base[2]
+    jd_skill_vecs = tuple(base[3:])
     return JDContext(
         vec_role=vec_role,
-        vec_match=add(vec_skills, vec_resp),
-        vec_skills=vec_skills,
+        vec_match=add(vec_skills_blended, vec_resp),
+        jd_skill_vecs=jd_skill_vecs,
         role_category=parsed.role_category,
         role_level=parsed.role_level,
         posted_at=posted_at,

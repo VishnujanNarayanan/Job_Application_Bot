@@ -77,28 +77,20 @@ def _run(dry_run: bool, log) -> int:
     from src.config import settings
     from src.llm.client import LLMError
     from src.notifications import send_dry_run_summary, send_match_notification
-    from src.parser import (
-        apply_to_row,
-        cluster_for_term,
-        grounded_skills,
-        parse,
-        role_accepted,
-    )
+    from src.parser import apply_to_row, grounded_skills, parse
     from src.reasons import (
         BUILD_FAILURE,
         COMPANY_COOLDOWN,
         DUPLICATE,
         HARD_FILTER_LAYER_3,
         LOCATION_DISALLOWED,
-        NEAR_DUPLICATE,
         LOW_SCORE,
         PARSE_FAILURE,
-        ROLE_MISMATCH,
     )
     from src.scorer.apply_decision import evaluate
     from src.scorer.embeddings import embed_batch
     from src.scorer.selector import build_jd_context
-    from src.scraper import dedup, filters, jobspy_wrapper, rotation
+    from src.scraper import filters, jobspy_wrapper, rotation
     from src.state import master_profile
     from src.state.db import session_scope
     from src.state.models import AllJobs, Applied, CompanyCooldown, NotApplied
@@ -188,31 +180,14 @@ def _run(dry_run: bool, log) -> int:
             embeddings = embed_batch(jd_texts)
             for job, emb in zip(passing, embeddings):
                 job.jd_embedding = emb
-
-        # --- Layer 2: near-duplicate detection ---
-        outcomes = dedup.resolve_batch(
-            session,
-            passing,
-            threshold=float(cfg.scraper.near_duplicate_threshold),
-            lookback=int(cfg.scraper.near_duplicate_lookback),
-        )
-        # Session already flushed originals+duplicates inside resolve_batch.
-
-        # Collect cluster key for this search term (for role acceptance check).
-        role_clusters = cfg.parser.role_clusters.as_dict()
-        cluster_key = cluster_for_term(term, role_clusters)
+            session.add_all(passing)
+            session.flush()
 
         matched_count = 0
         skipped_count = 0
         short_circuit = int(cfg.scraper.short_circuit_count)
 
-        for outcome in outcomes:
-            job = outcome.job
-            if outcome.is_duplicate:
-                not_applied_queue.append((job, NEAR_DUPLICATE, outcome.original_id))
-                skipped_count += 1
-                continue
-
+        for job in passing:
             # --- Layer 3: parse ---
             try:
                 parsed = parse(job)
@@ -228,12 +203,6 @@ def _run(dry_run: bool, log) -> int:
                 continue
 
             apply_to_row(job, parsed)
-
-            # Role-cluster acceptance
-            if cluster_key and not role_accepted(parsed.role_category, cluster_key, role_clusters):
-                not_applied_queue.append((job, ROLE_MISMATCH, parsed.role_category))
-                skipped_count += 1
-                continue
 
             # Layer 3 hard filter: years ceiling on structured field
             if filters.exceeds_years_ceiling(parsed.years_required, int(cfg.filters.years_ceiling)):

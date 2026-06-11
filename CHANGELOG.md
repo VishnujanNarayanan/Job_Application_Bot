@@ -7,6 +7,24 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [Iteration 2.3] — 2026-06-11
+
+### Added
+- Layer 7: migration `0004_add_serial_id` — adds `id BIGSERIAL` to `all_jobs` for deterministic insertion-order queries (`ORDER BY id`); existing rows backfilled in heap order, new rows append with the next id.
+
+### Changed
+- Layer 4 (scoring): score each pool skill against the **best individual JD skill** (`max(cosine(pool_skill, jd_skill))` over per-skill embeddings) instead of one blended centroid of all required+nice-to-have skills. The old blended vector compressed exact matches catastrophically (pool `Python` vs a JD requiring `Python` scored ~0.13; `SQL` ~0.26; `AWS` ~0.35), holding `avg_skill_pool_match` near ~0.34 and pinning genuine matches just under the 0.50 apply threshold — e.g. a real Data Engineer JD scored 0.483 and was rejected. After the fix that same job scores 0.570 (`avg_skill` 0.34→0.86, exact matches →1.0) and clears threshold, while off-domain jobs (Civil Site Engineer 0.434, Kyriba Consultant 0.336) still correctly fail. No threshold change needed. `src/scorer/selector.py`: `JDContext.vec_skills` (single `Vector`) replaced by `jd_skill_vecs` (`tuple[Vector, ...]`); `build_jd_context` now embeds each skill individually in the same single batched call (no extra Gemini/embedding round-trips); `select_skill_candidates` uses the max-match. Bullet/experience/summary scoring left holistic against `vec_match`/`vec_role` (architecture §4.2/§4.3). **Overrides the locked architecture §4.1/§4.5 (user-approved); doc updated to match (rule #20).**
+- Layer 2 (scraper): removed near-duplicate cosine dedup entirely — only exact `job_id` matches are deduped now (within a scrape call, plus the orchestrator's `existing_job_ids` check against `all_jobs`). Every job with a new ID is scored unconditionally. Deleted the now-orphaned `src/scraper/dedup.py` (`find_near_duplicate`, `canonical_embeddings`, `resolve_batch`, `DedupOutcome`); `src/main.py` no longer calls it and adds passing jobs to the session directly after embedding.
+- Layer 3 (parser): removed the role-cluster acceptance gate — jobs are no longer rejected with `ROLE_MISMATCH` for falling outside a search term's accepted categories; all jobs passing the Layer-2 hard filters now reach scoring, and Layer 4's match score is the sole relevance filter. Removed `cluster_for_term`/`role_accepted` from `src/parser.py` and the role-acceptance block from the orchestrator.
+- Layer 3 (parser): `jd_parse_prompt` no longer receives a restricted `role_categories` allow-list; the `role_category` field is retained (still used by deterministic summary selection) but Gemini classifies it as a free-form slug.
+- `config.yaml`: removed `scraper.near_duplicate_threshold`, `scraper.near_duplicate_lookback`, and the entire `parser.role_clusters` block (~95 lines of cluster definitions).
+- `src/reasons.py`: removed the `NEAR_DUPLICATE` and `ROLE_MISMATCH` reason constants.
+- `src/state/models.py`: added the `id: BigInteger` column (`BIGSERIAL` server default) to `AllJobs`.
+- Tests: removed the dedup `find_near_duplicate`/`resolve_batch` tests and the `role_clusters` smoke tests; updated scorer tests for `jd_skill_vecs` (the `jd()` helper and the `build_jd_context` batch-order assertions).
+
+### Removed
+- Data: deleted 81 empty-`jd_text` rows (LinkedIn throttle artefacts from earlier runs) from `all_jobs` and `not_applied`.
+
 ### Added
 - Layer 5: `src/builder/llm_call.py` — Gemini Call 1b driver (title alias + skills categories + cover letter → `StoredSelection`); regenerates up to `config.builder.llm_regenerate_attempts` times on validation or voice failure before returning `None` (BUILD_FAILURE).
 - Layer 5: `src/builder/skills_validator.py` — post-generation validation of Call 1b skills output against pool candidates and gap-skills source sets (hard rules #1, #7).

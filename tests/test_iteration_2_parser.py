@@ -2,20 +2,14 @@
 
 Offline. The Gemini transport is injected as a stub ``complete`` callable,
 so no API key or network is needed. Skill grounding's fast path (substring)
-and the role-cluster acceptance logic are pure; one test exercises the
-spaCy lemma fallback (the model is present in the venv).
+is pure; one test exercises the spaCy lemma fallback (the model is present
+in the venv).
 """
 
 from __future__ import annotations
 
 from src.llm.schemas import JDParsed
-from src.parser import (
-    apply_to_row,
-    cluster_for_term,
-    grounded_skills,
-    parse,
-    role_accepted,
-)
+from src.parser import apply_to_row, grounded_skills, parse
 from src.state.models import AllJobs
 
 
@@ -126,32 +120,3 @@ def test_grounded_skills_lemma_fallback() -> None:
     jd = "You will own data pipelines end to end."
     out = grounded_skills(["pipeline"], jd)
     assert out == ["pipeline"]
-
-
-# ---------------------------------------------------------------------------
-# Role-cluster acceptance — pure config logic
-# ---------------------------------------------------------------------------
-
-_CLUSTERS = {
-    "backend": {
-        "keywords": ["backend engineer", "API developer"],
-        "accept_categories": ["backend", "fullstack"],
-    },
-    "data": {
-        "keywords": ["data engineer"],
-        "accept_categories": ["data", "ml"],
-    },
-}
-
-
-def test_cluster_for_term() -> None:
-    assert cluster_for_term("Backend Engineer", _CLUSTERS) == "backend"
-    assert cluster_for_term("data engineer", _CLUSTERS) == "data"
-    assert cluster_for_term("astronaut", _CLUSTERS) is None
-
-
-def test_role_accepted() -> None:
-    assert role_accepted("backend", "backend", _CLUSTERS) is True
-    assert role_accepted("fullstack", "backend", _CLUSTERS) is True
-    assert role_accepted("ml", "backend", _CLUSTERS) is False   # cross-cluster
-    assert role_accepted("data", "unknown_cluster", _CLUSTERS) is False

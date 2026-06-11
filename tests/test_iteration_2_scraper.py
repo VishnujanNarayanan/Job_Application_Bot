@@ -1,11 +1,11 @@
-"""Iteration 2 — Phase B Layer 2: filters, embedding math, dedup, rotation,
-and the JobSpy DataFrame→AllJobs mapping.
+"""Iteration 2 — Phase B Layer 2: filters, embedding math, rotation, and the
+JobSpy DataFrame→AllJobs mapping.
 
-Offline. Pure predicates and the cosine math need no DB. ``resolve_batch``
-is exercised with a fake session that records add/flush order (proving the
-self-FK insert discipline) so no Postgres/pgvector is required. Rotation
-uses a one-table in-memory SQLite (``search_rotation_state`` is plain
-Text, SQLite-safe). JobSpy is faked via ``sys.modules``.
+Offline. Pure predicates and the cosine math need no DB. Exact same-id dedup
+within one scrape call is covered here; near-duplicate cosine dedup was
+removed (only exact job_id matches are deduped now). Rotation uses a
+one-table in-memory SQLite (``search_rotation_state`` is plain Text,
+SQLite-safe). JobSpy is faked via ``sys.modules``.
 """
 
 from __future__ import annotations
@@ -17,8 +17,6 @@ from datetime import date, datetime, timezone
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
-
-from src.reasons import NEAR_DUPLICATE
 
 
 # ---------------------------------------------------------------------------
@@ -68,107 +66,6 @@ def test_cosine_pure_math() -> None:
     # Zero/empty vectors degrade to 0.0 rather than dividing by zero.
     assert cosine([0.0, 0.0], [1.0, 1.0]) == 0.0
     assert cosine([], [1.0]) == 0.0
-
-
-# ---------------------------------------------------------------------------
-# Dedup — find_near_duplicate is pure; resolve_batch's insert order is the
-# point of the self-FK fix.
-# ---------------------------------------------------------------------------
-
-
-def test_find_near_duplicate_strict_threshold() -> None:
-    from src.scraper.dedup import find_near_duplicate
-
-    cand = [("a", [1.0, 0.0]), ("b", [0.0, 1.0])]
-    # Identical → cosine 1.0 > 0.95.
-    assert find_near_duplicate([1.0, 0.0], cand, 0.95) == ("a", pytest.approx(1.0))
-    # 45° from both → cosine ~0.707, below threshold → no match.
-    assert find_near_duplicate([1.0, 1.0], cand, 0.95) is None
-
-
-def test_find_near_duplicate_picks_closest() -> None:
-    from src.scraper.dedup import find_near_duplicate
-
-    cand = [("a", [1.0, 0.0]), ("b", [0.99, 0.14])]
-    match = find_near_duplicate([1.0, 0.01], cand, 0.95)
-    assert match is not None and match[0] == "a"  # closest, not merely first
-
-
-class _FakeSession:
-    """Records add/flush ordering so we can assert FK target was flushed."""
-
-    def __init__(self) -> None:
-        self.flushed: set[str] = set()
-        self._pending: list[object] = []
-        # job_id -> bool: at the moment a duplicate was added, was its
-        # near_duplicate_of target already flushed?
-        self.dup_saw_original_flushed: dict[str, bool] = {}
-
-    def add_all(self, objs) -> None:
-        self._pending.extend(objs)
-
-    def add(self, obj) -> None:
-        self._pending.append(obj)
-        ndo = getattr(obj, "near_duplicate_of", None)
-        if ndo is not None:
-            self.dup_saw_original_flushed[obj.job_id] = ndo in self.flushed
-
-    def flush(self) -> None:
-        for o in self._pending:
-            self.flushed.add(o.job_id)
-        self._pending.clear()
-
-
-def test_resolve_batch_same_run_repost_links_after_flush(monkeypatch) -> None:
-    """X then Y (a cross-portal repost of X) in one run: Y links to X, and
-    X is flushed before Y's FK is written (the self-FK insert-order fix)."""
-    from src.scraper import dedup
-    from src.state.models import AllJobs
-
-    # No prior DB candidates — both jobs are new this run.
-    monkeypatch.setattr(dedup, "canonical_embeddings", lambda *a, **k: [])
-
-    x = AllJobs(job_id="indeed-1", company="Acme", role="DE", site="indeed")
-    x.jd_embedding = [1.0, 0.0]
-    y = AllJobs(job_id="linkedin-9", company="Acme", role="DE", site="linkedin")
-    y.jd_embedding = [1.0, 0.0]  # identical → cosine 1.0
-
-    session = _FakeSession()
-    outcomes = dedup.resolve_batch(session, [x, y], threshold=0.95, lookback=500)
-
-    by_id = {o.job.job_id: o for o in outcomes}
-    assert by_id["indeed-1"].is_duplicate is False
-    assert by_id["linkedin-9"].is_duplicate is True
-    assert y.near_duplicate_of == "indeed-1"
-    assert y.outcome == NEAR_DUPLICATE
-    # The crux: the FK target existed (was flushed) before Y was linked.
-    assert session.dup_saw_original_flushed["linkedin-9"] is True
-
-
-def test_resolve_batch_distinct_jobs_all_originals(monkeypatch) -> None:
-    from src.scraper import dedup
-    from src.state.models import AllJobs
-
-    monkeypatch.setattr(dedup, "canonical_embeddings", lambda *a, **k: [])
-    a = AllJobs(job_id="indeed-1", company="A", role="DE", site="indeed")
-    a.jd_embedding = [1.0, 0.0]
-    b = AllJobs(job_id="indeed-2", company="B", role="ML", site="indeed")
-    b.jd_embedding = [0.0, 1.0]  # orthogonal → not a duplicate
-
-    outcomes = dedup.resolve_batch(_FakeSession(), [a, b], threshold=0.95, lookback=500)
-    assert all(o.is_duplicate is False for o in outcomes)
-    assert a.near_duplicate_of is None and b.near_duplicate_of is None
-
-
-def test_resolve_batch_no_embedding_treated_as_original(monkeypatch) -> None:
-    from src.scraper import dedup
-    from src.state.models import AllJobs
-
-    monkeypatch.setattr(dedup, "canonical_embeddings", lambda *a, **k: [])
-    j = AllJobs(job_id="indeed-1", company="A", role="DE", site="indeed")
-    # jd_embedding stays None → can't dedup.
-    (outcome,) = dedup.resolve_batch(_FakeSession(), [j], threshold=0.95, lookback=500)
-    assert outcome.is_duplicate is False
 
 
 # ---------------------------------------------------------------------------
