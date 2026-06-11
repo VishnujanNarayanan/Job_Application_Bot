@@ -94,5 +94,7 @@ def complete(response_model: type[T], prompt: str, *, system: str | None = None)
                 time.sleep(delay)
                 delay = min(delay * 2, max_delay)
 
-    log.error("gemini_failure", error=str(last_error), attempts=attempts)
+    # exc_info=last_error (the captured instance), NOT True — we are outside
+    # the except block here, so sys.exc_info() is already cleared.
+    log.error("gemini_failure", error=str(last_error), attempts=attempts, exc_info=last_error)
     raise LLMError(f"Gemini call failed after {attempts} attempts") from last_error

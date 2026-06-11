@@ -115,7 +115,8 @@ def send_match_notification(
             [btn for btn in row if btn is not None]
             for row in keyboard.inline_keyboard
         ]
-    except Exception:
+    except Exception as exc:
+        log.warning("notification_keyboard_failed", job_id=job.job_id, error=str(exc))
         keyboard = None
 
     asyncio.run(_send_match(text, keyboard))
