@@ -19,6 +19,10 @@ def main() -> int:
         ],
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
     )
+    from src.aws.cloudwatch import build_handler as _cw_handler
+    _handler = _cw_handler()
+    if _handler:
+        logging.getLogger().addHandler(_handler)
     log = structlog.get_logger()
 
     with session_scope() as session:
