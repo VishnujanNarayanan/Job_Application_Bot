@@ -120,6 +120,8 @@ def build_prompt(
         "   from its allowed_aliases list. Do not invent titles.\n"
         "2. skills_selection: name exactly 3 categories (3-5 pool skills each). "
         "   Category skills must come from the SKILL POOL CANDIDATES list only. "
+        "   Each skill must appear in AT MOST ONE category — no skill may be repeated "
+        "   across categories. "
         f"   Do NOT use these banned category names: {banned}. "
         "   familiar_with: 0-4 skills from GAP SKILLS only.\n"
         "3. cover_letter_text: one short paragraph (max 900 chars) about why this "

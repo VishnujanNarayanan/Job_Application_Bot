@@ -7,6 +7,14 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Fixed
+- Layer 5: prompt instruction 2 now explicitly states each skill may appear in AT MOST ONE category. Gemini was repeatedly placing the same skill (e.g. `Python`, `SQL`) in multiple categories, causing `BUILD_FAILURE` after all 3 retries. The validator already caught the violation; the prompt now prevents it.
+
+### Changed
+- `src/cli/dryrun.py`: implemented — thin wrapper that calls `src.main` with `--dry-run`, so `python -m src.cli.dryrun` now works as documented.
+- `src/cli/reparse.py`: implemented — calls `master_profile.rebuild(force=True)` and logs the upsert/deactivation counts.
+- `src/cli/inspect.py`, `src/scheduler.py`, `src/analytics.py`, `src/state/cleanup.py`: stripped "Iteration 0 stub" labels; files kept (required by `test_repo_layout`) with docstrings scoped to their future iterations.
+
 ### Added
 - CI: `.github/workflows/ci.yml` — GitHub Actions pipeline running on every push to `main` and every pull request. Checks out the repo into a clean Ubuntu runner, sets up Python 3.11 (with pip wheel caching), installs `requirements.txt` from scratch (honest reproducibility check for rule #21), and runs the full `pytest` suite. No secrets required — tests mock Gemini, the DB, boto3 (moto), and FastAPI (TestClient).
 
