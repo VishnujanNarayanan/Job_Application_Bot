@@ -37,10 +37,11 @@ OFF = [0.0, 1.0]
 
 
 def jd(vec=ALIGNED, *, role_category="data", role_level="junior", posted_at=None):
-    """A JDContext with all three query vectors set to ``vec`` (the common
-    case); tests that need to distinguish facets pass an explicit JDContext."""
+    """A JDContext with all query facets set to ``vec`` (the common case); a
+    single JD skill vector. Tests that need to distinguish facets pass an
+    explicit JDContext."""
     return JDContext(
-        vec_role=vec, vec_match=vec, vec_skills=vec,
+        vec_role=vec, vec_match=vec, jd_skill_vecs=(vec,),
         role_category=role_category, role_level=role_level, posted_at=posted_at,
     )
 
@@ -271,8 +272,9 @@ def test_build_jd_context_three_vectors() -> None:
         years_required=2, required_skills=["Python"], nice_to_have=["AWS"],
         responsibilities=["Build APIs"],
     )
-    # Stub embed_batch: skills→[1,0], resp→[0,1], role→[0.5,0.5] (call order).
-    vectors = iter([[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]])
+    # Stub embed_batch returns one vector per input text, in call order:
+    # [blended_skills, resp, role, Python, AWS].
+    vectors = iter([[1.0, 0.0], [0.0, 1.0], [0.5, 0.5], [0.9, 0.1], [0.2, 0.8]])
     seen = {}
 
     def _eb(texts):
@@ -280,9 +282,11 @@ def test_build_jd_context_three_vectors() -> None:
         return [next(vectors) for _ in texts]
 
     ctx = build_jd_context(parsed, embed_batch_fn=_eb)
-    assert ctx.vec_skills == [1.0, 0.0]
     assert ctx.vec_role == [0.5, 0.5]
-    assert ctx.vec_match == [1.0, 1.0]   # vec_skills + vec_resp
+    assert ctx.vec_match == [1.0, 1.0]   # blended_skills + vec_resp
     assert ctx.role_level == "mid"
-    # Skills text drawn from required + nice_to_have.
+    # Per-skill vectors kept individually (one per required + nice_to_have).
+    assert ctx.jd_skill_vecs == ([0.9, 0.1], [0.2, 0.8])
+    # Batch order: blended skills text first, then individual skills appended.
     assert "Python" in seen["texts"][0] and "AWS" in seen["texts"][0]
+    assert seen["texts"][3] == "Python" and seen["texts"][4] == "AWS"

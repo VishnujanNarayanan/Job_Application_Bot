@@ -2,17 +2,13 @@
 
 Wraps the single always-on Gemini call: a scraped ``AllJobs`` row in, a
 schema-validated :class:`JDParsed` out (Instructor guarantees the shape).
-Two safeguards sit around the call:
+
+One safeguard sits around the call:
 
   * **Skill grounding** — the model is told to copy skills verbatim, but
     we still drop any returned skill that isn't actually present in the JD
     text (substring, or a spaCy-lemma subset match for inflections). This
     keeps fabricated skills out of the scoring inputs.
-  * **Role-cluster acceptance** — a job scraped under one search term is
-    only kept if Gemini classifies it into a ``role_category`` that the
-    term's cluster accepts (config ``parser.role_clusters``); otherwise the
-    orchestrator records ROLE_MISMATCH. This is pure config logic, here so
-    Layer 1 can call it without re-deriving the mapping.
 
 Contract: ``parse(job) -> JDParsed``; ``apply_to_row`` writes the
 structured fields onto the row. ``parse`` accepts an injectable
@@ -21,7 +17,7 @@ structured fields onto the row. ``parse`` accepts an injectable
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from functools import lru_cache
 
 from src.config import settings
@@ -37,8 +33,7 @@ CompleteFn = Callable[..., JDParsed]
 def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
     """Run Gemini Call 1a for ``job`` and return a grounded :class:`JDParsed`."""
     run = complete or _default_complete
-    role_categories = list(settings.parser.role_clusters.as_dict().keys())
-    prompt = jd_parse_prompt(job, role_categories)
+    prompt = jd_parse_prompt(job)
     parsed: JDParsed = run(JDParsed, prompt, system=jd_parse_system())
 
     jd_text = job.jd_text or ""
@@ -121,26 +116,3 @@ def grounded_skills(skills: list[str], jd_text: str) -> list[str]:
             seen.add(key)
     return kept
 
-
-# ---------------------------------------------------------------------------
-# Role-cluster acceptance (pure config logic)
-# ---------------------------------------------------------------------------
-
-
-def cluster_for_term(term: str, role_clusters: Mapping[str, Mapping]) -> str | None:
-    """Return the cluster key whose ``keywords`` contain ``term`` (ci)."""
-    t = term.casefold().strip()
-    for cluster, spec in role_clusters.items():
-        if any(kw.casefold() == t for kw in spec.get("keywords", [])):
-            return cluster
-    return None
-
-
-def role_accepted(
-    role_category: str, cluster_key: str, role_clusters: Mapping[str, Mapping]
-) -> bool:
-    """True if ``role_category`` is accepted by ``cluster_key``'s cluster."""
-    spec = role_clusters.get(cluster_key)
-    if not spec:
-        return False
-    return role_category in spec.get("accept_categories", [])

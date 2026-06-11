@@ -93,7 +93,7 @@ def test_config_yaml_loads_and_has_required_sections(config_path: Path) -> None:
         config = yaml.safe_load(f)
 
     required = {
-        "operator", "filters", "salary", "scheduler", "scraper", "parser",
+        "operator", "filters", "salary", "scheduler", "scraper",
         "selection", "scoring", "builder", "voice", "cover_pdf",
         "embeddings", "spacy", "llm", "database", "storage",
         "notifications", "analytics", "logging",
@@ -102,18 +102,9 @@ def test_config_yaml_loads_and_has_required_sections(config_path: Path) -> None:
     assert not missing, f"Missing config sections: {missing}"
 
 
-def test_role_clusters_inlined_in_config(config_path: Path) -> None:
-    """parser.role_clusters must contain all 7 role categories."""
-    with config_path.open() as f:
-        config = yaml.safe_load(f)
-
-    clusters = config["parser"]["role_clusters"]
-    expected = {"backend", "data", "ml", "fullstack", "devops", "finance_market", "quant"}
-    assert set(clusters.keys()) == expected
-
-
 def test_config_no_role_clusters_yaml(repo_root: Path) -> None:
-    """Confirm no stray role_clusters.yaml was created."""
+    """Confirm no stray role_clusters.yaml was created (role-cluster
+    acceptance was removed; all scraped jobs proceed to scoring)."""
     assert not (repo_root / "config" / "role_clusters.yaml").exists()
 
 

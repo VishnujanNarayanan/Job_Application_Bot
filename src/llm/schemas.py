@@ -30,7 +30,7 @@ class JDParsed(BaseModel):
         ..., max_length=500, description="2-3 sentence summary of the role"
     )
     role_category: str = Field(
-        ..., description="One of the role_clusters keys in config.yaml"
+        ..., description="Short slug classifying the role type (e.g. backend, data, ml, fullstack, devops, quant)"
     )
     role_level: Literal["junior", "mid", "senior", "lead"] = Field(
         ..., description="Seniority tier driving success_prob in Layer 4"

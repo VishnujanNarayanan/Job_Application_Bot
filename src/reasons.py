@@ -12,7 +12,6 @@ HARD_FILTER_LAYER_2 = "HARD_FILTER_LAYER_2"
 LOCATION_DISALLOWED = "LOCATION_DISALLOWED"
 COMPANY_COOLDOWN = "COMPANY_COOLDOWN"
 DUPLICATE = "DUPLICATE"
-NEAR_DUPLICATE = "NEAR_DUPLICATE"
 # Listing arrived with no description body (e.g. a throttled LinkedIn
 # description fetch). Can't parse or score, and an empty-text embedding is
 # identical to every other empty one — which collapses near-duplicate
@@ -21,7 +20,6 @@ EMPTY_JD = "EMPTY_JD"
 
 # Layer 3 — rejected after Gemini parse
 HARD_FILTER_LAYER_3 = "HARD_FILTER_LAYER_3"
-ROLE_MISMATCH = "ROLE_MISMATCH"
 PARSE_FAILURE = "PARSE_FAILURE"
 
 # Layer 4 / 5 — scoring + build outcomes

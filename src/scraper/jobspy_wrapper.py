@@ -166,9 +166,10 @@ def scrape(
 ) -> list[AllJobs]:
     """Scrape one search term across ``sites`` and return ``AllJobs`` rows.
 
-    Rows are de-duplicated by ``job_id`` within this call (cross-portal
-    near-duplicates are handled later by embedding cosine in
-    :mod:`src.scraper.dedup`). Persistence is the caller's job.
+    Rows are de-duplicated by exact ``job_id`` within this call; the
+    orchestrator additionally skips ``job_id``s already in ``all_jobs``.
+    There is no cosine near-duplicate detection. Persistence is the caller's
+    job.
 
     Anti-rate-limit (hard rule #4): with ``per_site`` each site is scraped in
     its own JobSpy call wrapped in retry/backoff, so one throttled portal does
