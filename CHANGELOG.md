@@ -11,26 +11,24 @@ and this project loosely tracks iterations rather than semver.
 - Layer 8: `src/aws/cloudwatch.py` — `build_handler()` wires a watchtower `CloudWatchLogHandler` to the existing `get_session()` boto3 session. Stream name is `YYYY-MM-DD` (one stream per day). Gracefully returns `None` (never raises) when `AWS_CLOUDWATCH_LOG_GROUP` is unset or any AWS error occurs, so local dev works without credentials. `create_log_group=False` enforces that the log group must pre-exist (IAM constraint — runtime user has `logs:CreateLogStream/PutLogEvents` only).
 - Layer 8: wired `build_handler()` into `_configure_logging()` in `src/main.py` and `src/cli/reparse.py` — every structlog JSON event now ships to CloudWatch Logs when `AWS_CLOUDWATCH_LOG_GROUP` is set.
 - Tests: `tests/test_cloudwatch_handler.py` — 4 moto-backed tests: absent env var returns None, configured handler returns CloudWatchLogHandler with correct group/stream, session error returns None gracefully, full JSON round-trip verifies events land in the mocked stream.
-
-### Fixed
-- `config.yaml`: corrected `aws.s3_bucket` from the non-existent `job-bot-vishnujan` to the real bucket `application-bot-vishnujan-resumes` (matches `.env`'s `AWS_S3_BUCKET`). The app reads the bucket from config (`settings.aws.s3_bucket`), so it was previously targeting a bucket that doesn't exist; `aws_check.py` (which reads `AWS_S3_BUCKET` from env) had been silently verifying a different name.
-- Layer 5: prompt instruction 2 now explicitly states each skill may appear in AT MOST ONE category. Gemini was repeatedly placing the same skill (e.g. `Python`, `SQL`) in multiple categories, causing `BUILD_FAILURE` after all 3 retries. The validator already caught the violation; the prompt now prevents it.
+- CI: `.github/workflows/ci.yml` — GitHub Actions pipeline running on every push to `main` and every pull request. Checks out the repo into a clean Ubuntu runner, sets up Python 3.11 (with pip wheel caching), installs `requirements.txt` from scratch (honest reproducibility check for rule #21), and runs the full `pytest` suite. No secrets required — tests mock Gemini, the DB, boto3 (moto), and FastAPI (TestClient).
 
 ### Changed
+- Logging: added `structlog.processors.format_exc_info` to the processor chain in `_configure_logging` (`src/main.py` and `src/cli/reparse.py`) so `exc_info` renders as a full traceback in the `exception` JSON field (previously it emitted a useless `"exc_info": true`). Added `exc_info` to four critical error paths: `gemini_failure` (`llm/client.py`), `scrape_site_failed` (`scraper/jobspy_wrapper.py`), `master_profile_validation_failure` (`main.py`), and `resume_request_failed` (`endpoint/app.py`). The two loop-exhausted paths pass the captured exception instance (`exc_info=last_error`/`last_exc`) rather than `True`, since they log outside the `except` block.
 - `src/cli/dryrun.py`: implemented — thin wrapper that calls `src.main` with `--dry-run`, so `python -m src.cli.dryrun` now works as documented.
 - `src/cli/reparse.py`: implemented — calls `master_profile.rebuild(force=True)` and logs the upsert/deactivation counts.
 - `src/cli/inspect.py`, `src/scheduler.py`, `src/analytics.py`, `src/state/cleanup.py`: stripped "Iteration 0 stub" labels; files kept (required by `test_repo_layout`) with docstrings scoped to their future iterations.
-
-### Added
-- CI: `.github/workflows/ci.yml` — GitHub Actions pipeline running on every push to `main` and every pull request. Checks out the repo into a clean Ubuntu runner, sets up Python 3.11 (with pip wheel caching), installs `requirements.txt` from scratch (honest reproducibility check for rule #21), and runs the full `pytest` suite. No secrets required — tests mock Gemini, the DB, boto3 (moto), and FastAPI (TestClient).
-
-### Fixed
-- CI: add a tracked `resumes/applied/.gitkeep` so the gitignored, normally-empty `resumes/applied/` directory exists on a clean checkout (mirrors `resumes/templates/`); fixes `test_repo_layout` failing on the runner.
-- CI: supply a throwaway `DATABASE_URL` to the `pytest` step in `ci.yml`. `src/state/db.py` builds the SQLAlchemy engine at import time, so importing `src.endpoint.app` requires the var even though the engine never connects and the DB tests mock `session_scope`; fixes the three endpoint tests failing with `RuntimeError: DATABASE_URL is not set` on the runner.
-
-### Changed
 - `requirements.txt`: pin torch to the CPU-only wheel (`torch==2.12.0+cpu` via `--extra-index-url https://download.pytorch.org/whl/cpu`, listed before `sentence-transformers`) so installs pull the ~200 MB CPU build instead of the ~2 GB default CUDA build (no GPU in use — dry-run runs `device_name: cpu`).
 - `requirements.txt`: install the `en_core_web_sm` spaCy model via direct wheel URL (pinned `3.8.0` to match `spacy==3.8.2`) so a single `pip install -r requirements.txt` provisions everything — no separate `python -m spacy download` step.
+
+### Fixed
+- Logging: `notifications.py` no longer silently swallows a failed Telegram keyboard build — it logs `notification_keyboard_failed` (with `job_id`, `error`) before falling back to a keyboard-less message. This was the only silent `except` in the codebase.
+- Logging: deduplicated double-counted error events that would inflate CloudWatch metric filters. A single PDF-conversion failure previously logged `render_failed` three times (pdf_convert → cache → app); the middle re-log in `endpoint/cache.py` is removed and the endpoint catch-all in `endpoint/app.py` is renamed to `resume_request_failed` (with `status=500`) to distinguish a request-level failure from the LibreOffice-specific `render_failed`. Likewise the duplicate `s3_cache_failed` in `endpoint/cache.py` is renamed to `s3_cache_degraded` (a `warning`, since it signals graceful degraded-mode serving — `aws/s3.py` already logs the raw `s3_cache_failed`).
+- Logging: orchestrator `BUILD_FAILURE` in `main.py` now carries `reason="selection_returned_none"`; the two builder-side `BUILD_FAILURE` events in `builder/llm_call.py` carry `caller="builder"` so the orchestrator and builder events are distinguishable.
+- `config.yaml`: corrected `aws.s3_bucket` from the non-existent `job-bot-vishnujan` to the real bucket `application-bot-vishnujan-resumes` (matches `.env`'s `AWS_S3_BUCKET`). The app reads the bucket from config (`settings.aws.s3_bucket`), so it was previously targeting a bucket that doesn't exist; `aws_check.py` (which reads `AWS_S3_BUCKET` from env) had been silently verifying a different name.
+- Layer 5: prompt instruction 2 now explicitly states each skill may appear in AT MOST ONE category. Gemini was repeatedly placing the same skill (e.g. `Python`, `SQL`) in multiple categories, causing `BUILD_FAILURE` after all 3 retries. The validator already caught the violation; the prompt now prevents it.
+- CI: add a tracked `resumes/applied/.gitkeep` so the gitignored, normally-empty `resumes/applied/` directory exists on a clean checkout (mirrors `resumes/templates/`); fixes `test_repo_layout` failing on the runner.
+- CI: supply a throwaway `DATABASE_URL` to the `pytest` step in `ci.yml`. `src/state/db.py` builds the SQLAlchemy engine at import time, so importing `src.endpoint.app` requires the var even though the engine never connects and the DB tests mock `session_scope`; fixes the three endpoint tests failing with `RuntimeError: DATABASE_URL is not set` on the runner.
 
 ## [Iteration 2.4] — 2026-06-11
 

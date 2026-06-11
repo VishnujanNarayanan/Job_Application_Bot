@@ -15,6 +15,7 @@ def main() -> int:
         processors=[
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.format_exc_info,  # render exc_info → "exception" field
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),

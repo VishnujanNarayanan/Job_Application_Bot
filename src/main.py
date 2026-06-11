@@ -37,6 +37,7 @@ def _configure_logging() -> None:
         processors=[
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.format_exc_info,  # render exc_info → "exception" field
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
@@ -115,6 +116,7 @@ def _run(dry_run: bool, log) -> int:
             log.error(
                 "master_profile_validation_failure",
                 error=str(exc),
+                exc_info=True,
             )
             return 1
 
@@ -239,7 +241,7 @@ def _run(dry_run: bool, log) -> int:
             )
 
             if selection is None:
-                log.error(BUILD_FAILURE, job_id=job.job_id)
+                log.error(BUILD_FAILURE, job_id=job.job_id, reason="selection_returned_none")
                 not_applied_queue.append((job, BUILD_FAILURE, None))
                 skipped_count += 1
                 continue
