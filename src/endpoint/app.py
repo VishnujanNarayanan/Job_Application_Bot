@@ -64,7 +64,11 @@ def get_resume(filename: str) -> FastAPIResponse:
     except KeyError:
         raise HTTPException(status_code=404, detail=f"No resume found for job_id={job_id!r}")
     except Exception as exc:
-        log.error("render_failed", job_id=job_id, ext=ext, error=str(exc))
+        # Catch-all endpoint failure: assembler error, propagated conversion
+        # error, DB error, etc. Distinct from pdf_convert's `render_failed`
+        # (LibreOffice-specific) so the two are not conflated in CloudWatch.
+        log.error("resume_request_failed", job_id=job_id, ext=ext, status=500,
+                  error=str(exc), exc_info=True)
         raise HTTPException(status_code=500, detail="Resume render failed") from exc
 
     return FastAPIResponse(
