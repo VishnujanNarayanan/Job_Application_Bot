@@ -7,6 +7,8 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [Iteration 3] — 2026-06-11
+
 ### Added
 - Layer 8: `src/aws/cloudwatch.py` — `build_handler()` wires a watchtower `CloudWatchLogHandler` to the existing `get_session()` boto3 session. Stream name is `YYYY-MM-DD` (one stream per day). Gracefully returns `None` (never raises) when `AWS_CLOUDWATCH_LOG_GROUP` is unset or any AWS error occurs, so local dev works without credentials. `create_log_group=False` enforces that the log group must pre-exist (IAM constraint — runtime user has `logs:CreateLogStream/PutLogEvents` only).
 - Layer 8: wired `build_handler()` into `_configure_logging()` in `src/main.py` and `src/cli/reparse.py` — every structlog JSON event now ships to CloudWatch Logs when `AWS_CLOUDWATCH_LOG_GROUP` is set.
