@@ -7,6 +7,13 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Added
+- CI: `.github/workflows/ci.yml` — GitHub Actions pipeline running on every push to `main` and every pull request. Checks out the repo into a clean Ubuntu runner, sets up Python 3.11 (with pip wheel caching), installs `requirements.txt` from scratch (honest reproducibility check for rule #21), and runs the full `pytest` suite. No secrets required — tests mock Gemini, the DB, boto3 (moto), and FastAPI (TestClient).
+
+### Changed
+- `requirements.txt`: pin torch to the CPU-only wheel (`torch==2.12.0+cpu` via `--extra-index-url https://download.pytorch.org/whl/cpu`, listed before `sentence-transformers`) so installs pull the ~200 MB CPU build instead of the ~2 GB default CUDA build (no GPU in use — dry-run runs `device_name: cpu`).
+- `requirements.txt`: install the `en_core_web_sm` spaCy model via direct wheel URL (pinned `3.8.0` to match `spacy==3.8.2`) so a single `pip install -r requirements.txt` provisions everything — no separate `python -m spacy download` step.
+
 ## [Iteration 2.4] — 2026-06-11
 
 ### Changed
