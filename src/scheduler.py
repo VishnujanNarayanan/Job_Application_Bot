@@ -1,1 +1,1 @@
-"""Layer 1 — Scheduler. Iteration 0 stub."""
+"""Layer 1 — Scheduler. Invokes src.main on a cron cadence (Iteration 3, Oracle VM)."""
