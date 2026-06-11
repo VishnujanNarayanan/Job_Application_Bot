@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from src.aws.s3 import cache_get_bytes, cache_put
 from src.config import settings
 from src.endpoint.assembler import assemble_docx
-from src.endpoint.pdf_convert import to_pdf, ConversionError
+from src.endpoint.pdf_convert import to_pdf
 from src.llm.schemas import StoredSelection
 from src.state.models import Applied, RenderCache
 
@@ -109,12 +109,12 @@ def _assemble_and_cache(
         )
 
         if ext == "pdf":
-            try:
-                pdf_path = to_pdf(docx_path, tmp)
-                serve_path = pdf_path
-            except ConversionError as exc:
-                log.error("render_failed", job_id=selection.job_id, error=str(exc))
-                raise
+            # Conversion failure is already logged with full detail in
+            # pdf_convert.to_pdf (stage=pdf_convert); just propagate so the
+            # endpoint layer (app.py) can return 500. No re-log here — that
+            # would double-count the same failure in CloudWatch.
+            pdf_path = to_pdf(docx_path, tmp)
+            serve_path = pdf_path
         else:
             serve_path = docx_path
 
@@ -127,8 +127,9 @@ def _assemble_and_cache(
             _record_render_cache(session, cache_key, ext, selection.template_version, s3_uri, selection.job_id)
             session.commit()
         except Exception as exc:
-            log.error("s3_cache_failed", op="put", cache_key=cache_key, error=str(exc))
-            # Degraded mode: serve without caching
+            # s3.py:cache_put already logs s3_cache_failed with the raw error.
+            # This is the degraded-mode signal: we serve the file uncached.
+            log.warning("s3_cache_degraded", cache_key=cache_key, error=str(exc))
 
         log.info(
             "resume_rendered",

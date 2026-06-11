@@ -167,7 +167,9 @@ def _scrape_with_retry(
             if attempt < max_retries:
                 delay = backoff_base_seconds * (2 ** (attempt - 1))
                 time.sleep(delay + random.uniform(0, backoff_base_seconds))
-    log.error("scrape_site_failed", site=site_group, error=str(last_exc))
+    # exc_info=last_exc (the captured instance), NOT True — we are outside the
+    # except block here, so sys.exc_info() is already cleared.
+    log.error("scrape_site_failed", site=site_group, error=str(last_exc), exc_info=last_exc)
     return None
 
 

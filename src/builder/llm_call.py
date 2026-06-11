@@ -117,6 +117,7 @@ def build(
         except LLMError as exc:
             log.error(
                 BUILD_FAILURE_EVENT,
+                caller="builder",
                 reason="gemini_error",
                 attempt=attempt,
                 error=str(exc),
@@ -139,6 +140,7 @@ def build(
     else:
         log.error(
             BUILD_FAILURE_EVENT,
+            caller="builder",
             reason="validation_failed",
             violations=last_violations,
         )
