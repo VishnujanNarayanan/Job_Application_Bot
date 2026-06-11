@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _configure_logging()
     log = structlog.get_logger()
-    log.info("run_started", dry_run=args.dry_run, iteration=2)
+    log.info("run_started", dry_run=args.dry_run, iteration=3)
 
     # Single-run lock — prevents overlapping cron executions.
     lock_path = _ROOT / "data" / "run.lock"
