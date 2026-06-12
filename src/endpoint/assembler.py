@@ -1,22 +1,31 @@
-"""DOCX assembler — structural detection + XML fill (Layer 6 / §6.3).
+"""DOCX assembler — clone the template, substitute text only (Layer 6 / §6.3).
 
 Produces a tailored DOCX from a ``StoredSelection`` and the current template.
 
+Design principle: **the template is the layout authority.** The assembler never
+builds paragraphs from style names — that loses the template's direct formatting
+(tab stops, list/bullet references, indentation, spacing, run fonts/sizes). Instead
+it deep-clones the template's own paragraphs as formatting *prototypes* and replaces
+ONLY the text inside their runs. Everything else — `<w:tabs>`, `<w:numPr>`, `<w:ind>`,
+`<w:spacing>`, each run's `<w:rPr>` — is preserved byte-for-byte.
+
+Tailored regions: summary text (para 2), WORK EXPERIENCE, SKILLS, PROJECTS.
+Static regions (left verbatim): header (paras 0-1), EDUCATION, CERTIFICATES.
+
 Algorithm:
-  1. Load a fresh copy of the template (original never modified).
-  2. Verify header: paragraphs 0-1 byte-identical to template (hard rule #10).
-  3. Fill summary paragraph (para 2) with the selected summary text.
-  4. WORK EXPERIENCE: remove template experience blocks; insert one block per
-     selected experience (title/dates, company/location, 3 bullets).
-  5. SKILLS: remove template skill lines; insert one HTML-Preformatted
-     paragraph per category (bold name, comma-joined skills) + optional
-     Familiar With line.
-  6. PROJECTS: remove template project blocks; insert one block per selected
-     project (name + "Code →" hyperlink, 2-3 bullets).
-  7. EDUCATION + CERTIFICATES: unchanged (deep-cloned from template).
-  8. Reorder Skills ↔ Projects per ``selection.section_order`` if needed.
-  9. Update project hyperlink targets in word/_rels/document.xml.rels.
- 10. Final header diff-check.
+  1. Load a fresh template copy (original never modified); load a reference copy.
+  2. Assert header (paras 0-1) unchanged (hard rule #10).
+  3. Fill the summary paragraph (para 2) text.
+  4. Capture deep-copy prototypes of the first experience block (title/company/
+     bullet), the first project block (name/bullet), and a skill paragraph —
+     BEFORE any mutation, so edits cannot corrupt the prototypes.
+  5. Build WORK / SKILLS / PROJECTS by cloning prototypes and substituting text;
+     replace each section's content between its heading and the next (by live
+     element identity — never stale indices).
+  6. Reorder Skills <-> Projects per ``selection.section_order`` if needed.
+  7. Re-assert header unchanged; diff-validate EDUCATION + CERTIFICATES unchanged
+     (hard rule #9).
+  8. Save; update project hyperlink targets in document.xml.rels by r:id (#11).
 """
 
 from __future__ import annotations
@@ -44,6 +53,8 @@ _PROJECTS = "PROJECTS"
 _EDUCATION = "EDUCATION"
 _CERTS = "CERTIFICATES"
 
+_XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
 
 class AssemblerError(RuntimeError):
     """Raised when a template constraint is violated."""
@@ -62,54 +73,55 @@ def assemble_docx(
 ) -> None:
     """Build a tailored DOCX at ``output_path``.
 
-    ``profile_json_path`` is the canonical ``master_profile.json``.
-    Bullet texts, company/dates/location, project names/links are read
-    from it; no DB query required at render time.
+    ``profile_json_path`` is the canonical ``master_profile.json``. Bullet texts,
+    company/dates/location, and project names/links are read from it.
     """
     profile = json.loads(profile_json_path.read_text())
     bullet_text, exp_map, proj_map, summary_map = _index_profile(profile)
 
-    # Load template fresh — doc A is our working copy, doc B is the immutable
-    # reference used only for the header diff-check.
+    # doc = working copy; ref = immutable reference for the header diff-check.
     doc = Document(str(template_path))
     ref = Document(str(template_path))
 
-    # Hard rule #10: header must be untouched throughout
+    # Hard rule #10: header (paras 0-1) untouched throughout.
     _assert_header_unchanged(doc, ref)
 
-    # --- summary (para 2) ---
-    summary_text = summary_map.get(selection.summary_id, "")
-    _fill_para_text(doc.paragraphs[2], summary_text)
+    # Hard rule #9: snapshot the static EDUCATION+CERTIFICATES region to verify
+    # it is byte-identical after assembly.
+    static_before = _static_region_canonical(doc)
 
-    # --- section indices ---
-    sec = _section_map(doc)
+    # --- summary (para 2): replace text, keep its paragraph formatting ---
+    _set_text(doc.paragraphs[2]._p, summary_map.get(selection.summary_id, ""))
 
-    # --- rebuild variable sections ---
-    _replace_section(
-        doc, sec, _WORK, _SKILLS,
-        _exp_paras(doc, selection, exp_map, bullet_text),
-    )
-    _replace_section(
-        doc, sec, _SKILLS, _PROJECTS,
-        _skills_paras(doc, selection),
-    )
+    # --- capture prototypes BEFORE mutating the body ---
+    protos = _capture_prototypes(doc)
+
+    # --- build tailored sections from cloned prototypes ---
     proj_rids: dict[str, str] = {}
-    _replace_section(
-        doc, sec, _PROJECTS, _EDUCATION,
-        _proj_paras(doc, selection, proj_map, bullet_text, proj_rids),
-    )
+    work_elems = _build_work(selection, exp_map, bullet_text, protos)
+    skills_elems = _build_skills(selection, protos)
+    proj_elems = _build_projects(selection, proj_map, bullet_text, protos, proj_rids)
 
-    # --- section reorder (Skills ↔ Projects) ---
+    _replace_content(doc, _WORK, _SKILLS, work_elems)
+    _replace_content(doc, _SKILLS, _PROJECTS, skills_elems)
+    _replace_content(doc, _PROJECTS, _EDUCATION, proj_elems)
+
+    # --- section reorder (Skills <-> Projects) ---
     _apply_order(doc, selection.section_order)
 
-    # --- final header diff-check ---
+    # --- header diff-check + static-region diff-check (hard rules #10, #9) ---
     _assert_header_unchanged(doc, ref)
+    if _static_region_canonical(doc) != static_before:
+        raise AssemblerError(
+            "EDUCATION/CERTIFICATES region was modified. The assembler must leave "
+            "static sections byte-identical to the template (hard rule #9)."
+        )
 
     # --- save ---
     output_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(output_path))
 
-    # --- update project hyperlinks in rels XML ---
+    # --- update project hyperlink targets in rels XML (hard rule #11) ---
     if proj_rids:
         update_project_hyperlinks(output_path, proj_rids)
 
@@ -117,6 +129,8 @@ def assemble_docx(
         "docx_assembled",
         job_id=selection.job_id,
         template_version=selection.template_version,
+        experiences=len(selection.experiences),
+        projects=len(selection.projects),
     )
 
 
@@ -148,7 +162,260 @@ def _index_profile(profile: dict):
 
 
 # ---------------------------------------------------------------------------
-# Header diff-check
+# Run-level text substitution (preserves rPr, tabs, numPr, hyperlinks)
+# ---------------------------------------------------------------------------
+
+
+def _direct_runs(p_elem) -> list:
+    """Direct <w:r> children of a paragraph (excludes runs inside <w:hyperlink>)."""
+    return p_elem.findall(qn("w:r"))
+
+
+def _set_run_text(r_elem, text: str) -> None:
+    """Set a run's <w:t> text, preserving its <w:rPr>."""
+    t = r_elem.find(qn("w:t"))
+    if t is None:
+        t = OxmlElement("w:t")
+        r_elem.append(t)
+    t.text = text
+    if text != text.strip():
+        t.set(_XML_SPACE, "preserve")
+
+
+def _blank_run_text(r_elem) -> None:
+    """Empty a run's <w:t> (keeps the run + rPr so structure/formatting persists)."""
+    t = r_elem.find(qn("w:t"))
+    if t is not None:
+        t.text = ""
+
+
+def _has_tab(p_elem) -> bool:
+    return any(r.find(qn("w:tab")) is not None for r in _direct_runs(p_elem))
+
+
+def _has_numpr(p_elem) -> bool:
+    pPr = p_elem.find(qn("w:pPr"))
+    return pPr is not None and pPr.find(qn("w:numPr")) is not None
+
+
+def _set_text(p_elem, text: str) -> None:
+    """Single-text paragraph (bullet / company): set first run, blank the rest."""
+    runs = _direct_runs(p_elem)
+    if not runs:
+        return
+    _set_run_text(runs[0], text)
+    for r in runs[1:]:
+        _blank_run_text(r)
+
+
+def _set_tabbed(p_elem, before: str, after: str | None) -> None:
+    """Tab-separated paragraph: set the text before and (optionally) after the tab.
+
+    Runs are split at the run containing ``<w:tab/>``. ``after=None`` leaves
+    everything past the tab untouched (used for project name + "Code →" link).
+    """
+    runs = _direct_runs(p_elem)
+    tab_idx = next(
+        (i for i, r in enumerate(runs) if r.find(qn("w:tab")) is not None), -1
+    )
+    if tab_idx < 0:
+        _set_text(p_elem, before)
+        return
+
+    pre, post = runs[:tab_idx], runs[tab_idx + 1:]
+    if pre:
+        _set_run_text(pre[0], before)
+        for r in pre[1:]:
+            _blank_run_text(r)
+    if after is not None and post:
+        _set_run_text(post[0], after)
+        for r in post[1:]:
+            _blank_run_text(r)
+
+
+def _set_skill(p_elem, name: str, skills_csv: str) -> None:
+    """Skill category paragraph: bold "Name: " run + list run; blank extras."""
+    runs = _direct_runs(p_elem)
+    if not runs:
+        return
+    _set_run_text(runs[0], f"{name}: ")
+    if len(runs) > 1:
+        _set_run_text(runs[1], skills_csv)
+    for r in runs[2:]:
+        _blank_run_text(r)
+
+
+# ---------------------------------------------------------------------------
+# Prototype capture
+# ---------------------------------------------------------------------------
+
+
+def _content_elems(doc: Document, start_name: str, end_name: str) -> list:
+    """Paragraph elements between two Heading 1s (excluding the headings)."""
+    body = doc.element.body
+    elems = _collect_section_elems(body, start_name, end_name)
+    return [e for e in elems[1:] if e.tag == qn("w:p")]  # drop the heading itself
+
+
+def _capture_prototypes(doc: Document) -> dict:
+    """Deep-copy the formatting prototypes from the first block of each section."""
+    work = _content_elems(doc, _WORK, _SKILLS)
+    skills = _content_elems(doc, _SKILLS, _PROJECTS)
+    projects = _content_elems(doc, _PROJECTS, _EDUCATION)
+
+    exp_title = next((p for p in work if _has_tab(p) and not _has_numpr(p)), None)
+    exp_bullet = next((p for p in work if _has_numpr(p)), None)
+    # company = the paragraph right after the first title that is not a bullet.
+    exp_company = None
+    if exp_title is not None:
+        after = work[work.index(exp_title) + 1:]
+        exp_company = next((p for p in after if not _has_numpr(p)), None)
+
+    skill = skills[0] if skills else None
+
+    proj_name = next(
+        (p for p in projects if p.find(qn("w:hyperlink")) is not None), None
+    )
+    proj_bullet = next((p for p in projects if _has_numpr(p)), None)
+
+    missing = [
+        n for n, v in {
+            "exp_title": exp_title, "exp_company": exp_company,
+            "exp_bullet": exp_bullet, "skill": skill,
+            "proj_name": proj_name, "proj_bullet": proj_bullet,
+        }.items() if v is None
+    ]
+    if missing:
+        raise AssemblerError(
+            f"Template prototype(s) not found: {missing}. The template must contain "
+            "at least one full experience block, skill line, and project block."
+        )
+
+    return {
+        "exp_title": copy.deepcopy(exp_title),
+        "exp_company": copy.deepcopy(exp_company),
+        "exp_bullet": copy.deepcopy(exp_bullet),
+        "skill": copy.deepcopy(skill),
+        "proj_name": copy.deepcopy(proj_name),
+        "proj_bullet": copy.deepcopy(proj_bullet),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Section builders (clone prototype -> substitute text)
+# ---------------------------------------------------------------------------
+
+
+def _build_work(selection, exp_map, bullet_text, protos) -> list:
+    out = []
+    for entry in selection.experiences:
+        exp = exp_map.get(entry.exp_id, {})
+        company = exp.get("company", "")
+        location = exp.get("location") or ""
+        start = exp.get("start_date", "")
+        end = exp.get("end_date", "")
+        dates = f"{start} – {end}" if start else end
+        company_str = f"{company} - {location}" if location else company
+
+        # Titles are UPPERCASE in the template (the IntenseReference char-style
+        # adds smallCaps on top); match that so the rendering is uniform full
+        # caps rather than small-caps on mixed-case text.
+        title_p = copy.deepcopy(protos["exp_title"])
+        _set_tabbed(title_p, entry.title_alias.upper(), dates)
+        out.append(title_p)
+
+        company_p = copy.deepcopy(protos["exp_company"])
+        _set_text(company_p, company_str)
+        out.append(company_p)
+
+        for bid in entry.bullet_ids:
+            text = bullet_text.get(bid, "")
+            if not text:
+                continue
+            bp = copy.deepcopy(protos["exp_bullet"])
+            _set_text(bp, text)
+            out.append(bp)
+    return out
+
+
+def _build_skills(selection, protos) -> list:
+    out = []
+    for cat in selection.skills.categories:
+        p = copy.deepcopy(protos["skill"])
+        _set_skill(p, cat.name, ", ".join(cat.skills))
+        out.append(p)
+
+    fw = selection.skills.familiar_with
+    if fw:
+        p = copy.deepcopy(protos["skill"])
+        _set_skill(p, "Familiar With", ", ".join(fw))
+        out.append(p)
+    return out
+
+
+def _build_projects(selection, proj_map, bullet_text, protos, proj_rids) -> list:
+    out = []
+    for i, entry in enumerate(selection.projects):
+        proj = proj_map.get(entry.proj_id, {})
+        name = proj.get("name", entry.proj_id)
+        link = entry.link or proj.get("link", "")
+
+        # Project names are UPPERCASE in the template (same smallCaps reason).
+        name_p = copy.deepcopy(protos["proj_name"])
+        _set_tabbed(name_p, name.upper(), None)  # leave the "Code →" hyperlink alone
+        if link:
+            rid = f"rIdProj{i + 1}"
+            hl = name_p.find(qn("w:hyperlink"))
+            if hl is not None:
+                hl.set(qn("r:id"), rid)
+                proj_rids[rid] = link
+        out.append(name_p)
+
+        for bid in entry.bullet_ids:
+            text = bullet_text.get(bid, "")
+            if not text:
+                continue
+            bp = copy.deepcopy(protos["proj_bullet"])
+            _set_text(bp, text)
+            out.append(bp)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Section content replacement (by live element identity — no stale indices)
+# ---------------------------------------------------------------------------
+
+
+def _replace_content(
+    doc: Document, start_name: str, end_name: str, new_elems: list
+) -> None:
+    """Replace content between two Heading 1s with ``new_elems`` (headings kept)."""
+    body = doc.element.body
+    start_h = _find_heading(body, start_name)
+    if start_h is None:
+        return
+    end_h = _find_heading(body, end_name)
+
+    to_remove = []
+    collecting = False
+    for child in list(body):
+        if child is start_h:
+            collecting = True
+            continue
+        if collecting:
+            if end_h is not None and child is end_h:
+                break
+            to_remove.append(child)
+    for e in to_remove:
+        body.remove(e)
+
+    pos = list(body).index(start_h)
+    for i, e in enumerate(new_elems):
+        body.insert(pos + 1 + i, e)
+
+
+# ---------------------------------------------------------------------------
+# Header + static-region diff-checks (hard rules #10, #9)
 # ---------------------------------------------------------------------------
 
 
@@ -162,264 +429,50 @@ def _assert_header_unchanged(doc: Document, ref: Document) -> None:
     for i in range(2):
         if _para_canonical(doc.paragraphs[i]) != _para_canonical(ref.paragraphs[i]):
             raise AssemblerError(
-                f"Header paragraph {i} was modified. "
-                "The assembler must never touch paragraphs before WORK EXPERIENCE "
-                "(hard rule #10)."
+                f"Header paragraph {i} was modified. The assembler must never touch "
+                "paragraphs before WORK EXPERIENCE (hard rule #10)."
             )
 
 
-# ---------------------------------------------------------------------------
-# Section map — heading index + content range
-# ---------------------------------------------------------------------------
+def _static_region_canonical(doc: Document) -> bytes:
+    """c14n of every element from the EDUCATION heading to the document end.
 
-
-def _section_map(doc: Document) -> dict[str, dict]:
-    """Return {section_name: {heading_para_idx, content_start, content_end}}."""
-    heading_positions: list[tuple[int, str]] = []
-    for i, p in enumerate(doc.paragraphs):
-        if p.style.name == "Heading 1":
-            name = p.text.strip().rstrip("\t").strip()
-            heading_positions.append((i, name))
-
-    result: dict[str, dict] = {}
-    for j, (idx, name) in enumerate(heading_positions):
-        next_idx = (
-            heading_positions[j + 1][0]
-            if j + 1 < len(heading_positions)
-            else len(doc.paragraphs)
-        )
-        result[name] = {
-            "heading_idx": idx,
-            "content_start": idx + 1,
-            "content_end": next_idx,
-        }
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Section replacement
-# ---------------------------------------------------------------------------
-
-
-def _replace_section(
-    doc: Document,
-    sec: dict,
-    section_name: str,
-    next_section_name: str,
-    new_paras: list,
-) -> None:
-    """Remove existing section content; insert ``new_paras`` in its place."""
-    info = sec.get(section_name)
-    if info is None:
-        return
-
+    Covers EDUCATION + CERTIFICATES (the static, non-tailored tail). Used to verify
+    the assembler left those sections byte-identical to the template (hard rule #9).
+    """
     body = doc.element.body
-    all_body = list(body)
-
-    # Identify the heading element and the next section's heading element.
-    heading_elem = doc.paragraphs[info["heading_idx"]]._p
-    next_info = sec.get(next_section_name)
-    next_heading_elem = (
-        doc.paragraphs[next_info["heading_idx"]]._p if next_info else None
-    )
-
-    # Collect elements to remove (between headings, not including them).
-    to_remove = []
+    edu = _find_heading(body, _EDUCATION)
+    if edu is None:
+        return b""
+    parts: list[bytes] = []
     collecting = False
-    for child in list(body):
-        if child is heading_elem:
+    for child in body:
+        if child is edu:
             collecting = True
-            continue
         if collecting:
-            if next_heading_elem is not None and child is next_heading_elem:
-                break
-            to_remove.append(child)
-
-    for elem in to_remove:
-        body.remove(elem)
-
-    # Insert new paragraphs after the heading.
-    heading_pos = list(body).index(heading_elem)
-    for i, p_elem in enumerate(new_paras):
-        body.insert(heading_pos + 1 + i, p_elem)
+            parts.append(etree.tostring(child, method="c14n"))
+    return b"".join(parts)
 
 
 # ---------------------------------------------------------------------------
-# Paragraph builders
-# ---------------------------------------------------------------------------
-
-
-def _make_para(style_val: str) -> OxmlElement:
-    """Return a bare <w:p> with the given style."""
-    p = OxmlElement("w:p")
-    pPr = OxmlElement("w:pPr")
-    pStyle = OxmlElement("w:pStyle")
-    pStyle.set(qn("w:val"), style_val)
-    pPr.append(pStyle)
-    p.append(pPr)
-    return p
-
-
-def _add_run(p_elem, text: str, bold: bool = False) -> None:
-    """Append a text run to ``p_elem``."""
-    r = OxmlElement("w:r")
-    if bold:
-        rPr = OxmlElement("w:rPr")
-        rPr.append(OxmlElement("w:b"))
-        r.append(rPr)
-    t = OxmlElement("w:t")
-    t.text = text
-    if text != text.strip():
-        t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-    r.append(t)
-    p_elem.append(r)
-
-
-def _fill_para_text(para, text: str) -> None:
-    """Replace the text of an existing paragraph (preserves pPr)."""
-    p_elem = para._p
-    for child in list(p_elem):
-        if child.tag != qn("w:pPr"):
-            p_elem.remove(child)
-    if text:
-        _add_run(p_elem, text, bold=False)
-
-
-# ---------------------------------------------------------------------------
-# Experience paragraphs
-# ---------------------------------------------------------------------------
-
-
-def _exp_paras(doc, selection, exp_map, bullet_text) -> list:
-    paras = []
-    for entry in selection.experiences:
-        exp = exp_map.get(entry.exp_id, {})
-        company = exp.get("company", "")
-        location = exp.get("location") or ""
-        start = exp.get("start_date", "")
-        end = exp.get("end_date", "")
-        dates = f"{start} – {end}" if start else end
-
-        # Title + dates
-        p = _make_para("Normal")
-        _add_run(p, entry.title_alias, bold=True)
-        _add_run(p, "\t", bold=True)
-        _add_run(p, dates, bold=False)
-        paras.append(p)
-
-        # Company + location
-        company_str = f"{company} - {location}" if location else company
-        p = _make_para("Normal")
-        _add_run(p, company_str, bold=False)
-        paras.append(p)
-
-        # Bullets
-        for bid in entry.bullet_ids:
-            text = bullet_text.get(bid, "")
-            if text:
-                p = _make_para("ListParagraph")
-                _add_run(p, text, bold=False)
-                paras.append(p)
-
-    return paras
-
-
-# ---------------------------------------------------------------------------
-# Skills paragraphs
-# ---------------------------------------------------------------------------
-
-
-def _skills_paras(doc, selection) -> list:
-    paras = []
-    for cat in selection.skills.categories:
-        p = _make_para("HTMLPreformatted")
-        _add_run(p, f"{cat.name}: ", bold=True)
-        _add_run(p, ", ".join(cat.skills), bold=False)
-        paras.append(p)
-
-    fw = selection.skills.familiar_with
-    if fw:
-        p = _make_para("HTMLPreformatted")
-        _add_run(p, "Familiar With: ", bold=True)
-        _add_run(p, ", ".join(fw), bold=False)
-        paras.append(p)
-
-    return paras
-
-
-# ---------------------------------------------------------------------------
-# Project paragraphs
-# ---------------------------------------------------------------------------
-
-
-def _proj_paras(doc, selection, proj_map, bullet_text, proj_rids: dict) -> list:
-    paras = []
-    for i, entry in enumerate(selection.projects):
-        proj = proj_map.get(entry.proj_id, {})
-        name = proj.get("name", entry.proj_id)
-        link = entry.link or proj.get("link", "")
-
-        # Project name + hyperlink
-        rId = f"rIdProj{i + 1}"
-        if link:
-            proj_rids[rId] = link
-
-        p = _make_para("ListParagraph")
-        _add_run(p, name, bold=False)
-        _add_run(p, "\t", bold=False)
-
-        if link:
-            hl = OxmlElement("w:hyperlink")
-            hl.set(qn("r:id"), rId)
-            r = OxmlElement("w:r")
-            rPr = OxmlElement("w:rPr")
-            rs = OxmlElement("w:rStyle")
-            rs.set(qn("w:val"), "Hyperlink")
-            rPr.append(rs)
-            r.append(rPr)
-            t = OxmlElement("w:t")
-            t.text = "Code →"
-            r.append(t)
-            hl.append(r)
-            p.append(hl)
-        else:
-            _add_run(p, "Code →", bold=False)
-
-        paras.append(p)
-
-        # Bullets
-        for bid in entry.bullet_ids:
-            text = bullet_text.get(bid, "")
-            if text:
-                bp = _make_para("ListParagraph")
-                _add_run(bp, text, bold=False)
-                paras.append(bp)
-
-    return paras
-
-
-# ---------------------------------------------------------------------------
-# Section reorder
+# Section reorder (Skills <-> Projects)
 # ---------------------------------------------------------------------------
 
 
 def _apply_order(doc: Document, section_order: list[str]) -> None:
-    """Swap Skills and Projects sections when the order demands it."""
+    """Swap the Skills and Projects sections when the order demands it."""
     if len(section_order) < 3 or section_order[1] != "Projects":
         return  # default order (Skills before Projects) — no change needed
 
     body = doc.element.body
-    # Collect elements belonging to each section.
     skills_elems = _collect_section_elems(body, _SKILLS, _PROJECTS)
     proj_elems = _collect_section_elems(body, _PROJECTS, _EDUCATION)
     if not skills_elems or not proj_elems:
         return
 
     insert_pos = list(body).index(skills_elems[0])
-
     for e in skills_elems + proj_elems:
         body.remove(e)
-
     for i, e in enumerate(proj_elems + skills_elems):
         body.insert(insert_pos + i, e)
 
@@ -453,7 +506,6 @@ def _find_heading(body, section_name: str):
         pStyle = pPr.find(qn("w:pStyle"))
         if pStyle is None:
             continue
-        # python-docx uses "Heading1" as the style val for "Heading 1"
         val = pStyle.get(qn("w:val"), "")
         if val not in ("Heading1", "Heading 1"):
             continue
