@@ -1,0 +1,41 @@
+# Keep the build context (and image) small and secret-free.
+
+# VCS / tooling
+.git
+.gitignore
+.github
+.claude
+
+# Virtualenvs / caches
+.venv
+venv
+env
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Secrets & per-operator files — supplied at runtime via docker-compose mounts,
+# never baked into the image (rule #18: no credentials in the image; rule #21:
+# operator profile is instance config, not source).
+.env
+.env.*
+!.env.example
+config/google_service_account.json
+master_profile.yaml
+master_profile.json
+master_summaries.yaml
+
+# Local runtime state (run.lock, logs, sessions) — provided by the ./data mount
+data/logs
+data/sessions
+data/manual_queue
+data/run.lock
+data/pending_writes.jsonl
+resumes/applied
+
+# Planning / prose docs not needed at runtime
+*.md
