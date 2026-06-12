@@ -126,8 +126,8 @@ def test_assemble_docx_produces_valid_docx(minimal_profile, minimal_selection, t
 
     # Summary text present
     assert "Backend engineer with 1.5 years of experience" in full
-    # Experience title and company present
-    assert "Backend Engineer" in full
+    # Experience title (uppercased to match the template convention) and company
+    assert "BACKEND ENGINEER" in full
     assert "TechCorp" in full
     # Bullet text present
     assert "Built APIs serving" in full
@@ -166,37 +166,92 @@ def test_assemble_docx_header_unchanged(minimal_profile, minimal_selection, tmp_
         ), f"Header paragraph {i} was modified"
 
 
+@pytest.mark.skipif(
+    not TEMPLATE_PATH.exists(),
+    reason="Template file not present",
+)
+def test_assemble_docx_preserves_template_formatting(
+    minimal_profile, minimal_selection, tmp_path
+):
+    """The assembler clones template paragraphs (not rebuilds them), so generated
+    content must keep the template's direct formatting — tab stops on the title,
+    list/bullet refs on bullets — and leave the static EDUCATION/CERTIFICATES tail
+    byte-identical."""
+    from docx import Document
+    from docx.oxml.ns import qn
+    from src.endpoint.assembler import assemble_docx, _static_region_canonical
+
+    output = tmp_path / "out.docx"
+    assemble_docx(
+        selection=minimal_selection,
+        profile_json_path=minimal_profile,
+        template_path=TEMPLATE_PATH,
+        output_path=output,
+    )
+    out_doc = Document(str(output))
+    tmpl_doc = Document(str(TEMPLATE_PATH))
+
+    def _has(p, tag: str) -> bool:
+        pPr = p._p.find(qn("w:pPr"))
+        return pPr is not None and pPr.find(qn(tag)) is not None
+
+    # Static tail (EDUCATION + CERTIFICATES) untouched, byte-for-byte (rule #9).
+    assert _static_region_canonical(out_doc) == _static_region_canonical(tmpl_doc)
+
+    # Generated experience title keeps the template's right-tab stop (date align).
+    title = next(p for p in out_doc.paragraphs if "BACKEND ENGINEER" in p.text)
+    assert _has(title, "w:tabs"), "experience title lost its <w:tabs> tab stop"
+
+    # Generated bullet keeps the list reference that draws the bullet glyph.
+    bullet = next(
+        p for p in out_doc.paragraphs if p.text.startswith("Built APIs serving")
+    )
+    assert _has(bullet, "w:numPr"), "bullet lost its <w:numPr> (no bullet glyph)"
+
+
 # ---------------------------------------------------------------------------
 # Hyperlinks
 # ---------------------------------------------------------------------------
 
 
 def test_update_project_hyperlinks(tmp_path):
-    """Patching rels XML updates the Target attribute for the given rId."""
-    from src.endpoint.hyperlinks import update_project_hyperlinks, _patch_rels
+    """Patching rels XML: updates existing Targets, ADDS missing rIds, and keeps
+    the package-relationships namespace prefix-less (LibreOffice rejects a
+    prefixed ``ns0:Relationships`` — the real cause of render failures)."""
+    from src.endpoint.hyperlinks import _patch_rels
     import xml.etree.ElementTree as ET
 
-    _REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    # The <Relationships> CONTAINER element lives in the PACKAGE namespace (this
+    # is what real .docx files use). The relationship Type values use the
+    # separate officeDocument namespace.
+    _PKG_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
     _HYPERLINK_TYPE = (
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
     )
 
     original_rels = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
-        '<Relationships xmlns="' + _REL_NS + '">'
+        '<Relationships xmlns="' + _PKG_NS + '">'
         '<Relationship Id="rIdProj1" Type="' + _HYPERLINK_TYPE + '" Target="https://old.com" TargetMode="External"/>'
-        '<Relationship Id="rIdProj2" Type="' + _HYPERLINK_TYPE + '" Target="https://also-old.com" TargetMode="External"/>'
         '</Relationships>'
     ).encode()
 
-    patched = _patch_rels(original_rels, {"rIdProj1": "https://new-url.com"})
+    # rIdProj1 exists (update); rIdProj2 is referenced by the assembler's cloned
+    # link but absent from the template rels (must be added).
+    patched = _patch_rels(
+        original_rels,
+        {"rIdProj1": "https://new-url.com", "rIdProj2": "https://added.com"},
+    )
+
+    # The container must NOT be serialized under a prefix — LibreOffice fails to
+    # load a docx whose rels use e.g. <ns0:Relationships>.
+    assert b"ns0:" not in patched
+    assert b"<Relationships xmlns=" in patched
+
     root = ET.fromstring(patched)
-    rels = {
-        r.get("Id"): r.get("Target")
-        for r in root.iter(f"{{{_REL_NS}}}Relationship")
-    }
-    assert rels["rIdProj1"] == "https://new-url.com"
-    assert rels["rIdProj2"] == "https://also-old.com"
+    rels = {r.get("Id"): r.get("Target") for r in root.iter(f"{{{_PKG_NS}}}Relationship")}
+    assert rels["rIdProj1"] == "https://new-url.com"   # updated
+    assert rels["rIdProj2"] == "https://added.com"     # added, not dropped
 
 
 # ---------------------------------------------------------------------------

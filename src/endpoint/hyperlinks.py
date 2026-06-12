@@ -20,7 +20,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 _RELS_PATH = "word/_rels/document.xml.rels"
-_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+# The <Relationships>/<Relationship> CONTAINER elements live in the package
+# relationships namespace. This MUST be registered as the default (prefix-less)
+# namespace on re-serialization — emitting them under a prefix (e.g. `ns0:`)
+# makes Word lenient but LibreOffice refuse to load the file. (The relationship
+# *Type* values below use the separate officeDocument namespace.)
+_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 _HYPERLINK_TYPE = (
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
 )
@@ -52,14 +57,36 @@ def update_project_hyperlinks(docx_path: str | Path, rId_to_url: dict[str, str])
 
 
 def _patch_rels(rels_bytes: bytes, rId_to_url: dict[str, str]) -> bytes:
-    """Return patched rels XML bytes with updated Target attributes."""
+    """Return patched rels XML bytes for the project hyperlinks.
+
+    For each ``rId`` referenced by a project hyperlink in ``document.xml``:
+      - if a ``Relationship`` with that Id already exists, update its ``Target``;
+      - otherwise ADD a new external hyperlink ``Relationship``.
+
+    The assembler mints synthetic ids (``rIdProj1`` …) for the cloned project
+    "Code →" links, so they are absent from the template's rels and MUST be
+    added — a dangling ``r:id`` makes Word lenient but LibreOffice refuse to load
+    the file ("source file could not be loaded"), failing PDF render.
+    """
     ET.register_namespace("", _REL_NS)
     root = ET.fromstring(rels_bytes)
 
+    seen: set[str] = set()
     for rel in root.iter(f"{{{_REL_NS}}}Relationship"):
         rid = rel.get("Id")
         if rid in rId_to_url and rel.get("Type") == _HYPERLINK_TYPE:
             rel.set("Target", rId_to_url[rid])
+            seen.add(rid)
+
+    # Add relationships for ids referenced in document.xml but missing here.
+    for rid, url in rId_to_url.items():
+        if rid in seen:
+            continue
+        rel = ET.SubElement(root, f"{{{_REL_NS}}}Relationship")
+        rel.set("Id", rid)
+        rel.set("Type", _HYPERLINK_TYPE)
+        rel.set("Target", url)
+        rel.set("TargetMode", "External")
 
     # Preserve the original XML declaration if present.
     declaration = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'

@@ -1,0 +1,63 @@
+# Two runtime roles from one image (see job_automation_architecture.md, Iter 5).
+#
+#   endpoint — always-on resume server (uvicorn, port 8000). Telegram apply/
+#              resume links resolve here. Starts with `docker compose up -d`.
+#   pipeline — on-demand scrape -> parse -> score -> build -> notify batch.
+#              In the "manual" profile so it does NOT start with `up`; Layer 1
+#              fires it from host cron:  docker compose run --rm pipeline
+#
+# First-deploy ordering (host):
+#   1. cp .env.example .env  (fill in DATABASE_URL, GEMINI_API_KEY, Telegram, AWS)
+#   2. provide master_profile.yaml + a template under resumes/templates/
+#   3. touch master_profile.json   (so the bind mount is a file, not a dir)
+#   4. docker compose build
+#   5. docker compose run --rm pipeline alembic upgrade head     # migrate Neon
+#   6. docker compose run --rm pipeline python -m src.cli.reparse # profile -> DB+json
+#   7. docker compose up -d endpoint
+
+# Shared definition: same image + env + mounts for both roles.
+x-app: &app
+  build: .
+  image: job-bot:latest
+  env_file: .env
+  volumes:
+    # config.yaml mounted read-only so endpoint.base_url etc. can change without
+    # a rebuild (it is also baked in, this just lets you override it live).
+    - ./config/config.yaml:/app/config/config.yaml:ro
+    # Profile source (operator-supplied, read-only).
+    - ./master_profile.yaml:/app/master_profile.yaml:ro
+    # Canonical JSON profile: pipeline (reparse) writes it, endpoint reads it —
+    # shared + writable. Must exist as a file before `up` (see step 3 above).
+    - ./master_profile.json:/app/master_profile.json
+    # Resume template(s), read-only.
+    - ./resumes/templates:/app/resumes/templates:ro
+    # Runtime state (run.lock, logs).
+    - ./data:/app/data
+    # HuggingFace cache so the MiniLM embedding model downloads once, not per run.
+    - hf_cache:/cache/hf
+    # Google service-account JSON — uncomment when Layer 9 (Sheets/Docs) is wired
+    # and the file exists; bind-mounting a missing file would create a directory.
+    # - ./config/google_service_account.json:/app/config/google_service_account.json:ro
+
+services:
+  endpoint:
+    <<: *app
+    container_name: job-bot-endpoint
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  pipeline:
+    <<: *app
+    container_name: job-bot-pipeline
+    profiles: ["manual"]
+    command: ["python", "-m", "src.main"]
+
+volumes:
+  hf_cache:
