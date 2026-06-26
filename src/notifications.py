@@ -47,6 +47,32 @@ async def _send(text: str) -> None:
         )
 
 
+def match_display_fields(
+    job: AllJobs,
+    parsed: JDParsed,
+    *,
+    title_alias: str | None = None,
+) -> dict[str, str]:
+    """Derive the human-facing fields shared by the Telegram message and
+    the Layer 9 Sheets row, so the two views never disagree.
+
+    Returns ``display_title``, ``salary_str``, ``loc_str``, ``apply_url``.
+    """
+    salary_str = ""
+    if parsed.salary_max_lpa:
+        salary_str = f"{parsed.salary_max_lpa:.0f} LPA"
+    # Combine work mode (remote/onsite/hybrid) with the city, de-duped and
+    # order-preserving, e.g. "hybrid · Bangalore, India" or just "Remote".
+    loc_bits = [parsed.location_type, job.location]
+    loc_str = " · ".join(dict.fromkeys([b for b in loc_bits if b]))
+    return {
+        "display_title": title_alias or job.role,
+        "salary_str": salary_str,
+        "loc_str": loc_str,
+        "apply_url": parsed.apply_url or job.job_url or "",
+    }
+
+
 def send_match_notification(
     job: AllJobs,
     parsed: JDParsed,
@@ -69,52 +95,47 @@ def send_match_notification(
     falls back to ``job.role`` when not yet available at call time.
     """
     score = f"{result.final_score:.2f}"
-    display_title = title_alias or job.role
+    fields = match_display_fields(job, parsed, title_alias=title_alias)
+    display_title = fields["display_title"]
+    salary_str = fields["salary_str"]
+    loc_str = fields["loc_str"]
 
-    # Salary string (informational only)
-    sal_parts = []
-    if parsed.salary_max_lpa:
-        currency = parsed.salary_currency or "INR"
-        sal_parts.append(f"{parsed.salary_max_lpa:.0f} LPA")
-    salary_str = " · ".join(sal_parts) if sal_parts else ""
+    # Always surface CTC; many listings omit salary, so say so explicitly.
+    salary_display = salary_str if salary_str else "CTC not listed"
 
-    # Location display
-    loc_str = parsed.location_type or job.location or ""
-
-    meta_parts = [p for p in [loc_str, salary_str, f"via {job.site}"] if p]
-    meta_line = " · ".join(meta_parts)
+    meta_parts = []
+    if loc_str:
+        meta_parts.append(f"📍 {loc_str}")
+    meta_parts.append(f"💰 {salary_display}")
+    meta_parts.append(f"via {job.site}")
+    meta_line = "  ·  ".join(meta_parts)
 
     # Gap skills line
-    gap_line = f"Gap skills: {', '.join(gap_skills)}" if gap_skills else ""
+    gap_line = f"⚠️ Gap skills: {', '.join(gap_skills)}" if gap_skills else ""
 
     text_lines = [
-        f"🎯 *{score}*",
-        f"*{display_title}* at {job.company}",
+        f"🎯 *{score}* match",
+        f"*{display_title}* at *{job.company}*",
+        meta_line,
     ]
-    if meta_line:
-        text_lines.append(meta_line)
     if gap_line:
         text_lines.append(gap_line)
 
     text = "\n".join(text_lines)
 
-    apply_url = parsed.apply_url or job.job_url or ""
+    apply_url = fields["apply_url"]
     pdf_url = f"{endpoint_base_url}/resume/{job.job_id}.pdf"
     docx_url = f"{endpoint_base_url}/resume/{job.job_id}.docx"
 
     try:
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("📋 Apply", url=apply_url) if apply_url else None,
-                InlineKeyboardButton("📄 PDF", url=pdf_url),
-                InlineKeyboardButton("📝 DOCX", url=docx_url),
-            ],
-        ])
-        # Remove None buttons
-        keyboard.inline_keyboard = [
-            [btn for btn in row if btn is not None]
-            for row in keyboard.inline_keyboard
-        ]
+        # Build the button row first, then construct the markup once —
+        # InlineKeyboardMarkup.inline_keyboard is read-only after init.
+        row = []
+        if apply_url:
+            row.append(InlineKeyboardButton("📋 Apply", url=apply_url))
+        row.append(InlineKeyboardButton("📄 PDF", url=pdf_url))
+        row.append(InlineKeyboardButton("📝 DOCX", url=docx_url))
+        keyboard = InlineKeyboardMarkup([row])
     except Exception as exc:
         log.warning("notification_keyboard_failed", job_id=job.job_id, error=str(exc))
         keyboard = None

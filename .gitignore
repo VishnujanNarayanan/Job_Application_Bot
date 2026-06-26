@@ -50,6 +50,8 @@ env/
 # --- OS ---------------------------------------------------------------------
 .DS_Store
 Thumbs.db
+# WSL/Windows download metadata (alternate data stream marker files)
+*:Zone.Identifier
 
 # --- Editors ----------------------------------------------------------------
 .vscode/

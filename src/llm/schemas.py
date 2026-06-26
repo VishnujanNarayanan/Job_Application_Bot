@@ -179,3 +179,31 @@ class StoredSelection(BaseModel):
         ..., description="MD5[:8] of the template file at build time."
     )
     built_at: str = Field(..., description="ISO-8601 timestamp.")
+
+
+class MonthlyReportLLM(BaseModel):
+    """Layer 9 — Gemini synthesis of the monthly analytics report.
+
+    A SINGLE monthly Gemini call (not per-job; the 2-call budget is per
+    job). Input is aggregated stats over the last 30 days; output is prose
+    written verbatim into the Google Doc. No fabrication: the model only
+    narrates the numbers it is given.
+    """
+
+    headline: str = Field(
+        ..., description="One-sentence summary of the month's job market for the operator."
+    )
+    skill_demand: str = Field(
+        ..., description="Prose on the most in-demand skills this month and trends."
+    )
+    recurring_gaps: str = Field(
+        ...,
+        description="Prose on skills frequently required but missing from the "
+        "operator's pool (the 'consider learning' signal).",
+    )
+    hiring_companies: str = Field(
+        ..., description="Prose on which companies are hiring and for what."
+    )
+    salary_observations: str = Field(
+        ..., description="Prose on observed salary ranges across matched/scraped jobs."
+    )
