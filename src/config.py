@@ -19,10 +19,32 @@ filenames are DERIVED from ``operator.full_name`` here, never hardcoded.
 from __future__ import annotations
 
 import re
+import urllib.error
+import urllib.request
+import json
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+def resolve_endpoint_base_url(config_url: str) -> str:
+    """Return the public endpoint URL.
+
+    If ngrok is running locally (port 4040 API), uses its current public
+    HTTPS tunnel URL so Telegram resume links work on mobile without any
+    manual config edits. Falls back to config.yaml value (used in production
+    or when ngrok is not running).
+    """
+    try:
+        with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=1) as resp:
+            data = json.loads(resp.read())
+        for tunnel in data.get("tunnels", []):
+            if tunnel.get("proto") == "https":
+                return tunnel["public_url"]
+    except Exception:
+        pass
+    return config_url
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "config.yaml"
 

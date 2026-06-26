@@ -7,6 +7,27 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [Iteration 3.2] — 2026-06-26
+
+### Added
+- Layer 8: `resolve_endpoint_base_url()` in `src/config.py` — at pipeline runtime, queries the ngrok local API (`localhost:4040`) for the current public HTTPS tunnel URL and uses it for Telegram resume links; falls back to `config.yaml` `endpoint.base_url` when ngrok is not running. Eliminates manual config edits on each ngrok restart when running locally.
+- Layer 9: implement Google Sheets index + monthly Docs report in `src/analytics.py` (was a stub). Three Sheets tabs — Matches (every job ≥ 0.50: date, company, role, score, salary, source, Apply/PDF/DOCX links, status, gap skills), Skipped (in-field LOW_SCORE jobs with reason + JD snippet), Near-duplicates (deduped reposts linked to their original). Tabs/headers auto-created on first write. Monthly report aggregates the last 30 days (skill demand with a 30% alert threshold, recurring gaps, hiring companies, salary ranges), synthesizes prose via a single Gemini call (`MonthlyReportLLM` schema), and appends a dated section to the Google Doc. All writers are best-effort: a Google failure or missing config logs and returns, never crashing a run or rolling back DB writes. gspread/Docs clients are lazy + cached.
+- Layer 9: `src/cli/report.py` — `python -m src.cli.report` triggers the monthly Docs report (monthly cron / manual).
+- Layer 1 (local): `scripts/start_bot.sh` — one-command local runner. Brings up the Docker resume endpoint, starts ngrok on the reserved static domain if not already running, and loops a LIVE pipeline run every N minutes (`./scripts/start_bot.sh [minutes]`, default 40; `0` = run once). The laptop-local stand-in for Oracle cron; Ctrl+C stops the loop and any ngrok it started while leaving the endpoint up.
+
+### Fixed
+- Layer 2: LinkedIn now geo-filters to India. JobSpy's `country_indeed` only filters Indeed/Glassdoor — LinkedIn ignores it and was returning worldwide listings. Added a `scraper.location` config ("India") passed through `scrape()` → JobSpy's `location` param (LinkedIn's only geo-filter; also refines Indeed/Glassdoor within the country).
+- Layer 8: Telegram resume buttons were silently dropped (`InlineKeyboardMarkup.inline_keyboard` is read-only in python-telegram-bot 21.x). Build the button row first, then construct the markup once, so Apply/PDF/DOCX render again.
+
+### Changed
+- Layer 8: richer Telegram match message — location now combines work mode + city (`📍 hybrid · Bangalore, India`), CTC is always shown with an explicit `💰 CTC not listed` fallback when the listing omits salary, and gap skills get a `⚠️` prefix. Apply/PDF/DOCX remain tappable buttons. Same fields flow to the Sheets index via `match_display_fields`.
+- Layer 8: `match_display_fields()` in `src/notifications.py` — factors the shared row fields (title, salary, location, apply URL) so the Telegram message and the Sheets index never disagree.
+- Layer 6/8: `config.yaml` `endpoint.base_url` set to the operator's reserved static ngrok domain (`https://murky-bonding-epileptic.ngrok-free.dev`) so resume links survive ngrok/laptop restarts; `scripts/start_bot.sh` binds ngrok to that same domain via `--url`. `resolve_endpoint_base_url()` still prefers the live tunnel at runtime, with this as the durable fallback.
+- Layer 9: `docker-compose.yml` now bind-mounts `config/google_service_account.json` (read-only) into both services — previously commented out pending Layer 9.
+- Layer 9: `src/main.py` hooks the Sheets index into the pipeline — appends a Matches row after each live notification, and a Skipped/Near-duplicate row from the not-applied path. Gated to live runs (dry runs do not pollute the real index).
+- Tests: `tests/test_iteration_3_analytics.py` — row content, tab/header creation, disabled-is-noop, Google-failure-is-swallowed, monthly-report config gate (Google APIs mocked).
+- Doc: `job_automation_architecture.md` Iteration 7 — promoted the "small dashboard" bullet to a concrete spec for a **local browser dashboard** served by the existing FastAPI app (`/dashboard` matches/skipped/job-detail views + `/dashboard/run` one-off pipeline trigger + scrape-frequency control). Local-only, never exposed via ngrok, no auth (instance-ready, not SaaS). Routes/templates remain a follow-up build.
+
 ## [Iteration 3.1] — 2026-06-12
 
 ### Added

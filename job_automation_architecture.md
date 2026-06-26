@@ -933,10 +933,55 @@ for the host arch — one `requirements.txt` works on either Oracle shape.
 ### ITERATION 7 — OPTIONAL
 
 ```
-- Expand the endpoint into a small dashboard (it already renders resumes;
-  add views over matches, statuses, analytics)
+- Local browser dashboard (spec below)
 - Optional MCP server so Claude can query bot stats conversationally
 ```
+
+#### Browser dashboard (Layer 6 extension)
+
+Served by the **same FastAPI app** that renders resumes — no new process, no
+Electron/Tauri, no extra hosting. Opens in the browser at `GET /dashboard`.
+Chosen over a native desktop app for zero new infrastructure; the running
+endpoint already has DB access and renders resumes.
+
+**Views (read from Postgres):**
+
+```
+/dashboard            — overview + the two tables below
+/dashboard/matches    — applied ⋈ all_jobs: company, role, final_score,
+                        user_status, Apply / PDF / DOCX links
+/dashboard/skipped    — not_applied ⋈ all_jobs: reason_category,
+                        reason_detail, score, and the JD text (so you can
+                        see *why* a job did not pass)
+/dashboard/job/{id}   — per-job detail: full JD, parsed fields, the
+                        selection_json breakdown (chosen experiences /
+                        projects / skills), and the resume links
+```
+
+**Controls (local runner, not the scraper itself):**
+
+```
+POST /dashboard/run         — fire a one-off pipeline pass now. Launches
+                              `python -m src.main` as a subprocess (the same
+                              command host cron would run); returns immediately.
+GET/POST /dashboard/config  — read/set the scrape frequency. Persists an
+                              interval that a local "runner loop" reads to
+                              decide how often to invoke the pipeline while the
+                              laptop is awake (the laptop-local stand-in for
+                              Oracle cron — see Iteration 5 / Edge Cases).
+```
+
+**Scope / safety:**
+
+- **Local-only.** Bound to `localhost`; **never** exposed through the ngrok
+  tunnel (ngrok only forwards the public `/resume/...` and `/health` routes the
+  operator deliberately shares). No auth, single operator — consistent with the
+  instance-ready (NOT multi-tenant) rule. No `user_id`, no accounts.
+- Read paths reuse `src/state/db.py:session_scope()`; the resume links reuse the
+  same `resolve_endpoint_base_url()` the notifier and the Sheets index use, so
+  every surface points at the same URL.
+- **Status:** documented here; the routes/templates and the runner loop are a
+  follow-up build (the resume endpoint is the foundation).
 
 ---
 
