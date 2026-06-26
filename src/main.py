@@ -78,8 +78,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run(dry_run: bool, log) -> int:
+    from src import analytics
     from src.builder.llm_call import build as build_selection
-    from src.config import settings
+    from src.config import settings, resolve_endpoint_base_url
     from src.llm.client import LLMError
     from src.notifications import send_dry_run_summary, send_match_notification
     from src.parser import apply_to_row, grounded_skills, parse
@@ -135,6 +136,7 @@ def _run(dry_run: bool, log) -> int:
                 term,
                 sites=list(cfg.scraper.sites),
                 country=str(cfg.scraper.country),
+                location=cfg.scraper.get("location"),
                 results_wanted=int(cfg.scraper.results_wanted_per_term),
                 hours_old=hours_old,
                 linkedin_fetch_description=bool(cfg.scraper.linkedin_fetch_description),
@@ -286,17 +288,28 @@ def _run(dry_run: bool, log) -> int:
 
             # --- Layer 8: notify ---
             if not dry_run:
+                endpoint_url = resolve_endpoint_base_url(str(cfg.endpoint.base_url))
                 try:
                     send_match_notification(
                         job=job,
                         parsed=parsed,
                         result=result,
                         gap_skills=gap_skills,
-                        endpoint_base_url=str(cfg.endpoint.base_url),
+                        endpoint_base_url=endpoint_url,
                         title_alias=title_alias,
                     )
                 except Exception as exc:
                     log.error("notification_error", job_id=job.job_id, error=str(exc))
+
+                # --- Layer 9: append to the Google Sheets index (best-effort) ---
+                analytics.append_match_row(
+                    job=job,
+                    parsed=parsed,
+                    result=result,
+                    gap_skills=gap_skills,
+                    endpoint_base_url=endpoint_url,
+                    title_alias=title_alias,
+                )
             else:
                 log.info(
                     "dry_run_match",
@@ -320,8 +333,8 @@ def _run(dry_run: bool, log) -> int:
                 log.info("short_circuit", threshold=short_circuit)
                 break
 
-        # --- Persist not-applied records ---
-        _write_not_applied(session, not_applied_queue, now)
+        # --- Persist not-applied records (+ Layer 9 skipped/near-dup rows) ---
+        _write_not_applied(session, not_applied_queue, now, dry_run=dry_run)
 
         # --- Advance rotation ---
         rotation.advance(session, terms)
@@ -359,16 +372,22 @@ def _compute_gap_skills(required: list[str], pool: list[str]) -> list[str]:
     ]
 
 
-def _write_not_applied(session, queue: list, now: datetime) -> None:
+def _write_not_applied(session, queue: list, now: datetime, *, dry_run: bool = False) -> None:
     """Persist not_applied rows, but only for jobs already in all_jobs.
 
     `not_applied.job_id` is a NOT NULL FK to all_jobs.job_id. Post-parse
     rejections went through `dedup.resolve_batch` so they exist; pre-filter
     rejections (DUPLICATE/LOCATION/COOLDOWN) may not — writing those would
     violate the FK and abort the whole commit, so we skip absent rows.
+
+    Also appends Layer 9 Sheets rows (best-effort): LOW_SCORE → Skipped tab
+    (the "relevant skipped" index), DUPLICATE → Near-duplicates tab. Skipped
+    on dry runs so the real index is not polluted.
     """
     from sqlalchemy import select
 
+    from src import analytics
+    from src.reasons import DUPLICATE, LOW_SCORE
     from src.state.models import AllJobs, NotApplied
 
     job_ids = [job.job_id for job, _reason, _detail in queue]
@@ -388,6 +407,17 @@ def _write_not_applied(session, queue: list, now: datetime) -> None:
             reason_detail=detail,
             not_applied_at=now,
         ))
+
+        if dry_run:
+            continue
+        if reason == LOW_SCORE:
+            try:
+                score = float(detail) if detail is not None else None
+            except (TypeError, ValueError):
+                score = None
+            analytics.append_skipped_row(job, reason, detail, score)
+        elif reason == DUPLICATE:
+            analytics.append_near_duplicate_row(job, None)
 
 
 if __name__ == "__main__":

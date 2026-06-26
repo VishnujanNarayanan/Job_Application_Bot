@@ -126,6 +126,7 @@ def _scrape_with_retry(
     site_group: list[str],
     search_term: str,
     country: str,
+    location: str | None,
     results_wanted: int,
     hours_old: int,
     linkedin_fetch_description: bool,
@@ -148,6 +149,10 @@ def _scrape_with_retry(
         hours_old=hours_old,
         linkedin_fetch_description=linkedin_fetch_description,
     )
+    # location is LinkedIn's only geo-filter (country_indeed is ignored there)
+    # and refines Indeed/Glassdoor within the country.
+    if location:
+        kwargs["location"] = location
     if proxies:
         kwargs["proxies"] = list(proxies)
 
@@ -178,6 +183,7 @@ def scrape(
     *,
     sites: Sequence[str],
     country: str,
+    location: str | None = None,
     results_wanted: int,
     hours_old: int,
     linkedin_fetch_description: bool = False,
@@ -220,6 +226,7 @@ def scrape(
             site_group=group,
             search_term=search_term,
             country=country,
+            location=location,
             results_wanted=rw,
             hours_old=hours_old,
             linkedin_fetch_description=linkedin_fetch_description,

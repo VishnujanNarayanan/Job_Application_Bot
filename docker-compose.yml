@@ -35,9 +35,9 @@ x-app: &app
     - ./data:/app/data
     # HuggingFace cache so the MiniLM embedding model downloads once, not per run.
     - hf_cache:/cache/hf
-    # Google service-account JSON — uncomment when Layer 9 (Sheets/Docs) is wired
-    # and the file exists; bind-mounting a missing file would create a directory.
-    # - ./config/google_service_account.json:/app/config/google_service_account.json:ro
+    # Google service-account JSON — Layer 9 (Sheets/Docs). The file must exist
+    # (bind-mounting a missing file would create a directory).
+    - ./config/google_service_account.json:/app/config/google_service_account.json:ro
 
 services:
   endpoint:

@@ -74,7 +74,12 @@ scraper:
   short_circuit_count: 20
   # JobSpy results_wanted cap per query term.
   results_wanted_per_term: 50
+  # country_indeed — geo-filters Indeed AND Glassdoor only.
   country: "india"
+  # location — the ONLY geo-filter LinkedIn honours (it ignores `country`).
+  # Without it LinkedIn returns worldwide listings, not India ones. Also
+  # refines Indeed/Glassdoor within the country. Use a country or city string.
+  location: "India"
   # LinkedIn returns listings WITHOUT the description body unless each one is
   # fetched individually (an extra request per job). Without it jd_text is
   # empty, which (a) starves the Gemini parser and (b) collapses near-duplicate
@@ -352,10 +357,13 @@ aws:
 
 # ---------------------------------------------------------------------------
 # Resume endpoint — FastAPI (Layer 6). Serves /resume/{job_id}.pdf|.docx.
-# base_url: localhost for dev/dry-run; set to https://{vm-ip} for prod.
+# base_url: the public URL embedded in Telegram/Sheets resume links. When
+# running locally this is the operator's reserved (static) ngrok domain, so
+# links survive ngrok/laptop restarts. resolve_endpoint_base_url() still
+# prefers the live ngrok tunnel at runtime; this is the durable fallback.
 # ---------------------------------------------------------------------------
 endpoint:
-  base_url: "http://localhost:8000"
+  base_url: "https://murky-bonding-epileptic.ngrok-free.dev"
   port: 8000
   # Template path is config-driven so any instance can swap the file.
   template_path: "resumes/templates/Templete.docx"
