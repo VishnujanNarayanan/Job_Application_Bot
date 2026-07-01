@@ -18,6 +18,7 @@ import structlog
 from dotenv import load_dotenv
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
+from src.config import settings
 from src.llm.schemas import JDParsed
 from src.scorer.apply_decision import SelectionResult
 from src.state.models import AllJobs
@@ -100,28 +101,21 @@ def send_match_notification(
     salary_str = fields["salary_str"]
     loc_str = fields["loc_str"]
 
-    # Always surface CTC; many listings omit salary, so say so explicitly.
     salary_display = salary_str if salary_str else "CTC not listed"
-
-    meta_parts = []
-    if loc_str:
-        meta_parts.append(f"📍 {loc_str}")
-    meta_parts.append(f"💰 {salary_display}")
-    meta_parts.append(f"via {job.site}")
-    meta_line = "  ·  ".join(meta_parts)
-
-    # Gap skills line
-    gap_line = f"⚠️ Gap skills: {', '.join(gap_skills)}" if gap_skills else ""
+    threshold = settings.selection.apply_threshold
 
     text_lines = [
-        f"🎯 *{score}* match",
+        f"*Match Score: {score}* (threshold: {threshold})",
+        "",
         f"*{display_title}* at *{job.company}*",
-        meta_line,
+        f"Location: {loc_str}" if loc_str else "",
+        f"Salary: {salary_display}",
+        f"Source: {job.site}",
     ]
-    if gap_line:
-        text_lines.append(gap_line)
+    if gap_skills:
+        text_lines += ["", f"Gap skills: {', '.join(gap_skills)}"]
 
-    text = "\n".join(text_lines)
+    text = "\n".join(line for line in text_lines if line is not None)
 
     apply_url = fields["apply_url"]
     pdf_url = f"{endpoint_base_url}/resume/{job.job_id}.pdf"
@@ -132,9 +126,9 @@ def send_match_notification(
         # InlineKeyboardMarkup.inline_keyboard is read-only after init.
         row = []
         if apply_url:
-            row.append(InlineKeyboardButton("📋 Apply", url=apply_url))
-        row.append(InlineKeyboardButton("📄 PDF", url=pdf_url))
-        row.append(InlineKeyboardButton("📝 DOCX", url=docx_url))
+            row.append(InlineKeyboardButton("Apply", url=apply_url))
+        row.append(InlineKeyboardButton("Resume PDF", url=pdf_url))
+        row.append(InlineKeyboardButton("Resume DOCX", url=docx_url))
         keyboard = InlineKeyboardMarkup([row])
     except Exception as exc:
         log.warning("notification_keyboard_failed", job_id=job.job_id, error=str(exc))
@@ -170,9 +164,10 @@ def send_dry_run_summary(
     DB writes that already happened this run.
     """
     text = (
-        "*Job bot — dry run complete*\n"
-        f"Scraped: `{scraped}`\n"
-        f"Skipped: `{skipped}`\n"
-        f"Applied: `{applied}`"
+        "*Job Bot — Dry Run Complete*\n"
+        "\n"
+        f"Scraped: {scraped}\n"
+        f"Matched: {applied}\n"
+        f"Skipped: {skipped}"
     )
     asyncio.run(_send(text))
