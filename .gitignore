@@ -1,3 +1,11 @@
+# --- Operator docs (personal / instance-specific, not committed) ------------
+job_automation_architecture.md
+alembic.ini
+TODO.md
+PRD.md
+CLAUDE.md
+CHANGELOG.md
+
 # --- Secrets & credentials --------------------------------------------------
 .env
 config/google_service_account.json
