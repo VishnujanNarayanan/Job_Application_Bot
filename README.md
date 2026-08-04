@@ -1,88 +1,504 @@
-# Job Application Automation Bot
+<h1 align="center">Job Application Bot</h1>
 
-Fully autonomous job application bot for **Vishnujan Narayanan**.
-Scrapes Indian job portals (Indeed; Glassdoor from Iteration 4), scores
-listings against a master profile, builds a custom-tailored resume per JD,
-and submits applications. Total operating cost: $0/month.
+<p align="center">
+  A nine-layer pipeline that scrapes Indian job listings, scores them against a master profile,<br>
+  and builds a tailored resume per match — rendered on demand, delivered over Telegram, $0/month.
+</p>
 
-## Read these first
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white"/>
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white"/>
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/Neon_Postgres-pgvector-4169E1?logo=postgresql&logoColor=white"/>
+  <img alt="Gemini" src="https://img.shields.io/badge/Gemini-2.5_Flash-8E75B2?logo=googlegemini&logoColor=white"/>
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white"/>
+  <img alt="Telegram" src="https://img.shields.io/badge/Telegram-Bot_API-26A5E4?logo=telegram&logoColor=white"/>
+  <img alt="AWS" src="https://img.shields.io/badge/AWS-S3_·_CloudWatch-232F3E?logo=amazonwebservices&logoColor=white"/>
+  <img alt="CI" src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions&logoColor=white"/>
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-92_passing-3FB950?logo=pytest&logoColor=white"/>
+  <br>
+  <a href="https://github.com/VishnujanNarayanan"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-VishnujanNarayanan-181717?logo=github&logoColor=white&style=for-the-badge"/></a>
+  <a href="https://www.linkedin.com/in/vishnujan-narayanan"><img alt="LinkedIn" src="https://img.shields.io/badge/LinkedIn-Vishnujan_Narayanan-0A66C2?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0yMC40NDcgMjAuNDUyaC0zLjU1NHYtNS41NjljMC0xLjMyOC0uMDI3LTMuMDM3LTEuODUyLTMuMDM3LTEuODUzIDAtMi4xMzYgMS40NDUtMi4xMzYgMi45Mzl2NS42NjdIOS4zNTFWOWgzLjQxNHYxLjU2MWguMDQ2Yy40NzctLjkgMS42MzctMS44NSAzLjM3LTEuODUgMy42MDEgMCA0LjI2NyAyLjM3IDQuMjY3IDUuNDU1djYuMjg2ek01LjMzNyA3LjQzM2MtMS4xNDQgMC0yLjA2My0uOTI2LTIuMDYzLTIuMDY1IDAtMS4xMzguOTItMi4wNjMgMi4wNjMtMi4wNjMgMS4xNCAwIDIuMDY0LjkyNSAyLjA2NCAyLjA2MyAwIDEuMTM5LS45MjUgMi4wNjUtMi4wNjQgMi4wNjV6bTEuNzgyIDEzLjAxOUgzLjU1NVY5aDMuNTY0djExLjQ1MnpNMjIuMjI1IDBIMS43NzFDLjc5MiAwIDAgLjc3NCAwIDEuNzI5djIwLjU0MkMwIDIzLjIyNy43OTIgMjQgMS43NzEgMjRoMjAuNDUxQzIzLjIgMjQgMjQgMjMuMjI3IDI0IDIyLjI3MVYxLjcyOUMyNCAuNzc0IDIzLjIgMCAyMi4yMjIgMGguMDAzeiIvPjwvc3ZnPg%3D%3D&logoColor=white&style=for-the-badge"/></a>
+  <a href="https://substack.com/@vishnujannarayanan"><img alt="Substack" src="https://img.shields.io/badge/Substack-@vishnujannarayanan-FF6719?logo=substack&logoColor=white&style=for-the-badge"/></a>
+</p>
+
+<p align="center">
+  🎯 <a href="#why-this-project-exists">Why</a> ·
+  🧩 <a href="#architecture">Architecture</a> ·
+  🧠 <a href="#design-decisions">Design Decisions</a> ·
+  ⚡ <a href="#installation">Installation</a> ·
+  ⚙️ <a href="#configuration">Configuration</a> ·
+  🧑‍💻 <a href="#usage">Usage</a> ·
+  🧪 <a href="#testing">Testing</a> ·
+  ⚠️ <a href="#limitations">Limitations</a>
+</p>
+
+---
+
+## Why this project exists
+
+Applying to jobs at volume forces a bad trade. Send the same resume everywhere and it matches
+nothing; tailor each one by hand and the throughput collapses. The usual automation answer —
+a bot that fills forms and submits applications — solves throughput by creating two worse
+problems: it risks the account it acts on, and it produces claims the applicant cannot defend in
+an interview.
+
+This system takes the opposite position. **It never applies to anything.** It does the part that
+is genuinely mechanical — finding listings, parsing requirements, scoring fit, and assembling the
+best-matching subset of an already-written profile — and hands back an apply link plus a resume
+link. A human clicks apply.
+
+The core value is the JD → tailored-resume engine. Every bullet on every generated resume comes
+verbatim from `master_profile.yaml`; the selection is sentence-transformer maths, not LLM
+authorship. That constraint is what makes the output defensible.
+
+## Features
+
+- **Multi-portal scraping** via JobSpy — LinkedIn, Indeed, Glassdoor (public listings only).
+- **Near-duplicate detection** — cosine > 0.95 on JD embeddings links cross-portal reposts to
+  the original instead of notifying twice.
+- **Structured JD parsing** — Gemini via Instructor returns a validated Pydantic model, never
+  hand-parsed JSON.
+- **Deterministic scoring** — a locked, documented formula over experiences, projects, summaries,
+  and skills; notify at ≥ 0.50.
+- **Tailored resume selection** — a ~2 KB `selection_json` per job, not a rendered PDF.
+- **On-demand rendering** — FastAPI serves `/resume/{job_id}.pdf|.docx`, assembling the DOCX from
+  the operator's template and converting via headless LibreOffice.
+- **Diff-validated assembly** — a render that changes anything outside permitted regions fails
+  rather than shipping; the resume header is never touched.
+- **Telegram delivery** — match notifications with Apply, Resume PDF, and Resume DOCX buttons.
+- **Analytics** — Google Sheets index (Matches / Skipped / Near-duplicates) plus a monthly
+  Gemini-written Google Docs report.
+- **Free tier throughout** — Neon, Gemini, Telegram, Google Workspace APIs, AWS S3 and CloudWatch.
+- **Instance-ready** — no operator identity in `src/`; a second operator swaps config files and
+  runs their own instance with zero code edits.
+
+## Architecture
+
+Nine layers. `job_automation_architecture.md` is the source of truth; this is the summary.
+
+```mermaid
+flowchart TB
+    L1["Layer 1 · Scheduler<br/>cron / start_bot.sh"] --> L2
+
+    L2["Layer 2 · Scraper<br/>JobSpy + dedup + rotation"] --> L3
+    L2 --> DEDUP{"cosine > 0.95<br/>vs notified?"}
+    DEDUP -->|yes| ND["NEAR_DUPLICATE<br/>link + skip"]
+
+    L3["Layer 3 · JD Parser<br/>Gemini Call 1a — always"] --> L4
+    L4["Layer 4 · Scoring<br/>deterministic selection"] --> GATE{"score >= 0.50?"}
+    GATE -->|no| SKIP["LOW_SCORE<br/>Sheets: Skipped"]
+    GATE -->|yes| L5
+
+    L5["Layer 5 · Resume Builder<br/>Gemini Call 1b -> selection_json"] --> L7
+    L7[("Layer 7 · State<br/>Neon Postgres + pgvector")]
+    L5 --> L8
+
+    L8["Layer 8 · Notifications<br/>Telegram: apply + resume links"] --> USER(("Operator<br/>applies manually"))
+    USER -->|clicks resume link| L6
+
+    L6["Layer 6 · Endpoint<br/>FastAPI resume PDF or DOCX"] --> CACHE{"render_cache<br/>hit?"}
+    CACHE -->|hit| S3[("S3 cache<br/>1-month TTL")]
+    CACHE -->|miss| ASM["Assemble DOCX from template<br/>diff-validate -> LibreOffice PDF"]
+    ASM --> S3
+    S3 --> USER
+
+    L8 --> L9["Layer 9 · Analytics<br/>Sheets index + monthly Docs report"]
+    L8 --> CW["CloudWatch<br/>structlog via watchtower"]
+```
+
+### Layer status
+
+| Layer | Component | Status | Implementation |
+|---|---|---|---|
+| 1 | Scheduler | 🟡 Stub | Cron documented; `scripts/start_bot.sh` loops locally |
+| 2 | Scraper | ✅ Real | JobSpy + dedup + source rotation |
+| 3 | JD Parser | ✅ Real | Gemini Call 1a with Pydantic validation |
+| 4 | Scoring | ✅ Real | Deterministic selection, notify ≥ 0.50 |
+| 5 | Resume Builder | ✅ Real | Gemini Call 1b → `selection_json` |
+| 6 | Endpoint | ✅ Real | FastAPI on-demand PDF/DOCX render |
+| 7 | State | ✅ Real | Neon Postgres + pgvector, master-profile rebuild |
+| 8 | Notifications | ✅ Real | Telegram matches + dry-run summaries |
+| 9 | Analytics | ✅ Real | Sheets index + monthly Docs report |
+
+### Module map
+
+| Path | Responsibility |
+|---|---|
+| `src/main.py` | Pipeline orchestrator, run lock, dry-run handling |
+| `src/scraper/` | `jobspy_wrapper`, `filters`, `rotation` |
+| `src/parser.py` | JD parsing (Gemini Call 1a) |
+| `src/scorer/` | `embeddings`, `selector`, `ordering`, `apply_decision` |
+| `src/builder/` | `llm_call` (Call 1b), `skills_validator` |
+| `src/endpoint/` | `app`, `assembler`, `pdf_convert`, `cache`, `hyperlinks` |
+| `src/state/` | `db`, `models`, `master_profile`, `cleanup`, Alembic migrations |
+| `src/llm/` | `client`, `prompts`, `schemas` |
+| `src/aws/` | `s3`, `cloudwatch`, `iam_session` |
+| `src/analytics.py` | Google Sheets index and monthly Docs report |
+| `src/notifications.py` | Telegram formatting and delivery |
+| `src/cli/` | `dryrun`, `inspect`, `reparse`, `report`, `aws_check` |
+
+## Design Decisions
+
+**No auto-apply, ever.** The system does not submit applications, fill forms, answer screening
+questions, or take any action on an operator's portal account. This was a deliberate pivot away
+from a Playwright-based auto-applier built in earlier iterations. It removes account-ban risk
+entirely and keeps a human in the loop on every submission.
+
+**LinkedIn is a listings source, not an account.** JobSpy reads public listings. Nothing logs
+into or acts on the operator's account, so the risk that actually matters never arises.
+
+**The LLM never writes or selects bullet content.** Bullets come verbatim from
+`master_profile.yaml`, chosen by sentence-transformer similarity. Gemini only picks a title from
+an allow-list, names three skill categories from pre-scored candidates, and writes cover-letter
+prose. Job titles are constrained with `Literal[tuple(safe_title_aliases)]`, so an out-of-set
+title cannot be returned. **The operator must be able to defend every word in an interview** —
+that constraint outranks match score.
+
+**Selections are stored; PDFs are not.** Layer 5 writes a ~2 KB `selection_json` row. Rendering
+happens when a link is clicked. This avoids accumulating a pile of PDFs that go stale the moment
+the template changes, and it makes a template update retroactive: a stored
+`template_version` mismatch triggers a re-render against the current template.
+
+**Renders are diff-validated and the header is untouchable.** The assembler must not modify any
+paragraph before the first `WORK EXPERIENCE` heading, which preserves the embedded GitHub,
+LinkedIn, and certificate hyperlinks. Project and certificate link targets are rewritten by
+`r:id` in `word/_rels/document.xml.rels`, leaving visible text unchanged. Any unexpected diff
+raises `BUILD_FAILURE` instead of shipping a broken resume.
+
+**A hard budget of two Gemini calls per job.** Call 1a parses every JD; Call 1b runs only when
+the score clears 0.50. On the free tier this is the difference between finishing a run and
+hitting a quota wall.
+
+**No quotas on notifications.** Every match ≥ 0.50 notifies. Quotas existed to ration
+auto-applications; with no auto-apply there is nothing to ration.
+
+**The master profile is immutable from code.** It is read and validated, never written. Removing
+a bullet sets `is_active = false` rather than deleting, so historical selections always resolve.
+
+**Instance-ready, deliberately not SaaS.** No operator name, email, or filename literal appears
+in `src/` — resume filenames are derived from `operator.full_name` in `config.yaml`. But there
+are no `user_id` columns, no auth, and no tenant isolation. One instance serves one operator.
+
+### Selection formula
+
+```
+EXPERIENCE  score = alias × 0.30 + top3_bullet_avg × 0.70
+            max 3, min 2, threshold 0.45, force-include 2
+            bullets: exactly 3, top by score
+            order: best-match first if gap > 0.20, else recency
+
+PROJECT     score = name × 0.20 + topN_bullet_avg × 0.80
+            max 3, min 2, threshold 0.50, force-include 2, never hidden
+
+SUMMARY     deterministic pool selection by JD match — no LLM
+
+SKILLS      top-14 pool candidates → LLM names 3 categories (3–5 each)
+            + up to 4 "Familiar With" gap skills; 10–14 pool + 0–4 gaps
+
+SECTIONS    Summary → Work → [Skills / Projects by match] → Education → Certs
+
+FINAL       fit × 0.55 + success_prob × 0.30 + recency × 0.10 + project × 0.05
+            success_prob = seniority × 0.60 + recency × 0.40
+            seniority weights: junior 1.0, mid 0.80, senior 0.40, lead 0.15
+            notify + build at >= 0.50
+```
+
+## Project Structure
+
+```
+job_application_bot/
+├── src/
+│   ├── main.py                  # Orchestrator
+│   ├── config.py                # Settings from config.yaml + .env
+│   ├── scraper/ parser.py scorer/ builder/
+│   ├── endpoint/                # FastAPI resume server + DOCX assembler
+│   ├── state/                   # SQLAlchemy models, Alembic migrations
+│   ├── llm/                     # Gemini client, prompts, Pydantic schemas
+│   ├── aws/                     # S3, CloudWatch, IAM session
+│   ├── analytics.py notifications.py scheduler.py reasons.py
+│   └── cli/                     # dryrun, inspect, reparse, report, aws_check
+├── tests/                       # 13 test modules, mocked external services
+├── config/config.yaml           # All runtime tunables (checked in, no secrets)
+├── resumes/templates/           # Operator DOCX template
+├── scripts/start_bot.sh         # Local runner: endpoint + ngrok + run loop
+├── Dockerfile docker-compose.yml
+├── alembic.ini
+├── PRD.md                       # What this product is and isn't
+├── job_automation_architecture.md  # 9-layer architecture — source of truth
+├── CLAUDE.md                    # Hard rules for contributors and AI agents
+├── PROJECT_STATUS.md CHANGELOG.md TODO.md
+├── master_profile.example.yaml  # Template for the operator's profile
+└── requirements.txt
+```
+
+### Read these first
 
 In order — each references the next:
 
-1. `PRD.md` — what this product is and isn't
-2. `job_automation_architecture.md` — 9-layer architecture (source of truth)
-3. `CLAUDE.md` — hard rules for any contributor or AI working on this code
-4. `CHANGELOG.md` — what changed in each iteration
+1. **`PRD.md`** — what this product is and isn't
+2. **`job_automation_architecture.md`** — the nine-layer architecture, source of truth
+3. **`CLAUDE.md`** — hard rules for any contributor or AI agent on this code
+4. **`CHANGELOG.md`** — what changed in each iteration
 
-## Iteration status
+## Installation
 
-**Current: Iteration 0 — Scaffold.** No business logic yet. See
-`job_automation_architecture.md` Section 8 for the full build sequence.
-
-## Setup (Iteration 0)
+Python 3.11+ is required.
 
 ```bash
-# Python 3.11+ required
-python --version
+git clone git@github.com:VishnujanNarayanan/Job_Application_Bot.git
+cd Job_Application_Bot
 
-# Create and activate virtualenv
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
 
-# Install dependencies
 pip install -r requirements.txt
-
-# Download spaCy model
-python -m spacy download en_core_web_sm
-
-# Run smoke tests — should pass green
-pytest
 ```
 
-## Setup (Iteration 1+)
+`requirements.txt` installs the spaCy `en_core_web_sm` model directly from a wheel URL and pins a
+CPU-only PyTorch build (~200 MB rather than ~2 GB), so no extra download step is needed.
+
+PDF conversion requires **LibreOffice** as a system binary — it is not a pip dependency. The
+Docker image installs `libreoffice-writer`; a local install needs it on `PATH`.
+
+### Operator setup
 
 ```bash
-# Copy example files and fill in real values
-cp .env.example .env
-cp master_profile.example.yaml master_profile.yaml
-cp answer_bank_seed.example.yaml answer_bank_seed.yaml
+cp .env.example .env                              # fill in secrets
+cp master_profile.example.yaml master_profile.yaml # write your profile
+# place a DOCX template under resumes/templates/
 
-# Install Playwright browsers (needed for Layer 6)
-playwright install chromium
+python -m src.cli.aws_check    # verify S3 + IAM + CloudWatch
+alembic upgrade head           # migrate the database
+python -m src.cli.reparse      # parse profile -> DB embeddings + JSON
+pytest                         # should pass green
 ```
 
-## External accounts (not needed for Iteration 0)
+### Docker (recommended)
 
-| Service | First needed | Free tier |
+Two runtime roles from one image:
+
+| Service | Role | Lifecycle |
 |---|---|---|
-| Neon PostgreSQL (pgvector) | Iteration 1 | 3 GB |
-| Gemini 2.0 Flash (Google AI Studio) | Iteration 2 | 1500 calls/day |
-| Telegram bot (via @BotFather) | Iteration 1 | unlimited |
-| Indeed account (manual login → session cookies) | Iteration 3 | free |
-| Google Cloud service account (Sheets + Docs API) | Iteration 2 / 4 | free |
-| Oracle Cloud Always Free VM | Iteration 5 | 200 GB disk |
-| Glassdoor account | Iteration 4 | free |
+| `endpoint` | Always-on resume server, `uvicorn`, port 8000 | `docker compose up -d endpoint` |
+| `pipeline` | On-demand scrape → parse → score → build → notify | `docker compose run --rm pipeline` |
+
+First deploy, in order:
+
+```bash
+cp .env.example .env                     # DATABASE_URL, GEMINI_API_KEY, Telegram, AWS
+# provide master_profile.yaml + a template under resumes/templates/
+touch master_profile.json                # so the bind mount is a file, not a directory
+docker compose build
+docker compose run --rm pipeline alembic upgrade head
+docker compose run --rm pipeline python -m src.cli.reparse
+docker compose up -d endpoint
+```
+
+Secrets and the operator profile are `.dockerignore`d and bind-mounted at runtime, never baked
+into the image. A named `hf_cache` volume persists the MiniLM embedding model across runs.
 
 ## Configuration
 
-All runtime tunables live in `config/config.yaml` (checked in, no secrets).
-Secrets only in `.env` (gitignored). No magic numbers in `src/`.
+Secrets in `.env` (gitignored); tunables in `config/config.yaml` (checked in). No magic numbers
+in `src/`.
 
-## CLI (Iteration 2+)
+### `.env`
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Neon Postgres connection string (pgvector enabled) |
+| `GEMINI_API_KEY` | Google AI Studio key |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Notification delivery |
+| `GOOGLE_SHEETS_ID` / `GOOGLE_DOC_ID` | Layer 9 analytics targets |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to the service-account JSON |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | S3 + CloudWatch |
+| `AWS_S3_BUCKET` | Render cache and selection backups |
+| `AWS_CLOUDWATCH_LOG_GROUP` / `AWS_CLOUDWATCH_NAMESPACE` | Log and metric destinations |
+| `TZ` / `LOG_LEVEL` | Runtime environment |
+
+### `config/config.yaml`
+
+| Block | Controls |
+|---|---|
+| `operator` | Full name (drives derived filenames), years of experience, timezone |
+| `filters` | Job type, years ceiling, disallowed regions, company blocklist |
+| `salary` | Default expected LPA — informational only, never auto-filled |
+| `scheduler` | Documented cron cadence: 40 min peak, 4 h off-peak |
+| `scoring` | Every threshold and weight in the selection formula |
+| `endpoint` | Public base URL for resume links |
+| `analytics` | Sheets tabs, monthly report thresholds |
+
+Current filter settings reject anything above 5 years' experience, restrict to full-time, and
+exclude Delhi NCR (Delhi, Gurgaon, Gurugram, Noida, Ghaziabad, Faridabad).
+
+## Usage
+
+### Pipeline
 
 ```bash
-python -m src.main --dry-run            # full run, no submission
-python -m src.cli.inspect --job-id XYZ # pipeline state for one job
-python -m src.cli.queue                 # inspect application_queue
-python -m src.cli.reparse               # rebuild master profile from YAML
+python -m src.main                      # live run
+python -m src.main --dry-run            # scrape/parse/score/build, test chat only
+docker compose run --rm pipeline        # containerised live run
 ```
+
+A run lock prevents overlapping cron executions.
+
+### CLI
+
+| Command | Purpose |
+|---|---|
+| `python -m src.cli.dryrun` | Full pipeline into the test chat |
+| `python -m src.cli.inspect --job-id XYZ` | Full pipeline state for one job |
+| `python -m src.cli.reparse` | Rebuild the master profile in the DB from YAML |
+| `python -m src.cli.report` | Write the monthly analytics report to Google Docs |
+| `python -m src.cli.aws_check` | Verify S3, IAM, and CloudWatch connectivity |
+
+### Endpoint
+
+| Route | Purpose |
+|---|---|
+| `GET /resume/{job_id}.pdf` | Render or serve the cached tailored resume as PDF |
+| `GET /resume/{job_id}.docx` | Same, as DOCX |
+| `GET /health` | Healthcheck used by the compose healthcheck |
+
+Roughly 5 s cold, instant when cached.
+
+### Local operation
+
+```bash
+./scripts/start_bot.sh 40    # endpoint + ngrok, then a live run every 40 minutes
+./scripts/start_bot.sh 0     # run once
+```
+
+The pipeline queries the ngrok local API at `localhost:4040` for the current public HTTPS tunnel
+and uses it for Telegram resume links, falling back to `endpoint.base_url` in `config.yaml` when
+ngrok is not running.
+
+## Example Workflow
+
+1. Cron (or `start_bot.sh`) fires `python -m src.main`; the run lock is taken.
+2. **Layer 2** scrapes listings via JobSpy, geo-filtered to India, and applies hard filters —
+   job type, years ceiling, disallowed regions, company cooldown.
+3. Each JD is embedded. If cosine similarity to an already-notified job exceeds 0.95, it is marked
+   `NEAR_DUPLICATE`, linked to the original, and skipped.
+4. **Layer 3** sends Gemini Call 1a and validates the response into a Pydantic model.
+5. **Layer 4** scores the job. Below 0.50 it is recorded as `LOW_SCORE` with a reason and written
+   to the Skipped tab — no second LLM call is spent.
+6. **Layer 5** sends Call 1b for a title alias, three skill categories, and cover-letter text,
+   then validates every skill against the pool and every claim against the profile text.
+   Failures regenerate up to twice, then raise `BUILD_FAILURE`.
+7. The `selection_json` is written to Postgres.
+8. **Layer 8** sends a Telegram message with role, company, score, threshold, location, CTC, gap
+   skills, and three buttons: Apply, Resume PDF, Resume DOCX.
+9. The operator taps Resume PDF. **Layer 6** checks `render_cache`; on a miss it loads the
+   selection, assembles the DOCX against the current template, diff-validates, converts through
+   LibreOffice, caches to S3, and serves.
+10. The operator applies manually through the Apply link.
+11. **Layer 9** appends a row to the Sheets Matches tab. Monthly, `src.cli.report` aggregates the
+    last 30 days and appends a Gemini-written section to the Google Doc.
+
+## Dependencies
+
+| Package | Why |
+|---|---|
+| `python-jobspy` | Multi-portal listing scraper |
+| `sentence-transformers` + `torch` (CPU) | MiniLM embeddings for bullet scoring and dedup |
+| `spacy` + `en_core_web_sm` | Tokenisation and lemmatisation in the parser |
+| `google-generativeai` + `instructor` + `pydantic` | Structured Gemini calls, never raw JSON |
+| `sqlalchemy` + `psycopg` + `pgvector` + `alembic` | Postgres access, vector columns, migrations |
+| `python-docx` + `reportlab` | DOCX assembly and PDF primitives |
+| `fastapi` + `uvicorn` + `httpx` | Resume endpoint and its test client |
+| `python-telegram-bot` | Notification delivery |
+| `gspread` + `google-api-python-client` + `google-auth` | Sheets index and Docs report |
+| `boto3` + `watchtower` | S3 cache/backup and structlog → CloudWatch |
+| `structlog` + `pyyaml` + `python-dotenv` | Structured logging and configuration |
+| `pytest` + `pytest-asyncio` + `moto` | Test suite with mocked AWS |
+
+LibreOffice headless is a **system** dependency, not a pip one.
+
+## Testing
+
+```bash
+pytest          # full suite
+pytest -v       # as CI runs it
+```
+
+Around 92 unit tests across 13 modules. Nothing external is contacted: Gemini is mocked, the DB
+session is mocked, boto3 runs under `moto`, and FastAPI is exercised through `TestClient`. Layer 4
+selection is pure functions and is tested against synthetic profiles and JDs.
+
+CI runs on every push to `main` and every pull request — Python 3.11, a clean
+`pip install -r requirements.txt` (which is itself the honest test that the file is complete),
+then `pytest -v`.
+
+Integration testing is manual against a real Neon branch, GCP, and S3. The dry-run path was
+verified end to end on 2026-06-11.
+
+## Limitations
+
+- **Layer 1 is a stub.** There is no in-process scheduler; runs are triggered by host cron or
+  `scripts/start_bot.sh`.
+- **It runs on a laptop.** Oracle and AWS VM deployment was abandoned for want of a payment card,
+  so the endpoint is exposed through ngrok. Resume links die when the machine sleeps.
+- **Indeed is currently disabled.** `apis.indeed.com` times out from the operator's network, so
+  `scraper.sites` is temporarily LinkedIn-only. Glassdoor is likewise dropped for now.
+- **Gemini free-tier quotas bind.** The model was moved from `gemini-2.5-flash-lite` (20
+  requests/day) to `gemini-2.5-flash` (250/day) after repeated 429s, and retry backoff was widened
+  to 5 attempts with a 90 s ceiling to survive the 5-requests-per-minute limit.
+- **Generated resumes run long** — currently around five pages. The length comes from static
+  template content, not from the assembler.
+- **No browser dashboard.** The Iteration 7 spec for local `/dashboard` routes exists; the
+  routes and templates are not built.
+- **Single operator.** Instance-ready by config, but there is no auth, no accounts, and no tenant
+  isolation — by design.
+- **Scraper reliability is outside this system's control.** Portal HTML and API changes break
+  JobSpy, and IP throttling is treated as an acceptable, recoverable risk.
+- **No end-to-end automated integration test.** External integrations are verified by hand.
+- **The resume template filename contains a typo** (`Templete.docx`), preserved deliberately so
+  existing references keep resolving.
+
+## Roadmap
+
+Tracked in `TODO.md` and the architecture doc's Section 8 build sequence.
+
+- **Layer 1** — automatic scheduled runs rather than a manual trigger.
+- **Browser dashboard** — local-only `/dashboard` views for matches, skipped jobs, and job
+  detail, plus a one-off run trigger and scrape-frequency control.
+- **Resume length** — trim template content to bring output under five pages.
+- Re-enable Indeed and Glassdoor once connectivity allows.
+- Naukri as a fourth source (Iteration 6).
+- Host the endpoint somewhere permanent so resume links outlive the laptop.
 
 ## What this is NOT
 
-- Not LinkedIn — ever (account-ban risk on the user's main account).
-- Not a multi-user / SaaS product.
-- Not an LLM bullet writer — every bullet comes verbatim from
-  `master_profile.yaml`. The LLM only picks title aliases, names skill
-  categories, and writes cover letters.
-- Not free of human oversight — Telegram inline review for judgement-call
-  questions; manual login required for portal sessions.
+- **Not an auto-applier.** It never submits an application or acts on any portal account.
+- **Not a LinkedIn automation tool.** Public listings are read; the account is never touched.
+- **Not an LLM bullet writer.** Every bullet is verbatim from `master_profile.yaml`.
+- **Not multi-user SaaS.** One instance, one operator, no auth layer.
+- **Not free of human oversight.** The operator applies, and reviews every resume before sending.
+
+## Contributing
+
+`CLAUDE.md` is binding for both human and AI contributors. In short:
+
+- Append to `CHANGELOG.md` `[Unreleased]` in the same session as any code-affecting change.
+- Never auto-commit or auto-push — the operator runs git.
+- All tunables belong in `config/config.yaml`; secrets belong in `.env`.
+- Unit-test every change with external services mocked.
+- Do not violate any of the 21 hard rules — most importantly, do not reintroduce auto-apply.
+
+## License
+
+No licence file is present; all rights reserved by the author.
+
+## Author
+
+<p align="center">
+  <strong>Vishnujan Narayanan</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/VishnujanNarayanan"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-VishnujanNarayanan-181717?logo=github&logoColor=white&style=for-the-badge"/></a>
+  <a href="https://www.linkedin.com/in/vishnujan-narayanan"><img alt="LinkedIn" src="https://img.shields.io/badge/LinkedIn-Vishnujan_Narayanan-0A66C2?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0yMC40NDcgMjAuNDUyaC0zLjU1NHYtNS41NjljMC0xLjMyOC0uMDI3LTMuMDM3LTEuODUyLTMuMDM3LTEuODUzIDAtMi4xMzYgMS40NDUtMi4xMzYgMi45Mzl2NS42NjdIOS4zNTFWOWgzLjQxNHYxLjU2MWguMDQ2Yy40NzctLjkgMS42MzctMS44NSAzLjM3LTEuODUgMy42MDEgMCA0LjI2NyAyLjM3IDQuMjY3IDUuNDU1djYuMjg2ek01LjMzNyA3LjQzM2MtMS4xNDQgMC0yLjA2My0uOTI2LTIuMDYzLTIuMDY1IDAtMS4xMzguOTItMi4wNjMgMi4wNjMtMi4wNjMgMS4xNCAwIDIuMDY0LjkyNSAyLjA2NCAyLjA2MyAwIDEuMTM5LS45MjUgMi4wNjUtMi4wNjQgMi4wNjV6bTEuNzgyIDEzLjAxOUgzLjU1NVY5aDMuNTY0djExLjQ1MnpNMjIuMjI1IDBIMS43NzFDLjc5MiAwIDAgLjc3NCAwIDEuNzI5djIwLjU0MkMwIDIzLjIyNy43OTIgMjQgMS43NzEgMjRoMjAuNDUxQzIzLjIgMjQgMjQgMjMuMjI3IDI0IDIyLjI3MVYxLjcyOUMyNCAuNzc0IDIzLjIgMCAyMi4yMjIgMGguMDAzeiIvPjwvc3ZnPg%3D%3D&logoColor=white&style=for-the-badge"/></a>
+  <a href="https://substack.com/@vishnujannarayanan"><img alt="Substack" src="https://img.shields.io/badge/Substack-@vishnujannarayanan-FF6719?logo=substack&logoColor=white&style=for-the-badge"/></a>
+</p>
