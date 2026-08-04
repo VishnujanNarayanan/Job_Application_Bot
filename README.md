@@ -74,7 +74,7 @@ authorship. That constraint is what makes the output defensible.
 
 ## Architecture
 
-Nine layers. `job_automation_architecture.md` is the source of truth; this is the summary.
+Nine layers, each owning one stage of the pipeline.
 
 ```mermaid
 flowchart TB
@@ -222,23 +222,10 @@ job_application_bot/
 ├── resumes/templates/           # Operator DOCX template
 ├── scripts/start_bot.sh         # Local runner: endpoint + ngrok + run loop
 ├── Dockerfile docker-compose.yml
-├── alembic.ini
-├── PRD.md                       # What this product is and isn't
-├── job_automation_architecture.md  # 9-layer architecture — source of truth
-├── CLAUDE.md                    # Hard rules for contributors and AI agents
-├── PROJECT_STATUS.md CHANGELOG.md TODO.md
+├── .env.example                 # Every secret the pipeline reads
 ├── master_profile.example.yaml  # Template for the operator's profile
 └── requirements.txt
 ```
-
-### Read these first
-
-In order — each references the next:
-
-1. **`PRD.md`** — what this product is and isn't
-2. **`job_automation_architecture.md`** — the nine-layer architecture, source of truth
-3. **`CLAUDE.md`** — hard rules for any contributor or AI agent on this code
-4. **`CHANGELOG.md`** — what changed in each iteration
 
 ## Installation
 
@@ -459,8 +446,6 @@ verified end to end on 2026-06-11.
 
 ## Roadmap
 
-Tracked in `TODO.md` and the architecture doc's Section 8 build sequence.
-
 - **Layer 1** — automatic scheduled runs rather than a manual trigger.
 - **Browser dashboard** — local-only `/dashboard` views for matches, skipped jobs, and job
   detail, plus a one-off run trigger and scrape-frequency control.
@@ -479,13 +464,19 @@ Tracked in `TODO.md` and the architecture doc's Section 8 build sequence.
 
 ## Contributing
 
-`CLAUDE.md` is binding for both human and AI contributors. In short:
+The rules that keep this system honest:
 
-- Append to `CHANGELOG.md` `[Unreleased]` in the same session as any code-affecting change.
-- Never auto-commit or auto-push — the operator runs git.
-- All tunables belong in `config/config.yaml`; secrets belong in `.env`.
-- Unit-test every change with external services mocked.
-- Do not violate any of the 21 hard rules — most importantly, do not reintroduce auto-apply.
+- **Never reintroduce auto-apply.** The system does not submit applications or act on any portal
+  account. This is the core constraint, not a preference.
+- **The LLM never writes or selects bullet content.** Bullets come verbatim from
+  `master_profile.yaml`; selection is sentence-transformer maths.
+- **`master_profile.yaml` is read-only from code.** The operator edits it.
+- **Stay inside two Gemini calls per job.**
+- **All tunables belong in `config/config.yaml`; secrets belong in `.env`.** No magic numbers
+  in `src/`.
+- **No operator identity in `src/`** — derive it from config so anyone can run their own instance.
+- **Unit-test every change** with external services mocked.
+- **Never auto-commit or auto-push** — the operator runs git.
 
 ## License
 
