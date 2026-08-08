@@ -40,29 +40,27 @@ def _configure_logging() -> None:
 
 
 def _banner() -> None:
-    from src.llm.client import fallback_enabled, provider_config
+    """Print the provider chain in the order it will be tried."""
+    import os
 
-    for which in ("primary", "fallback"):
-        if which == "fallback" and not fallback_enabled():
-            print("fallback : (disabled)")
-            continue
-        cfg = provider_config(which)
+    from src.llm.client import provider_chain
+
+    for position, (which, cfg) in enumerate(provider_chain()):
+        has_key = bool(os.environ.get(str(cfg.api_key_env), "").strip())
         print(
-            f"{which:8} : {cfg.provider} · {cfg.model} · "
+            f"{position}. {which:12} {cfg.provider} · {cfg.model} · "
             f"{cfg.instructor_mode} · {cfg.api_key_env}"
+            f"{'' if has_key else '  (NO KEY)'}"
         )
     print()
 
 
-def _list_one(which: str) -> int:
+def _list_one(which: str, cfg) -> int:
     """Print every model id one provider's key can see."""
     import os
 
     from openai import OpenAI
 
-    from src.llm.client import provider_config
-
-    cfg = provider_config(which)
     key = os.environ.get(str(cfg.api_key_env), "").strip()
     if not key:
         print(f"[{which}] {cfg.api_key_env} not set — skipping.", file=sys.stderr)
@@ -92,20 +90,42 @@ def _list_one(which: str) -> int:
     return 0
 
 
-def list_models() -> int:
-    """List models for every configured provider."""
-    from src.llm.client import fallback_enabled
+def list_models(only: str | None = None) -> int:
+    """List models for every configured provider, or one named provider.
 
-    rc = _list_one("primary")
-    if fallback_enabled():
-        rc |= _list_one("fallback")
+    Disabled providers are included when named explicitly, so a candidate can
+    be evaluated before it is switched on.
+    """
+    from src.llm.client import all_providers
+
+    rc = 0
+    matched = False
+    for name, cfg, enabled in all_providers():
+        if only:
+            if name != only:
+                continue
+        elif not enabled:
+            continue
+        matched = True
+        rc |= _list_one(name, cfg)
+
+    if only and not matched:
+        known = ", ".join(name for name, _, _ in all_providers())
+        print(f"No provider named {only!r}. Configured: {known}", file=sys.stderr)
+        return 1
+
     print("Being listed is necessary but not sufficient — run without --list "
           "to prove a model is callable.")
     return rc
 
 
-def test_call() -> int:
-    """Make one real structured call using the pipeline's own schema."""
+def test_call(only: str | None = None) -> int:
+    """Make one real structured call using the pipeline's own schema.
+
+    With ``only``, calls that provider directly instead of walking the chain —
+    otherwise a working primary means a candidate provider is never reached,
+    and never actually tested.
+    """
     from src.llm.client import LLMBudgetError, LLMError, complete
     from src.llm.prompts import jd_parse_prompt, jd_parse_system
     from src.llm.schemas import JDParsed
@@ -127,9 +147,18 @@ def test_call() -> int:
 
     t0 = time.time()
     try:
-        parsed = complete(
-            JDParsed, jd_parse_prompt(job), system=jd_parse_system()
-        )
+        if only:
+            from src.llm.client import _complete_with
+
+            messages = [
+                {"role": "system", "content": jd_parse_system()},
+                {"role": "user", "content": jd_parse_prompt(job)},
+            ]
+            parsed = _complete_with(only, JDParsed, messages)
+        else:
+            parsed = complete(
+                JDParsed, jd_parse_prompt(job), system=jd_parse_system()
+            )
     except LLMBudgetError as exc:
         print(f"FAILED — account out of budget/quota ({time.time() - t0:.1f}s)")
         print(f"  {str(exc)[:400]}", file=sys.stderr)
@@ -175,11 +204,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--list", action="store_true", help="list model ids instead of calling"
     )
+    parser.add_argument(
+        "provider",
+        nargs="?",
+        help=(
+            "with --list, restrict to one provider by name (e.g. cerebras). "
+            "Works on disabled entries too, so a candidate provider can be "
+            "evaluated before it is switched on."
+        ),
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
     _banner()
-    return list_models() if args.list else test_call()
+    return list_models(args.provider) if args.list else test_call(args.provider)
 
 
 if __name__ == "__main__":

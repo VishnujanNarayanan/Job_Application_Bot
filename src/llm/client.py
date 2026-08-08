@@ -34,7 +34,7 @@ from typing import TypeVar
 import structlog
 from pydantic import BaseModel
 
-from src.config import settings
+from src.config import Section, settings
 
 log = structlog.get_logger(__name__)
 
@@ -118,17 +118,84 @@ def _is_permanent(exc: Exception) -> bool:
     return any(marker in message for marker in _PERMANENT_ERROR_MARKERS)
 
 
+def _fallback_blocks() -> list:
+    """The enabled fallback providers, in the order they should be tried.
+
+    ``llm.fallbacks`` is a list so the chain can be as long as the operator
+    wants; a single ``llm.fallback`` mapping is still accepted so an existing
+    instance's config keeps working.
+
+    Order is the operator's cost preference, not ours: free providers first,
+    metered ones last, so a metered account is only ever reached when every
+    free one has failed.
+    """
+    return [cfg for cfg in _configured_fallbacks() if bool(cfg.get("enabled", False))]
+
+
+def _configured_fallbacks() -> list:
+    """Every fallback block in config, enabled or not."""
+    raw = settings.llm.get("fallbacks")
+    if raw is None:
+        single = settings.llm.get("fallback")
+        raw = [single] if single else []
+    return [Section(entry) if isinstance(entry, dict) else entry for entry in raw]
+
+
+def all_providers() -> list[tuple[str, object, bool]]:
+    """``[(provider_name, config, enabled)]`` for every configured provider.
+
+    Includes disabled entries, which ``provider_chain`` deliberately omits —
+    tooling needs to inspect a candidate provider before it is switched on.
+    Keyed by provider name rather than chain position, because a disabled
+    entry has no position.
+    """
+    providers = [(str(settings.llm.provider), settings.llm, True)]
+    providers += [
+        (str(cfg.provider), cfg, bool(cfg.get("enabled", False)))
+        for cfg in _configured_fallbacks()
+    ]
+    return providers
+
+
+def provider_chain() -> list[tuple[str, object]]:
+    """``[(name, config)]`` for every provider, primary first."""
+    chain: list[tuple[str, object]] = [("primary", settings.llm)]
+    chain += [(f"fallback:{i}", cfg) for i, cfg in enumerate(_fallback_blocks())]
+    return chain
+
+
 def provider_config(which: str = "primary"):
-    """The config block for ``primary`` or ``fallback``."""
+    """The config block for ``primary``, ``fallback:N``, or ``fallback``.
+
+    Bare ``fallback`` means the first enabled one — the next provider that
+    would actually be tried. A provider NAME also resolves, including a
+    disabled one, so tooling can address a candidate before switching it on.
+    """
     if which == "primary":
         return settings.llm
-    return settings.llm.fallback
+
+    blocks = _fallback_blocks()
+    index = 0
+    if which.startswith("fallback:"):
+        index = int(which.split(":", 1)[1])
+    elif which != "fallback":
+        for name, cfg, _enabled in all_providers():
+            if name == which:
+                return cfg
+        raise ValueError(f"Unknown provider selector: {which!r}")
+
+    try:
+        return blocks[index]
+    except IndexError as exc:
+        raise LLMError(
+            f"No fallback provider at position {index}; "
+            f"{len(blocks)} are enabled in config.yaml under llm.fallbacks."
+        ) from exc
 
 
 def fallback_enabled() -> bool:
-    """True when a secondary provider is configured and switched on."""
-    fb = settings.llm.get("fallback")
-    return bool(fb) and bool(fb.get("enabled", False))
+    """True when at least one secondary provider is configured and on."""
+    return bool(_fallback_blocks())
 
 
 def _api_key(cfg, which: str) -> str:
@@ -270,49 +337,70 @@ def _complete_with(
 def complete(response_model: type[T], prompt: str, *, system: str | None = None) -> T:
     """Run one completion and return ``response_model``.
 
-    Tries the primary provider with exponential backoff. If it gives up, and a
-    fallback is configured, tries that once with its own attempt budget.
+    Walks the configured provider chain in order, each with its own backoff
+    budget, and returns the first success.
 
-    The fallback exists because both of the day's failures were provider-wide,
+    The chain exists because both of the day's failures were provider-wide,
     not per-job: a retired model 404'd every request, and a spend cap 429'd
-    every request. Either would have taken the whole run down; a second
-    provider turns them into a slower run instead. Ordinary rate limiting is
-    NOT a fallback trigger — the primary's own backoff handles that, and
-    switching on it would send steady traffic to the secondary for no reason.
+    every request. Either would have taken the whole run down; another
+    provider turns that into a slower run instead. Ordinary rate limiting is
+    NOT a trigger to move on — the current provider's own backoff handles
+    that, and switching on it would send steady traffic down the chain for no
+    reason.
 
-    :class:`LLMBudgetError` still propagates when BOTH providers are out of
-    budget, so the orchestrator abandons the run rather than looping.
+    Budget exhaustion moves to the next provider rather than aborting: a spend
+    cap is one account's problem, and the whole point of a chain is that
+    another account can still serve. :class:`LLMBudgetError` is raised only
+    when EVERY provider failed and at least one was out of budget, since the
+    next job would hit the same wall — src/main.py abandons the run on it.
     """
     messages: list[dict[str, str]] = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    try:
+    chain = provider_chain() if fallback_enabled() else [("primary", settings.llm)]
+
+    # Nothing to fall back to: let the provider's own error through untouched,
+    # rather than wrapping a single failure in chain language.
+    if len(chain) == 1:
         return _complete_with("primary", response_model, messages)
-    except LLMError as primary_error:
-        if not fallback_enabled():
-            raise
 
-        fb = provider_config("fallback")
-        log.warning(
-            "llm_fallback_engaged",
-            from_provider=str(settings.llm.provider),
-            to_provider=str(fb.provider),
-            to_model=str(fb.model),
-            reason=str(primary_error)[:200],
-        )
+    failures: list[tuple[object, Exception]] = []
+    out_of_budget = False
+
+    for position, (which, cfg) in enumerate(chain):
+        if position:
+            previous_cfg, previous_error = failures[-1]
+            log.warning(
+                "llm_fallback_engaged",
+                from_provider=str(previous_cfg.provider),
+                to_provider=str(cfg.provider),
+                to_model=str(cfg.model),
+                reason=str(previous_error)[:200],
+            )
         try:
-            result = _complete_with("fallback", response_model, messages)
-        except LLMBudgetError:
-            # Both exhausted: the run cannot continue.
-            raise
-        except LLMError as fallback_error:
-            raise LLMError(
-                f"Both providers failed. "
-                f"primary({settings.llm.provider}): {primary_error} | "
-                f"fallback({fb.provider}): {fallback_error}"
-            ) from fallback_error
+            result = _complete_with(which, response_model, messages)
+        except LLMBudgetError as exc:
+            out_of_budget = True
+            failures.append((cfg, exc))
+        except LLMError as exc:
+            failures.append((cfg, exc))
+        else:
+            if position:
+                log.info(
+                    "llm_fallback_succeeded",
+                    provider=str(cfg.provider),
+                    position=position,
+                )
+            return result
 
-        log.info("llm_fallback_succeeded", provider=str(fb.provider))
-        return result
+    detail = " | ".join(
+        f"{cfg.provider}: {error}" for cfg, error in failures
+    )
+    summary = f"All {len(chain)} providers failed. {detail}"
+    last_error = failures[-1][1]
+
+    if out_of_budget:
+        raise LLMBudgetError(summary) from last_error
+    raise LLMError(summary) from last_error

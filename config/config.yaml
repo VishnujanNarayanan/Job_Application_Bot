@@ -460,26 +460,47 @@ llm:
   request_timeout_seconds: 60
   max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
 
-  # Second provider, tried once when the primary gives up. Both of the
+  # Providers tried, in order, when the one before gives up. Both of the
   # 2026-08-08 failures were provider-wide rather than per-job — a retired
   # model 404'd every request, and a spend cap 429'd every request — so either
-  # would have taken a whole run down. A fallback turns that into a slower run.
+  # would have taken a whole run down. A chain turns that into a slower run.
   #
-  # Ordinary rate limiting does NOT trigger it: the primary's own backoff
-  # handles that, and switching on it would send steady traffic here for
-  # nothing. Only permanent errors and budget exhaustion do.
+  # Ordinary rate limiting does NOT advance the chain: each provider's own
+  # backoff handles that, and switching on it would send steady traffic
+  # downstream for nothing. Only permanent errors and budget exhaustion do.
   #
-  # gemini-2.5-flash-lite is deliberate: cheap, and NON-thinking. The pricier
-  # gemini-3.6-flash emits reasoning tokens that bill as output — 60 job-ad
-  # parses cost roughly 20x what the token count implied.
-  fallback:
-    enabled: true
-    provider: "gemini"
-    base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
-    api_key_env: "GEMINI_API_KEY"
-    model: "gemini-2.5-flash-lite"
-    instructor_mode: "JSON"
-    request_timeout_seconds: 60
+  # ORDER IS COST, cheapest first: free providers must be exhausted before a
+  # metered one is touched. Groq (free) leads; Gemini is metered and sits last.
+  # Disabled entries are skipped entirely, so a provider can sit here ready to
+  # switch on without affecting a single run.
+  fallbacks:
+    # Cerebras — OFF, and it must stay off: verified 2026-08-08 that the API
+    # requires payment despite issuing a working key. Listing models succeeds,
+    # so only a real call reveals it:
+    #     402 payment_required — "Payment required to access this resource"
+    # That fails the free-tier rule (#12). Kept here, disabled, so the next
+    # person does not spend the same hour rediscovering it; if Cerebras ever
+    # opens a free tier, this belongs BEFORE Gemini, since a free provider
+    # absorbing an outage costs nothing where reaching Gemini costs money.
+    # Re-check with: python -m src.cli.llm_check cerebras
+    - enabled: false
+      provider: "cerebras"
+      base_url: "https://api.cerebras.ai/v1"
+      api_key_env: "CEREBRAS_API_KEY"
+      model: "gpt-oss-120b"
+      instructor_mode: "TOOLS"
+      request_timeout_seconds: 60
+
+    # gemini-2.5-flash-lite is deliberate: cheap, and NON-thinking. The pricier
+    # gemini-3.6-flash emits reasoning tokens that bill as output — 60 job-ad
+    # parses cost roughly 20x what the token count implied.
+    - enabled: true
+      provider: "gemini"
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+      api_key_env: "GEMINI_API_KEY"
+      model: "gemini-2.5-flash-lite"
+      instructor_mode: "JSON"
+      request_timeout_seconds: 60
 
   backoff:
     # Sized for paid Tier 1 (hundreds of requests/minute), not the free tier's

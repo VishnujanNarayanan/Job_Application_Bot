@@ -64,38 +64,90 @@ def test_fallback_is_enabled_and_points_elsewhere():
     assert str(fallback.api_key_env) != str(primary.api_key_env)
 
 
-def test_fallback_model_is_not_a_thinking_model():
-    """Reasoning tokens bill as output; the fallback exists to be cheap.
+def test_chain_is_ordered_cheapest_first():
+    """Free providers must be exhausted before a metered one is touched.
+
+    Groq is free; Gemini is metered and already hit a spend cap once.
+    Reordering these would mean paying for an outage the free account could
+    have absorbed.
+    """
+    providers = [str(cfg.provider) for _, cfg in llm_client.provider_chain()]
+
+    assert providers[0] == "groq", "the free provider must lead"
+    assert providers[-1] == "gemini", "the metered provider must be last resort"
+
+
+def test_cerebras_stays_disabled():
+    """Verified 2026-08-08: the key authenticates and models list, but a real
+    call returns 402 payment_required. Enabling it would put a paid provider
+    in a free-tier-only pipeline (hard rule #12) — and listing models is not
+    enough to notice, which is exactly why this is pinned.
+    """
+    entries = {name: enabled for name, _cfg, enabled in llm_client.all_providers()}
+
+    assert entries.get("cerebras") is False
+    assert "cerebras" not in [
+        str(cfg.provider) for _, cfg in llm_client.provider_chain()
+    ]
+
+
+def test_no_provider_in_the_chain_is_a_thinking_model():
+    """Reasoning tokens bill as output, on every link of the chain.
 
     gemini-3.6-flash cost roughly 20x its apparent token count parsing 60 job
     ads, which is what triggered the spend cap in the first place.
     """
-    model = str(llm_client.provider_config("fallback").model)
+    for _, cfg in llm_client.provider_chain():
+        model = str(cfg.model)
+        assert not model.startswith("gemini-3."), (
+            f"{model} may emit reasoning tokens billed as output"
+        )
 
-    assert "lite" in model, f"{model} should be a lite/non-thinking model"
-    assert not model.startswith("gemini-3."), (
-        f"{model} may emit reasoning tokens billed as output"
+    metered = [
+        cfg for _, cfg in llm_client.provider_chain()
+        if str(cfg.provider) == "gemini"
+    ]
+    assert metered, "the chain should still end at the metered provider"
+    assert "lite" in str(metered[0].model), (
+        "the one provider that costs money must be the cheapest model"
     )
 
 
+def test_every_provider_has_its_own_key_and_endpoint():
+    """A chain that shares a key or a host is not a chain — one outage or one
+    exhausted account would take every link down together."""
+    chain = llm_client.provider_chain()
+
+    assert len({str(cfg.base_url) for _, cfg in chain}) == len(chain)
+    assert len({str(cfg.api_key_env) for _, cfg in chain}) == len(chain)
+
+
 def test_clients_are_cached_per_provider():
-    """Primary and fallback must be able to coexist within one run."""
+    """Every provider must be able to coexist within one run."""
     built: list[str] = []
 
     class FakeOpenAI:
         def __init__(self, **kwargs):
             built.append(kwargs["base_url"])
 
+    keys = {
+        str(cfg.api_key_env): f"k{i}"
+        for i, (_, cfg) in enumerate(llm_client.provider_chain())
+    }
+
     with patch("openai.OpenAI", FakeOpenAI), \
          patch("instructor.from_openai", side_effect=lambda c, mode: c), \
-         patch.dict("os.environ", {"GROQ_API_KEY": "k1", "GEMINI_API_KEY": "k2"}):
-        first = llm_client.get_client("primary")
-        again = llm_client.get_client("primary")
-        other = llm_client.get_client("fallback")
+         patch.dict("os.environ", keys):
+        clients = [llm_client.get_client("primary"), llm_client.get_client("primary")]
+        clients += [
+            llm_client.get_client(which)
+            for which, _ in llm_client.provider_chain()[1:]
+        ]
 
-    assert first is again, "primary should be cached, not rebuilt"
-    assert first is not other, "fallback must be a distinct client"
-    assert len(set(built)) == 2, "each provider needs its own base_url"
+    expected = len(llm_client.provider_chain())
+    assert clients[0] is clients[1], "primary should be cached, not rebuilt"
+    assert len({id(c) for c in clients}) == expected, "one client per provider"
+    assert len(set(built)) == expected, "each provider needs its own base_url"
 
 
 def test_missing_key_names_the_variable_and_the_provider():
@@ -206,8 +258,9 @@ def test_fallback_budget_exhaustion_surfaces_as_budget_error():
             llm_client.complete(Dummy, "p")
 
 
-def test_both_failing_reports_both_providers():
-    """Without both names in the message, debugging is guesswork."""
+def test_every_failure_is_named_when_the_whole_chain_is_down():
+    """Without every provider's own error, debugging is guesswork — the links
+    fail for different reasons."""
     primary = _client(raises=RuntimeError("404 not found"))
     fallback = _client(raises=RuntimeError("503 unavailable"))
 
@@ -216,9 +269,28 @@ def test_both_failing_reports_both_providers():
             llm_client.complete(Dummy, "p")
 
     message = str(excinfo.value)
-    assert "Both providers failed" in message
-    assert str(llm_client.provider_config("primary").provider) in message
-    assert str(llm_client.provider_config("fallback").provider) in message
+    chain = llm_client.provider_chain()
+    assert f"All {len(chain)} providers failed" in message
+    for _, cfg in chain:
+        assert str(cfg.provider) in message
+
+
+def test_a_capped_provider_does_not_stop_a_later_one_serving():
+    """A spend cap is one account's problem. Gemini being capped is exactly
+    why the chain exists, so it must not abort while a link remains."""
+    capped = _client(raises=RuntimeError(
+        "429 Your project has exceeded its monthly spending cap."
+    ))
+    working = _client(returns=Dummy(value="served"))
+
+    last = llm_client.provider_chain()[-1][0]
+
+    def pick(which="primary"):
+        return working if which == last else capped
+
+    with patch.object(llm_client, "get_client", side_effect=pick), \
+         patch("time.sleep"):
+        assert llm_client.complete(Dummy, "p").value == "served"
 
 
 def test_disabled_fallback_propagates_the_primary_error():

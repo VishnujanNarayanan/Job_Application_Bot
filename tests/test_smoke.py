@@ -89,11 +89,14 @@ def test_operator_docs_are_not_tracked_by_git() -> None:
     (which broke CI), assert they are not tracked — that is the property that
     was actually intended, and it holds in a clone as well as on the
     operator's machine.
+
+    CHANGELOG.md was on this list until 2026-08-08 and is now deliberately
+    tracked: it records what changed in the CODE, so it belongs to the repo.
+    The rest describe this instance, not the software.
     """
     import subprocess
 
     operator_docs = [
-        "CHANGELOG.md",
         "PRD.md",
         "CLAUDE.md",
         "job_automation_architecture.md",

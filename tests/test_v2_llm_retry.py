@@ -234,16 +234,17 @@ def test_fallback_is_configured_and_enabled():
     assert str(fallback.api_key_env) != str(primary.api_key_env)
 
 
-def test_fallback_model_is_not_a_thinking_model():
-    """Reasoning tokens bill as output; the fallback exists to be cheap.
+def test_no_fallback_model_is_a_thinking_model():
+    """Reasoning tokens bill as output, on every link of the chain.
 
     gemini-3.6-flash cost ~20x its apparent token count on 2026-08-08.
     """
-    model = str(llm_client.provider_config("fallback").model)
-    assert "3.6" not in model and "3.5" not in model, (
-        f"{model} may emit reasoning tokens; prefer a lite/non-thinking model"
-    )
-    assert "lite" in model
+    for which, cfg in llm_client.provider_chain()[1:]:
+        model = str(cfg.model)
+        assert "3.6" not in model and "3.5" not in model, (
+            f"{which} ({model}) may emit reasoning tokens; prefer a "
+            f"lite/non-thinking model"
+        )
 
 
 def test_permanent_primary_failure_falls_back():
@@ -299,8 +300,8 @@ def test_both_providers_out_of_budget_raises_budget_error():
             llm_client.complete(Dummy, "prompt")
 
 
-def test_both_providers_failing_reports_both():
-    """The error must name both providers, or debugging is guesswork."""
+def test_whole_chain_failing_reports_every_provider():
+    """The error must name each provider, or debugging is guesswork."""
     from src.llm.client import LLMError
 
     dead = MagicMock()
@@ -308,7 +309,7 @@ def test_both_providers_failing_reports_both():
 
     with patch.object(llm_client, "get_client", return_value=dead), \
          patch("time.sleep"):
-        with pytest.raises(LLMError, match="Both providers failed"):
+        with pytest.raises(LLMError, match="providers failed"):
             llm_client.complete(Dummy, "prompt")
 
 
@@ -361,9 +362,14 @@ def test_clients_are_cached_per_provider():
         def __init__(self, **kwargs):
             built.append(kwargs["base_url"])
 
+    keys = {
+        str(cfg.api_key_env): f"k{i}"
+        for i, (_, cfg) in enumerate(llm_client.provider_chain())
+    }
+
     with patch("openai.OpenAI", FakeOpenAI), \
          patch("instructor.from_openai", side_effect=lambda c, mode: c), \
-         patch.dict("os.environ", {"GROQ_API_KEY": "k1", "GEMINI_API_KEY": "k2"}):
+         patch.dict("os.environ", keys):
         a = llm_client.get_client("primary")
         b = llm_client.get_client("primary")
         c = llm_client.get_client("fallback")
