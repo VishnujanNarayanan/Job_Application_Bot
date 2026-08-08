@@ -14,8 +14,9 @@
   <img alt="Telegram" src="https://img.shields.io/badge/Telegram-Bot_API-26A5E4?logo=telegram&logoColor=white"/>
   <img alt="AWS" src="https://img.shields.io/badge/AWS-S3_·_CloudWatch-232F3E?logo=amazonwebservices&logoColor=white"/>
   <img alt="CI" src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions&logoColor=white"/>
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-92_passing-3FB950?logo=pytest&logoColor=white"/>
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-101_passing-3FB950?logo=pytest&logoColor=white"/>
   <br>
+  <a href="https://vishnujan-narayanan.vercel.app/"><img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-vishnujan--narayanan.vercel.app-3b5998?logo=googlechrome&logoColor=white&style=for-the-badge"/></a>
   <a href="https://github.com/VishnujanNarayanan"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-VishnujanNarayanan-181717?logo=github&logoColor=white&style=for-the-badge"/></a>
   <a href="https://www.linkedin.com/in/vishnujan-narayanan"><img alt="LinkedIn" src="https://img.shields.io/badge/LinkedIn-Vishnujan_Narayanan-0A66C2?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0yMC40NDcgMjAuNDUyaC0zLjU1NHYtNS41NjljMC0xLjMyOC0uMDI3LTMuMDM3LTEuODUyLTMuMDM3LTEuODUzIDAtMi4xMzYgMS40NDUtMi4xMzYgMi45Mzl2NS42NjdIOS4zNTFWOWgzLjQxNHYxLjU2MWguMDQ2Yy40NzctLjkgMS42MzctMS44NSAzLjM3LTEuODUgMy42MDEgMCA0LjI2NyAyLjM3IDQuMjY3IDUuNDU1djYuMjg2ek01LjMzNyA3LjQzM2MtMS4xNDQgMC0yLjA2My0uOTI2LTIuMDYzLTIuMDY1IDAtMS4xMzguOTItMi4wNjMgMi4wNjMtMi4wNjMgMS4xNCAwIDIuMDY0LjkyNSAyLjA2NCAyLjA2MyAwIDEuMTM5LS45MjUgMi4wNjUtMi4wNjQgMi4wNjV6bTEuNzgyIDEzLjAxOUgzLjU1NVY5aDMuNTY0djExLjQ1MnpNMjIuMjI1IDBIMS43NzFDLjc5MiAwIDAgLjc3NCAwIDEuNzI5djIwLjU0MkMwIDIzLjIyNy43OTIgMjQgMS43NzEgMjRoMjAuNDUxQzIzLjIgMjQgMjQgMjMuMjI3IDI0IDIyLjI3MVYxLjcyOUMyNCAuNzc0IDIzLjIgMCAyMi4yMjIgMGguMDAzeiIvPjwvc3ZnPg%3D%3D&logoColor=white&style=for-the-badge"/></a>
   <a href="https://substack.com/@vishnujannarayanan"><img alt="Substack" src="https://img.shields.io/badge/Substack-@vishnujannarayanan-FF6719?logo=substack&logoColor=white&style=for-the-badge"/></a>
@@ -23,6 +24,7 @@
 
 <p align="center">
   🎯 <a href="#why-this-project-exists">Why</a> ·
+  🏷️ <a href="#version-history">Versions</a> ·
   🧩 <a href="#architecture">Architecture</a> ·
   🧠 <a href="#design-decisions">Design Decisions</a> ·
   ⚡ <a href="#installation">Installation</a> ·
@@ -31,6 +33,42 @@
   🧪 <a href="#testing">Testing</a> ·
   ⚠️ <a href="#limitations">Limitations</a>
 </p>
+
+---
+
+## Version history
+
+### v1.0.0 — current release
+
+The nine-layer pipeline described in this README, running end to end:
+
+- **Scraping** via JobSpy, currently LinkedIn-only (Indeed and Glassdoor are disabled while
+  `apis.indeed.com` is unreachable from the operator's network).
+- **Parsing** through Gemini 2.5 Flash with Instructor + Pydantic validation, two calls per job max.
+- **Deterministic scoring and selection** — bullets chosen by sentence-transformer similarity,
+  never written by the LLM.
+- **On-demand resume rendering** — `selection_json` in Postgres, PDF/DOCX assembled when a link is
+  clicked, diff-validated against the operator's template.
+- **Telegram delivery** — per-match messages bundling apply and resume links.
+- **Google Sheets index + monthly Gemini Docs report** for analytics.
+- **ngrok-published endpoint** so resume links resolve from a phone while the laptop is awake.
+- 101 unit tests, all external services mocked; CI on every push and pull request.
+
+Fixed for this release: `send_match_notification` read the apply threshold from a config section
+that does not exist, raising `AttributeError` before the send. The orchestrator caught it and
+logged `notification_error`, so live match notifications had been failing silently.
+
+Triggered by host cron or `scripts/start_bot.sh`; runs only while the operator's laptop is on.
+
+### v2.0.0 — in development
+
+- Google Sheets and Docs removed; the analytics index becomes local CSV files derived from
+  Postgres, plus a plain-text monthly report.
+- A browser dashboard served by the existing FastAPI app — match and skipped views, job and resume
+  links, and a Run button.
+- The pipeline moves to a manually-triggered GitHub Actions workflow, so runs no longer require the
+  laptop to be awake.
+- ngrok replaced by a private Tailscale mesh; the endpoint is no longer exposed to the internet.
 
 ---
 
@@ -410,7 +448,7 @@ pytest          # full suite
 pytest -v       # as CI runs it
 ```
 
-Around 92 unit tests across 13 modules. Nothing external is contacted: Gemini is mocked, the DB
+Around 101 unit tests across 13 modules. Nothing external is contacted: Gemini is mocked, the DB
 session is mocked, boto3 runs under `moto`, and FastAPI is exercised through `TestClient`. Layer 4
 selection is pure functions and is tested against synthetic profiles and JDs.
 
@@ -489,6 +527,7 @@ No licence file is present; all rights reserved by the author.
 </p>
 
 <p align="center">
+  <a href="https://vishnujan-narayanan.vercel.app/"><img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-vishnujan--narayanan.vercel.app-3b5998?logo=googlechrome&logoColor=white&style=for-the-badge"/></a>
   <a href="https://github.com/VishnujanNarayanan"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-VishnujanNarayanan-181717?logo=github&logoColor=white&style=for-the-badge"/></a>
   <a href="https://www.linkedin.com/in/vishnujan-narayanan"><img alt="LinkedIn" src="https://img.shields.io/badge/LinkedIn-Vishnujan_Narayanan-0A66C2?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0yMC40NDcgMjAuNDUyaC0zLjU1NHYtNS41NjljMC0xLjMyOC0uMDI3LTMuMDM3LTEuODUyLTMuMDM3LTEuODUzIDAtMi4xMzYgMS40NDUtMi4xMzYgMi45Mzl2NS42NjdIOS4zNTFWOWgzLjQxNHYxLjU2MWguMDQ2Yy40NzctLjkgMS42MzctMS44NSAzLjM3LTEuODUgMy42MDEgMCA0LjI2NyAyLjM3IDQuMjY3IDUuNDU1djYuMjg2ek01LjMzNyA3LjQzM2MtMS4xNDQgMC0yLjA2My0uOTI2LTIuMDYzLTIuMDY1IDAtMS4xMzguOTItMi4wNjMgMi4wNjMtMi4wNjMgMS4xNCAwIDIuMDY0LjkyNSAyLjA2NCAyLjA2MyAwIDEuMTM5LS45MjUgMi4wNjUtMi4wNjQgMi4wNjV6bTEuNzgyIDEzLjAxOUgzLjU1NVY5aDMuNTY0djExLjQ1MnpNMjIuMjI1IDBIMS43NzFDLjc5MiAwIDAgLjc3NCAwIDEuNzI5djIwLjU0MkMwIDIzLjIyNy43OTIgMjQgMS43NzEgMjRoMjAuNDUxQzIzLjIgMjQgMjQgMjMuMjI3IDI0IDIyLjI3MVYxLjcyOUMyNCAuNzc0IDIzLjIgMCAyMi4yMjIgMGguMDAzeiIvPjwvc3ZnPg%3D%3D&logoColor=white&style=for-the-badge"/></a>
   <a href="https://substack.com/@vishnujannarayanan"><img alt="Substack" src="https://img.shields.io/badge/Substack-@vishnujannarayanan-FF6719?logo=substack&logoColor=white&style=for-the-badge"/></a>

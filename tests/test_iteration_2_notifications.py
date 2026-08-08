@@ -154,3 +154,56 @@ def test_send_match_notification_contains_key_fragments():
     assert "Fintech Inc" in text
     assert "Backend Engineer" in text
     assert "Kafka" in text
+
+
+def test_apply_threshold_reads_from_scoring_section():
+    """Regression: the threshold must come from `scoring`, not `selection`.
+
+    `settings.selection.apply_threshold` does not exist — config.yaml defines
+    `apply_threshold` only under `scoring:`. Reading the wrong section raised
+    AttributeError inside send_match_notification, which src/main.py swallowed
+    as `notification_error`, so every live match notification silently failed
+    to send. Assert against the real settings object (not a mock) so a config
+    rename can't reintroduce it.
+    """
+    from src.config import settings
+
+    threshold = settings.scoring.apply_threshold
+    assert isinstance(threshold, (int, float))
+
+    with pytest.raises(AttributeError):
+        settings.selection.apply_threshold
+
+
+def test_send_match_notification_renders_threshold():
+    """The rendered message includes the apply threshold from config."""
+    from src.config import settings
+
+    captured: list[str] = []
+
+    async def fake_send(text, keyboard=None):
+        captured.append(text)
+
+    with patch("src.notifications._send_match", new=fake_send), \
+         patch("src.notifications.asyncio") as mock_asyncio:
+        import asyncio
+
+        def run_coro(coro):
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(coro)
+            loop.close()
+
+        mock_asyncio.run.side_effect = run_coro
+
+        from src.notifications import send_match_notification
+        send_match_notification(
+            job=_make_job(),
+            parsed=_make_parsed(),
+            result=_make_result(),
+            gap_skills=["Kafka"],
+            endpoint_base_url="http://localhost:8000",
+            title_alias="Backend Engineer",
+        )
+
+    assert captured, "no message was sent"
+    assert str(settings.scoring.apply_threshold) in captured[0]

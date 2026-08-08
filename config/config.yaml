@@ -105,8 +105,8 @@ scraper:
     # own if scraper-IP throttling becomes a problem.
     proxies: []
   sites:
-    - "indeed"
-    - "glassdoor"
+    # Temporarily LinkedIn-only: apis.indeed.com is timing out from this
+    # network. Re-add "indeed" and "glassdoor" once connectivity is restored.
     - "linkedin"
   # Serial search rotation — one term per run, advances on short-circuit.
   # Rotation state persisted in search_rotation_state DB table.
@@ -288,19 +288,21 @@ spacy:
   model: "en_core_web_sm"
 
 # ---------------------------------------------------------------------------
-# LLM — Gemini 2.5 Flash Lite (2-call budget max per job, higher free-tier RPD)
+# LLM — Gemini 2.5 Flash (2-call budget max per job)
 # Call 1a: JD parse (always). Call 1b: title+skills+cover (if score >= 0.50).
 # Old Call 2 (batched form questions) removed with auto-apply.
+# Note: free-tier RPD is PER-MODEL. flash = 250/day free, flash-lite = 20/day.
+# (flash-lite was chosen believing it had higher RPD — it does not.)
 # ---------------------------------------------------------------------------
 llm:
   provider: "gemini"
-  model: "gemini-2.5-flash-lite"
+  model: "gemini-2.5-flash"
   daily_call_budget: 1500   # free tier ceiling; expected ~600/day
   max_calls_per_job: 2
   backoff:
-    initial_seconds: 2
-    max_seconds: 60
-    max_attempts: 3
+    initial_seconds: 20   # free-tier RPM is 5/min; server asks for ~19-55s waits
+    max_seconds: 90
+    max_attempts: 5
 
 # ---------------------------------------------------------------------------
 # State / database — Layer 7 (Neon PostgreSQL, free tier)

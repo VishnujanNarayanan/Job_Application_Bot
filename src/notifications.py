@@ -102,7 +102,7 @@ def send_match_notification(
     loc_str = fields["loc_str"]
 
     salary_display = salary_str if salary_str else "CTC not listed"
-    threshold = settings.selection.apply_threshold
+    threshold = settings.scoring.apply_threshold
 
     text_lines = [
         f"*Match Score: {score}* (threshold: {threshold})",
