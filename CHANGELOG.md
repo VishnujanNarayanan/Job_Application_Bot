@@ -8,6 +8,8 @@ and this project loosely tracks iterations rather than semver.
 ## [Unreleased]
 
 ### Added
+- Layer 3: `llm.fallbacks` — an ordered provider chain replacing the single `llm.fallback` block. Each link gets its own backoff budget; a single `fallback:` mapping is still accepted. Ordered cheapest-first so free providers are exhausted before a metered one is reached. Adding a provider is a config edit, not a code change.
+- Layer 3: `src/cli/llm_check.py` takes a provider argument — `--list cerebras` lists one provider's models, `llm_check cerebras` calls it directly. Both reach disabled entries, since a candidate the chain never reaches is never tested.
 - Layer 1: `.github/workflows/pipeline.yml` — the pipeline as a manually-dispatched GitHub Actions job, so runs no longer require the operator's laptop to be awake. Triggerable from the GitHub mobile app. `schedule:` is present but commented, with the free-tier minutes arithmetic that explains why it is off. `concurrency` prevents overlapping runs, which the `data/run.lock` flock cannot do across runners.
 - Layer 6: build-time pre-render (`endpoint/cache.py::prerender`) — matched jobs are rendered to S3 during the run and the Telegram buttons carry presigned URLs, so resume links work while the laptop is off. Amends hard rule #8 by explicit operator decision; stays an expiring cache (existing `{ext}_cache/` 1-month lifecycle + `render_cache` TTL), not a permanent pile. Config: `prerender.enabled`, `prerender.link_expiry_days`.
 - Layer 6: operator dashboard — `/dashboard`, `/dashboard/skipped`, `/api/jobs`, `POST /api/run`, `GET /api/run/status`. Server-rendered Jinja + vanilla JS in the existing FastAPI process, no build step. Each row draws its score against the 0.50 threshold to scale rather than printing it; the skipped table flags anything within 0.05 of the line. Phone-first, dark-mode aware, reduced-motion respected.
@@ -18,6 +20,9 @@ and this project loosely tracks iterations rather than semver.
 - AWS: `s3.cache_presigned_url()` — time-limited public URLs for cached renders, clamped to the SigV4 7-day maximum. Needs only `s3:GetObject`, already granted.
 
 ### Changed
+- Layer 3: budget exhaustion advances the provider chain instead of aborting the run. A spend cap is one account's problem; `LLMBudgetError` is now raised only when every provider failed and at least one was out of budget.
+- Config: `endpoint.render_cache_ttl_days` (90) replaces the hardcoded 30-day `_CACHE_TTL_DAYS`, read per call. Must match the S3 lifecycle rule on the `{ext}_cache/` prefixes.
+- `CHANGELOG.md` is now tracked by git — it records what changed in the code, so it belongs to the repo rather than to one instance.
 - Layer 9: the CSV index is DERIVED from Postgres by `analytics.export_index()` rather than appended per job. A phone-triggered run executes on an ephemeral runner whose filesystem is destroyed at job end, so inline appends would be lost — but every column is derivable from `all_jobs`/`applied`/`not_applied`, so regenerating on the laptop picks up remote runs automatically. Idempotent (exporting twice yields identical files) and written atomically via temp file + `os.replace`. Invoked at the end of a local run, from the new CLI, and on dashboard load; skipped when `GITHUB_ACTIONS` is set.
 - Layer 9: monthly report writes `data/reports/report-YYYY-MM.txt` instead of appending to a Google Doc.
 - Layer 6: `docker-compose.yml` publishes the endpoint on `127.0.0.1:8000` only. The endpoint and dashboard have no authentication, so the port must not be on the LAN; remote access is `tailscale serve --bg 8000`, making the private network the security boundary.
@@ -28,6 +33,8 @@ and this project loosely tracks iterations rather than semver.
 - Config: `analytics` block replaced (`sheets`/`docs` → `local`/`report`); added `scraper.terms_per_run` (1), `prerender`, and `endpoint.dashboard`.
 
 ### Fixed
+- Layer 3: `src/cli/llm_check.py` could not see `.env`. Only `db.py`, `notifications.py` and `aws_check.py` loaded it, so a CLI importing none of them saw no keys at all — the key-verification tool reported "NO KEY" for keys that were set. `load_dotenv()` now lives in `src/config.py`, which every entrypoint imports; it does not override a real environment, so Actions secrets still win.
+- Layer 6: dashboard CSS and JS rewritten against the current templates (they still targeted the pre-macro markup, and the run button was wired to a `#run-target` select that no longer exists). Adds the did-you-apply flow, `.js-status` handling, toasts, and an `--on-fill` token fixing ~2.6:1 contrast on filled buttons in dark mode.
 - Tests: `tests/test_v2_llm_retry.py` hung forever instead of finishing. Left unconfigured, structlog falls back to its development renderer, whose rich exception formatter pretty-prints every frame local — and the tests pass a `MagicMock` client into code that logs `exc_info`, so rich recursed through the mock's infinitely auto-generated attributes. `tests/conftest.py` now configures structlog session-wide to match `src/main.py` (JSON renderer, no rich). Production was never affected.
 - Layer 3: four retry tests asserted a single provider's attempt count but called `complete()`, which since the fallback landed runs the sequence twice and reports a combined error. They now drive `_complete_with("primary", …)`; fallback orchestration keeps its own tests.
 
