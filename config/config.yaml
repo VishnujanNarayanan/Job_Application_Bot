@@ -336,16 +336,27 @@ notifications:
   portal_zero_results_threshold: 3
 
 # ---------------------------------------------------------------------------
-# Analytics — Layer 9 (Google Sheets + Docs)
+# Analytics — Layer 9 (local files). Google Sheets/Docs were removed in v2:
+# they needed a GCP project, a service-account JSON, and a bind mount to
+# produce a table and a text report that local files do just as well.
+#
+# The CSVs are DERIVED from Postgres by `export_index`, never appended during
+# a run — a phone-triggered run executes on an ephemeral GitHub Actions runner
+# whose disk is destroyed at job end, so inline appends would be lost. Every
+# column is derivable from the DB, so regenerating on the laptop picks up
+# remote runs automatically. Paths are relative to the repo root.
 # ---------------------------------------------------------------------------
 analytics:
-  sheets:
-    applied_tab: "Applied"
-    skipped_tab: "Skipped"
-  docs:
-    monthly_report_enabled: true
-    # Skills appearing in >= this fraction of weekly JDs trigger a
-    # "consider learning" alert in the Sunday report.
+  local:
+    dir: "data/index"
+    matches_file: "matches.csv"
+    skipped_file: "skipped.csv"
+    near_duplicates_file: "near_duplicates.csv"
+  report:
+    monthly_enabled: true
+    dir: "data/reports"
+    # Skills appearing in >= this fraction of the month's JDs trigger a
+    # "consider learning" alert in the report.
     skill_demand_alert_threshold: 0.30
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -300,16 +301,6 @@ def _run(dry_run: bool, log) -> int:
                     )
                 except Exception as exc:
                     log.error("notification_error", job_id=job.job_id, error=str(exc))
-
-                # --- Layer 9: append to the Google Sheets index (best-effort) ---
-                analytics.append_match_row(
-                    job=job,
-                    parsed=parsed,
-                    result=result,
-                    gap_skills=gap_skills,
-                    endpoint_base_url=endpoint_url,
-                    title_alias=title_alias,
-                )
             else:
                 log.info(
                     "dry_run_match",
@@ -340,6 +331,17 @@ def _run(dry_run: bool, log) -> int:
         rotation.advance(session, terms)
 
         session.commit()
+
+        # --- Layer 9: regenerate the local CSV index (best-effort) ---
+        # Skipped on GitHub Actions: the runner's filesystem is destroyed when
+        # the job ends, so there is nowhere durable to write. Nothing is lost —
+        # the index is a projection of the rows just committed to Postgres, so
+        # the next local run (or opening the dashboard) regenerates it with
+        # this run's results included.
+        if os.environ.get("GITHUB_ACTIONS"):
+            log.info("index_export_skipped", reason="ephemeral_runner")
+        else:
+            analytics.export_index(session)
 
     # --- Layer 8: dry-run summary ---
     total = len(raw_jobs)
@@ -380,14 +382,11 @@ def _write_not_applied(session, queue: list, now: datetime, *, dry_run: bool = F
     rejections (DUPLICATE/LOCATION/COOLDOWN) may not — writing those would
     violate the FK and abort the whole commit, so we skip absent rows.
 
-    Also appends Layer 9 Sheets rows (best-effort): LOW_SCORE → Skipped tab
-    (the "relevant skipped" index), DUPLICATE → Near-duplicates tab. Skipped
-    on dry runs so the real index is not polluted.
+    The Layer 9 index is no longer appended here: the CSVs are derived from
+    these rows by `analytics.export_index` after the commit (see `_run`).
     """
     from sqlalchemy import select
 
-    from src import analytics
-    from src.reasons import DUPLICATE, LOW_SCORE
     from src.state.models import AllJobs, NotApplied
 
     job_ids = [job.job_id for job, _reason, _detail in queue]
@@ -407,17 +406,6 @@ def _write_not_applied(session, queue: list, now: datetime, *, dry_run: bool = F
             reason_detail=detail,
             not_applied_at=now,
         ))
-
-        if dry_run:
-            continue
-        if reason == LOW_SCORE:
-            try:
-                score = float(detail) if detail is not None else None
-            except (TypeError, ValueError):
-                score = None
-            analytics.append_skipped_row(job, reason, detail, score)
-        elif reason == DUPLICATE:
-            analytics.append_near_duplicate_row(job, None)
 
 
 if __name__ == "__main__":

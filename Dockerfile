@@ -51,7 +51,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Application code. Per-operator secrets and profile files (.env,
-# master_profile.*, google_service_account.json) are EXCLUDED via .dockerignore
+# master_profile.*) are EXCLUDED via .dockerignore
 # and bind-mounted at runtime by docker-compose — never baked into the image
 # (rule #18: no credentials in the image).
 COPY . .

@@ -24,7 +24,6 @@ __pycache__
 .env
 .env.*
 !.env.example
-config/google_service_account.json
 master_profile.yaml
 master_profile.json
 master_summaries.yaml

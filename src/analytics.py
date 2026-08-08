@@ -1,31 +1,42 @@
-"""Layer 9 — Google Sheets index + monthly Gemini Docs report.
+"""Layer 9 — local CSV index + monthly text report.
 
-Two outputs (architecture §9):
+Two outputs (architecture §9, local-file variant):
 
-  * **Sheets** — the live "which-resume-for-which-job" index. Three tabs:
-      - Matches   (every job >= 0.50: company, role, score, links, status)
-      - Skipped   (in-field LOW_SCORE jobs, with the rejection reason)
-      - Near-dupes (cross-portal reposts deduped against an original)
-  * **Docs** — a monthly Gemini-written report (skill demand, recurring
+  * **CSV index** — the live "which-resume-for-which-job" index, three files
+    under ``analytics.local.dir``:
+      - matches.csv          (every job >= threshold: company, role, score, links)
+      - skipped.csv          (in-field LOW_SCORE jobs, with the rejection reason)
+      - near_duplicates.csv  (cross-portal reposts deduped against an original)
+  * **Report** — a monthly Gemini-written text file (skill demand, recurring
     gaps, hiring companies, salary ranges).
 
 Design rules:
 
-  * **Never crash a pipeline run.** Every public function is best-effort:
-    if Google is unconfigured or the API errors, it logs and returns. A
-    failed Sheets write must not roll back the DB writes that already
-    happened (same contract as the Telegram send in ``src/main.py``).
-  * **Lazy + cached clients** so importing this module is cheap and the
-    pipeline runs fine with no Google credentials at all.
-  * Row fields reuse ``notifications.match_display_fields`` so the Sheet
-    and the Telegram message never disagree.
+  * **The CSVs are DERIVED from Postgres, never appended during a run.** A
+    pipeline run triggered from the phone executes on an ephemeral GitHub
+    Actions runner whose filesystem is destroyed when the job ends, so inline
+    appends would be lost. They don't need to survive: the run's real output
+    already landed in Neon, and every column here is derivable from
+    ``all_jobs`` / ``applied`` / ``not_applied`` — ``parser.apply_to_row``
+    copies the parsed fields (``location_type``, ``salary_*``, ...) onto the
+    ``AllJobs`` row, so nothing lives only on a transient ``JDParsed``.
+    Deriving instead of appending means no sync queue, no merge conflicts,
+    idempotent regeneration, and phone-triggered runs showing up the moment
+    the laptop next opens.
+  * **Never crash a pipeline run.** ``export_index`` is best-effort: on any
+    OS error it logs and returns. A failed export must not roll back the DB
+    writes that already happened (same contract as the Telegram send in
+    ``src/main.py``).
+  * Writes go to a temp file then ``os.replace``, so an interrupted export
+    cannot truncate a good file.
 """
 
 from __future__ import annotations
 
+import csv
 import os
+import tempfile
 from datetime import datetime, timedelta, timezone
-from functools import lru_cache
 from pathlib import Path
 
 import structlog
@@ -34,12 +45,10 @@ from src.config import settings
 
 log = structlog.get_logger(__name__)
 
-_SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/documents",
-]
+_ROOT = Path(__file__).resolve().parent.parent
 
-# Column headers per tab (written once when a tab is first created).
+# Column headers per file. Unchanged from the Google Sheets tabs they replace,
+# so an existing exported sheet and a new CSV line up column-for-column.
 _MATCH_HEADER = [
     "Date", "Company", "Role", "Match", "Salary", "Source",
     "Apply Link", "PDF Link", "DOCX Link", "Status", "Gap Skills",
@@ -50,148 +59,208 @@ _SKIPPED_HEADER = [
 _NEAR_DUP_HEADER = [
     "Date", "Company", "Role", "Source", "Original Job ID",
 ]
-_NEAR_DUP_TAB = "Near-duplicates"
+
+_TS_FMT = "%Y-%m-%d %H:%M"
 
 
-def _enabled() -> bool:
-    """True only when the Sheets ID + credentials file are both present."""
-    sheet_id = os.environ.get("GOOGLE_SHEETS_ID", "").strip()
-    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
-    if not sheet_id or not cred_path:
-        return False
-    return Path(cred_path).is_file()
+def _index_dir() -> Path:
+    """Absolute path to the configured index directory."""
+    return _ROOT / str(settings.analytics.local.dir)
 
 
-@lru_cache(maxsize=1)
-def _credentials():
-    from google.oauth2.service_account import Credentials
-
-    cred_path = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
-    return Credentials.from_service_account_file(cred_path, scopes=_SCOPES)
+def _report_dir() -> Path:
+    return _ROOT / str(settings.analytics.report.dir)
 
 
-@lru_cache(maxsize=1)
-def _spreadsheet():
-    """Open and cache the operator's index spreadsheet."""
-    import gspread
-
-    gc = gspread.authorize(_credentials())
-    return gc.open_by_key(os.environ["GOOGLE_SHEETS_ID"])
+def _fmt_ts(value: datetime | None) -> str:
+    return value.strftime(_TS_FMT) if value else ""
 
 
-def _worksheet(title: str, header: list[str]):
-    """Return the named worksheet, creating it (with header) if absent."""
-    import gspread
+def _fmt_score(value: float | None) -> str:
+    return f"{value:.2f}" if value is not None else ""
 
-    ss = _spreadsheet()
+
+def _write_csv(path: Path, header: list[str], rows: list[list[str]]) -> None:
+    """Atomically write ``header`` + ``rows`` to ``path``.
+
+    Writes to a temp file in the same directory then ``os.replace``s, so a
+    crash mid-write leaves the previous good file intact rather than a
+    truncated one.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
-        return ss.worksheet(title)
-    except gspread.WorksheetNotFound:
-        ws = ss.add_worksheet(title=title, rows=1000, cols=max(len(header), 12))
-        ws.append_row(header, value_input_option="USER_ENTERED")
-        return ws
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+            writer.writerows(rows)
+        os.replace(tmp_name, path)
+    except BaseException:
+        # Don't leave the temp file behind on any failure path.
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 # ---------------------------------------------------------------------------
-# Per-run row writers (called from the pipeline)
+# Row builders — one per file, each a pure function of DB rows
 # ---------------------------------------------------------------------------
 
-def append_match_row(
-    job,
-    parsed,
-    result,
-    gap_skills: list[str],
-    endpoint_base_url: str,
-    *,
-    title_alias: str | None = None,
-) -> None:
-    """Append one matched job to the Matches tab. Best-effort."""
-    if not _enabled():
-        return
-    from src.notifications import match_display_fields
+def _match_rows(session, endpoint_base_url: str) -> list[list[str]]:
+    """Every matched job, oldest first."""
+    from sqlalchemy import select
 
-    try:
-        fields = match_display_fields(job, parsed, title_alias=title_alias)
-        pdf_url = f"{endpoint_base_url}/resume/{job.job_id}.pdf"
-        docx_url = f"{endpoint_base_url}/resume/{job.job_id}.docx"
-        row = [
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+    from src.state.models import AllJobs, Applied
+
+    stmt = (
+        select(Applied, AllJobs)
+        .join(AllJobs, Applied.job_id == AllJobs.job_id)
+        .order_by(Applied.built_at)
+    )
+    rows: list[list[str]] = []
+    for applied, job in session.execute(stmt):
+        # Prefer the LLM-chosen title alias from the stored selection so the
+        # CSV shows the same role text the resume and Telegram message use.
+        rows.append([
+            _fmt_ts(applied.built_at),
             job.company or "",
-            fields["display_title"],
-            f"{result.final_score:.2f}",
-            fields["salary_str"],
+            _title_alias(applied.selection_json) or job.role or "",
+            _fmt_score(applied.final_score),
+            f"{job.salary_max_lpa:.0f} LPA" if job.salary_max_lpa else "",
             job.site or "",
-            fields["apply_url"],
-            pdf_url,
-            docx_url,
-            "pending",
-            ", ".join(gap_skills),
-        ]
-        ws = _worksheet(settings.analytics.sheets.applied_tab, _MATCH_HEADER)
-        ws.append_row(row, value_input_option="USER_ENTERED")
-        log.info("sheet_row_written", tab="matches", job_id=job.job_id)
-    except Exception as exc:
-        log.error("sheet_write_failed", tab="matches", job_id=job.job_id, error=str(exc))
+            job.job_url or "",
+            f"{endpoint_base_url}/resume/{job.job_id}.pdf",
+            f"{endpoint_base_url}/resume/{job.job_id}.docx",
+            applied.user_status or "pending",
+            ", ".join(str(s) for s in (applied.gap_skills or [])),
+        ])
+    return rows
 
 
-def append_skipped_row(
-    job,
-    reason_category: str,
-    reason_detail: str | None,
-    final_score: float | None,
-) -> None:
-    """Append one skipped (in-field) job to the Skipped tab. Best-effort."""
-    if not _enabled():
-        return
-    try:
-        jd_snippet = (job.jd_text or "")[:300]
-        row = [
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
-            job.company or "",
-            job.role or "",
-            reason_category,
-            reason_detail or "",
-            f"{final_score:.2f}" if final_score is not None else "",
-            job.site or "",
-            jd_snippet,
-        ]
-        ws = _worksheet(settings.analytics.sheets.skipped_tab, _SKIPPED_HEADER)
-        ws.append_row(row, value_input_option="USER_ENTERED")
-        log.info("sheet_row_written", tab="skipped", job_id=job.job_id)
-    except Exception as exc:
-        log.error("sheet_write_failed", tab="skipped", job_id=job.job_id, error=str(exc))
+def _title_alias(selection_json) -> str | None:
+    """First experience's title alias from a stored selection, if present."""
+    if not isinstance(selection_json, dict):
+        return None
+    experiences = selection_json.get("experiences") or []
+    if experiences and isinstance(experiences[0], dict):
+        return experiences[0].get("title_alias")
+    return None
 
 
-def append_near_duplicate_row(job, original_job_id: str | None) -> None:
-    """Append one deduped job to the Near-duplicates tab. Best-effort."""
-    if not _enabled():
-        return
-    try:
-        row = [
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"),
+def _skipped_rows(session) -> list[list[str]]:
+    """In-field jobs rejected on score — the "relevant skipped" index."""
+    from sqlalchemy import select
+
+    from src.reasons import LOW_SCORE
+    from src.state.models import AllJobs, NotApplied
+
+    stmt = (
+        select(NotApplied, AllJobs)
+        .join(AllJobs, NotApplied.job_id == AllJobs.job_id)
+        .where(NotApplied.reason_category == LOW_SCORE)
+        .order_by(NotApplied.not_applied_at)
+    )
+    rows: list[list[str]] = []
+    for na, job in session.execute(stmt):
+        # `final_score` is populated on the row when available; the orchestrator
+        # also stashes the score string in reason_detail, so fall back to that.
+        score = na.final_score
+        if score is None and na.reason_detail:
+            try:
+                score = float(na.reason_detail)
+            except ValueError:
+                score = None
+        rows.append([
+            _fmt_ts(na.not_applied_at),
             job.company or "",
             job.role or "",
+            na.reason_category or "",
+            na.reason_detail or "",
+            _fmt_score(score),
             job.site or "",
-            original_job_id or "",
-        ]
-        ws = _worksheet(_NEAR_DUP_TAB, _NEAR_DUP_HEADER)
-        ws.append_row(row, value_input_option="USER_ENTERED")
-        log.info("sheet_row_written", tab="near_duplicates", job_id=job.job_id)
-    except Exception as exc:
-        log.error(
-            "sheet_write_failed", tab="near_duplicates", job_id=job.job_id, error=str(exc)
-        )
+            (job.jd_text or "")[:300],
+        ])
+    return rows
+
+
+def _near_duplicate_rows(session) -> list[list[str]]:
+    """Cross-portal reposts deduped against an already-seen listing."""
+    from sqlalchemy import select
+
+    from src.reasons import DUPLICATE
+    from src.state.models import AllJobs, NotApplied
+
+    stmt = (
+        select(NotApplied, AllJobs)
+        .join(AllJobs, NotApplied.job_id == AllJobs.job_id)
+        .where(NotApplied.reason_category == DUPLICATE)
+        .order_by(NotApplied.not_applied_at)
+    )
+    rows: list[list[str]] = []
+    for na, job in session.execute(stmt):
+        rows.append([
+            _fmt_ts(na.not_applied_at),
+            job.company or "",
+            job.role or "",
+            job.site or "",
+            job.near_duplicate_of or "",
+        ])
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+def export_index(session, *, endpoint_base_url: str | None = None) -> dict[str, int]:
+    """Regenerate all three index CSVs from the database.
+
+    Full deterministic rewrite — safe to call any number of times; exporting
+    twice produces byte-identical files. Best-effort: on an OS error it logs
+    ``index_export_failed`` and returns the counts written so far rather than
+    raising, so a read-only disk can never fail a pipeline run.
+
+    Returns a ``{filename_stem: row_count}`` mapping.
+    """
+    if endpoint_base_url is None:
+        endpoint_base_url = str(settings.endpoint.base_url).rstrip("/")
+    else:
+        endpoint_base_url = endpoint_base_url.rstrip("/")
+
+    cfg = settings.analytics.local
+    directory = _index_dir()
+    counts: dict[str, int] = {}
+
+    targets = [
+        (str(cfg.matches_file), _MATCH_HEADER,
+         lambda: _match_rows(session, endpoint_base_url)),
+        (str(cfg.skipped_file), _SKIPPED_HEADER,
+         lambda: _skipped_rows(session)),
+        (str(cfg.near_duplicates_file), _NEAR_DUP_HEADER,
+         lambda: _near_duplicate_rows(session)),
+    ]
+
+    for filename, header, build_rows in targets:
+        try:
+            rows = build_rows()
+            _write_csv(directory / filename, header, rows)
+            counts[Path(filename).stem] = len(rows)
+        except OSError as exc:
+            log.error("index_export_failed", file=filename, error=str(exc))
+        except Exception as exc:
+            log.error(
+                "index_export_failed", file=filename, error=str(exc), exc_info=True
+            )
+
+    log.info("index_exported", dir=str(directory), **counts)
+    return counts
 
 
 # ---------------------------------------------------------------------------
 # Monthly report (separate CLI / cron, not per-run)
 # ---------------------------------------------------------------------------
-
-def _doc_enabled() -> bool:
-    doc_id = os.environ.get("GOOGLE_DOC_ID", "").strip()
-    cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
-    return bool(doc_id and cred_path and Path(cred_path).is_file())
-
 
 def _gather_month_stats(session) -> dict:
     """Aggregate the last 30 days of jobs for the monthly report."""
@@ -232,7 +301,7 @@ def _gather_month_stats(session) -> dict:
             gap_counter[str(sk).strip()] += 1
 
     total_jobs = len(jobs) or 1
-    threshold = float(settings.analytics.docs.skill_demand_alert_threshold)
+    threshold = float(settings.analytics.report.skill_demand_alert_threshold)
     alert_skills = [
         s for s, c in skill_counter.most_common()
         if c / total_jobs >= threshold
@@ -272,48 +341,35 @@ def _synthesize_report(stats: dict):
     return complete(MonthlyReportLLM, prompt)
 
 
-def _append_to_doc(report) -> None:
-    """Append the report as a new dated section to the Google Doc."""
-    from googleapiclient.discovery import build
-
-    docs = build("docs", "v1", credentials=_credentials(), cache_discovery=False)
-    doc_id = os.environ["GOOGLE_DOC_ID"]
-
-    # Find the current end index so we append rather than overwrite.
-    doc = docs.documents().get(documentId=doc_id).execute()
-    end_index = doc["body"]["content"][-1]["endIndex"] - 1
-
-    heading = f"\n\nMonthly Report — {datetime.now(timezone.utc):%Y-%m-%d}\n"
-    body = (
+def _render_report(report, stats: dict) -> str:
+    """Format the report as the plain-text body written to disk."""
+    now = datetime.now(timezone.utc)
+    return (
+        f"Monthly Report — {now:%Y-%m-%d}\n"
+        f"{'=' * 40}\n\n"
         f"{report.headline}\n\n"
+        f"Jobs scraped (30d): {stats['total_scraped']}\n"
+        f"Jobs matched (30d): {stats['total_matched']}\n\n"
         f"Skill demand: {report.skill_demand}\n\n"
         f"Recurring gaps: {report.recurring_gaps}\n\n"
         f"Hiring companies: {report.hiring_companies}\n\n"
         f"Salary: {report.salary_observations}\n"
     )
-    docs.documents().batchUpdate(
-        documentId=doc_id,
-        body={
-            "requests": [
-                {"insertText": {"location": {"index": end_index}, "text": heading + body}}
-            ]
-        },
-    ).execute()
 
 
-def write_monthly_report() -> None:
-    """Build and append the monthly Gemini report to the Google Doc.
+def write_monthly_report() -> Path | None:
+    """Build the monthly Gemini report and write it to a local text file.
 
-    Best-effort: logs and returns if Docs is unconfigured or any step
-    fails. Called from ``python -m src.cli.report`` (monthly cron), never
-    per pipeline run.
+    Best-effort: logs and returns ``None`` if disabled or any step fails.
+    Called from ``python -m src.cli.report`` (monthly cron), never per
+    pipeline run. Runs on the laptop — it reads Neon, so the report is
+    complete regardless of where the pipeline runs happened.
+
+    Returns the path written, or ``None``.
     """
-    if not settings.analytics.docs.monthly_report_enabled:
+    if not settings.analytics.report.monthly_enabled:
         log.info("monthly_report_skipped", reason="disabled_in_config")
-        return
-    if not _doc_enabled():
-        log.info("monthly_report_skipped", reason="docs_not_configured")
-        return
+        return None
 
     from src.state.db import session_scope
 
@@ -321,12 +377,20 @@ def write_monthly_report() -> None:
         with session_scope() as session:
             stats = _gather_month_stats(session)
         report = _synthesize_report(stats)
-        _append_to_doc(report)
+
+        directory = _report_dir()
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"report-{datetime.now(timezone.utc):%Y-%m}.txt"
+        path.write_text(_render_report(report, stats), encoding="utf-8")
+
         log.info(
             "monthly_report_written",
+            path=str(path),
             scraped=stats["total_scraped"],
             matched=stats["total_matched"],
             alert_skills=len(stats["alert_skills"]),
         )
+        return path
     except Exception as exc:
         log.error("monthly_report_failed", error=str(exc), exc_info=True)
+        return None
