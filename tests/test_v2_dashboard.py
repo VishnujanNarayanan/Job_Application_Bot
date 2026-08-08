@@ -366,3 +366,132 @@ def test_base_url_strips_a_trailing_slash():
     from src.config import resolve_endpoint_base_url
 
     assert resolve_endpoint_base_url("http://localhost:8000/") == "http://localhost:8000"
+
+
+# ---------------------------------------------------------------------------
+# Applied tracking
+#
+# The system deliberately never submits an application, so the operator's own
+# confirmation is the only evidence one happened. That makes this endpoint the
+# sole writer of applied state — worth pinning down.
+# ---------------------------------------------------------------------------
+
+def _patch_status_row(row):
+    """Patch the session used by POST /api/jobs/{id}/status."""
+    session = MagicMock()
+    session.get.return_value = row
+    session.scalar.return_value = 0
+    session.execute.return_value.all.return_value = []
+    scope = MagicMock()
+    scope.__enter__ = MagicMock(return_value=session)
+    scope.__exit__ = MagicMock(return_value=False)
+    return patch.object(dashboard, "session_scope", return_value=scope), session
+
+
+@pytest.mark.parametrize("status", ["pending", "applied", "dismissed"])
+def test_status_endpoint_records_each_transition(client, status):
+    row = MagicMock(user_status="pending", user_status_at=None)
+    patcher, session = _patch_status_row(row)
+    with patcher:
+        response = client.post("/api/jobs/linkedin-123/status", json={"status": status})
+
+    assert response.status_code == 200
+    assert response.json()["status"] == status
+    assert row.user_status == status
+    session.commit.assert_called_once()
+
+
+def test_acting_on_a_job_stamps_the_action_time(client):
+    """Applied sorts by this, and the card prints it."""
+    row = MagicMock(user_status="pending", user_status_at=None)
+    patcher, _ = _patch_status_row(row)
+    with patcher:
+        client.post("/api/jobs/linkedin-123/status", json={"status": "applied"})
+
+    assert isinstance(row.user_status_at, datetime)
+    assert row.user_status_at.tzinfo is not None, "must be timezone-aware"
+
+
+def test_undo_clears_the_action_time(client):
+    """Returning a job to pending must not leave a stale applied date behind,
+    or it would sort into Applied with a date and no status."""
+    row = MagicMock(user_status="applied", user_status_at=_NOW)
+    patcher, _ = _patch_status_row(row)
+    with patcher:
+        client.post("/api/jobs/linkedin-123/status", json={"status": "pending"})
+
+    assert row.user_status == "pending"
+    assert row.user_status_at is None
+
+
+def test_status_endpoint_returns_fresh_counts_for_the_nav(client):
+    """The page updates its badges from this rather than reloading."""
+    row = MagicMock(user_status="pending", user_status_at=None)
+    patcher, _ = _patch_status_row(row)
+    with patcher:
+        body = client.post(
+            "/api/jobs/linkedin-123/status", json={"status": "applied"}
+        ).json()
+
+    assert set(body["counts"]) == {"pending", "applied", "dismissed", "skipped"}
+
+
+def test_status_endpoint_rejects_an_unknown_status(client):
+    row = MagicMock(user_status="pending", user_status_at=None)
+    patcher, session = _patch_status_row(row)
+    with patcher:
+        response = client.post("/api/jobs/linkedin-123/status", json={"status": "hired"})
+
+    assert response.status_code == 400
+    session.commit.assert_not_called()
+
+
+def test_status_endpoint_404s_an_unknown_job(client):
+    patcher, _ = _patch_status_row(None)
+    with patcher:
+        response = client.post("/api/jobs/nope/status", json={"status": "applied"})
+
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# View ordering — the two views answer different questions
+# ---------------------------------------------------------------------------
+
+def _order_by_sql(status: str) -> str:
+    """Compile the ORDER BY that _match_views builds for a status."""
+    session = MagicMock()
+    session.execute.return_value = []
+    dashboard._match_views(session, status)
+    stmt = session.execute.call_args[0][0]
+    return str(stmt).lower()
+
+
+def test_matches_sort_by_score():
+    """Pending answers "what should I look at next", so the best fit leads."""
+    sql = _order_by_sql("pending")
+    order = sql.split("order by", 1)[1]
+    assert "final_score desc" in order
+    assert "user_status_at" not in order
+
+
+def test_applied_sorts_by_when_the_operator_acted():
+    """Applied is a record, read newest first — score no longer decides
+    anything once the application is out."""
+    sql = _order_by_sql("applied")
+    order = sql.split("order by", 1)[1]
+    assert "user_status_at desc" in order
+    assert order.index("user_status_at") < order.index("built_at")
+
+
+def test_applied_page_offers_undo_not_apply(client):
+    """The settled card must not invite a second application."""
+    p1, p2, p3, p4 = _patch_page(
+        matches=[_match_view(status="applied", actioned_at=_NOW.isoformat())]
+    )
+    with p1, p2, p3, p4:
+        body = client.get("/dashboard/applied").text
+
+    assert 'data-status="pending"' in body, "Undo must be present"
+    assert "js-apply" not in body, "a settled job must not show Apply"
+    assert "job--settled" in body
