@@ -596,6 +596,14 @@ endpoint:
   port: 8000
   # Template path is config-driven so any instance can swap the file.
   template_path: "resumes/templates/Templete.docx"
+  # How long a cached render stays valid, in days.
+  #
+  # MUST be kept in step with the S3 lifecycle rule on the `pdf_cache/` and
+  # `docx_cache/` prefixes. If S3 expires objects sooner than this, the
+  # render_cache table goes on claiming hits for objects that no longer exist;
+  # the endpoint still serves the resume (it re-renders), but every "hit"
+  # silently costs a full rebuild.
+  render_cache_ttl_days: 90
   # Operator dashboard (Layer 6 browser surface).
   dashboard:
     # The skipped table is the biggest one and only its top is ever scanned.

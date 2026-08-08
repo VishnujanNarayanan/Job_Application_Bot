@@ -33,8 +33,21 @@ _CONTENT_TYPES = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
-_CACHE_TTL_DAYS = 30
 _ROOT = Path(__file__).resolve().parents[2]
+
+
+def _cache_ttl_days() -> int:
+    """How long a cached render stays valid.
+
+    Read per call rather than frozen at import so the operator can retune it
+    without a restart.
+
+    This MUST match the S3 lifecycle rule on the ``{ext}_cache/`` prefixes. If
+    the rule expires objects sooner, ``render_cache`` goes on claiming a hit
+    for an object S3 has already deleted — the endpoint degrades gracefully by
+    re-rendering, but the cache silently stops earning its keep.
+    """
+    return int(settings.endpoint.get("render_cache_ttl_days", 90))
 
 
 def get_or_build(
@@ -203,7 +216,7 @@ def _record_render_cache(
     job_id: str,
 ) -> None:
     pk = f"{cache_key}_{ext}"
-    expires = datetime.now(timezone.utc) + timedelta(days=_CACHE_TTL_DAYS)
+    expires = datetime.now(timezone.utc) + timedelta(days=_cache_ttl_days())
     row = session.get(RenderCache, pk)
     if row is None:
         session.add(
