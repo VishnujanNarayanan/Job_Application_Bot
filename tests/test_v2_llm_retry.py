@@ -62,8 +62,20 @@ def test_rate_limit_wins_over_a_404_substring():
 
 
 # ---------------------------------------------------------------------------
-# complete() behaviour
+# Attempt sequencing for a SINGLE provider
+#
+# These exercise _complete_with rather than complete(): they are about how one
+# provider's retry budget is spent, and complete() would run the sequence twice
+# (primary, then fallback) and report a combined error. Fallback orchestration
+# is covered separately at the bottom of this file.
 # ---------------------------------------------------------------------------
+
+def _primary(response_model):
+    """Run the primary provider's attempt sequence for one prompt."""
+    return llm_client._complete_with(
+        "primary", response_model, [{"role": "user", "content": "prompt"}]
+    )
+
 
 def _client_raising(exc, *, succeed_after=None):
     fake = MagicMock()
@@ -86,7 +98,7 @@ def test_permanent_error_fails_after_a_single_attempt():
     with patch.object(llm_client, "get_client", return_value=fake), \
          patch("time.sleep") as sleep:
         with pytest.raises(LLMError, match="permanently"):
-            llm_client.complete(Dummy, "prompt")
+            _primary(Dummy)
 
     assert calls["n"] == 1, "a permanent error must not be retried"
     sleep.assert_not_called(), "and must not sleep"
@@ -99,7 +111,7 @@ def test_transient_error_still_retries_to_exhaustion():
     with patch.object(llm_client, "get_client", return_value=fake), \
          patch("time.sleep"):
         with pytest.raises(LLMError):
-            llm_client.complete(Dummy, "prompt")
+            _primary(Dummy)
 
     assert calls["n"] == llm_client.settings.llm.backoff.max_attempts
 
@@ -125,7 +137,7 @@ def test_backoff_is_bounded_by_max_seconds():
     with patch.object(llm_client, "get_client", return_value=fake), \
          patch("time.sleep", side_effect=delays.append):
         with pytest.raises(LLMError):
-            llm_client.complete(Dummy, "prompt")
+            _primary(Dummy)
 
     ceiling = float(llm_client.settings.llm.backoff.max_seconds)
     assert delays == sorted(delays), "delays must be non-decreasing"
@@ -187,7 +199,7 @@ def test_budget_error_raises_the_dedicated_type_on_first_attempt():
     with patch.object(llm_client, "get_client", return_value=fake), \
          patch("time.sleep") as sleep:
         with pytest.raises(LLMBudgetError, match="out of budget"):
-            llm_client.complete(Dummy, "prompt")
+            _primary(Dummy)
 
     assert calls["n"] == 1, "a spend cap must not be retried"
     sleep.assert_not_called()
