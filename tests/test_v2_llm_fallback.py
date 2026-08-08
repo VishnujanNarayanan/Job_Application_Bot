@@ -410,3 +410,77 @@ def test_a_payment_wall_is_exhaustion_not_a_retry():
         "'code': 'payment_required'}"
     )
     assert _is_budget_exhausted(exc) is True
+
+
+# ---------------------------------------------------------------------------
+# Regressions from the live run of 2026-08-08 (second attempt)
+# ---------------------------------------------------------------------------
+
+def test_throttled_primary_plus_capped_fallback_does_not_abandon_the_run():
+    """The run that died at 4 of 13 jobs.
+
+    Groq was briefly throttled and the Gemini fallback sat behind a spend cap.
+    Treating "any provider out of budget" as exhaustion abandoned the batch —
+    but Groq's window reopens in seconds, so the remaining 9 jobs were
+    servable. Only a per-job error is correct here.
+    """
+    throttled = _client(raises=RuntimeError(_GROQ_TPM))
+    capped = _client(raises=RuntimeError(
+        "429 Your project has exceeded its monthly spending cap."
+    ))
+
+    with _split(throttled, capped), patch("time.sleep"):
+        with pytest.raises(LLMError) as excinfo:
+            llm_client.complete(Dummy, "p")
+
+    assert not isinstance(excinfo.value, LLMBudgetError), (
+        "a transient failure anywhere in the chain means the run continues"
+    )
+
+
+def test_every_provider_capped_still_abandons_the_run():
+    """The counter-case must keep working: nothing can serve, so stop."""
+    capped = _client(raises=RuntimeError(
+        "429 Your project has exceeded its monthly spending cap."
+    ))
+
+    with _split(capped, capped), patch("time.sleep"):
+        with pytest.raises(LLMBudgetError):
+            llm_client.complete(Dummy, "p")
+
+
+def test_the_providers_stated_wait_is_honoured():
+    """Groq says "try again in 11.344999999s". Backing off on our own guess
+    (2s, 4s) retries before the window reopens and spends the whole attempt
+    budget being refused."""
+    from src.llm.client import retry_after_seconds
+
+    assert retry_after_seconds(RuntimeError(_GROQ_TPM)) == pytest.approx(3.535)
+    assert retry_after_seconds(RuntimeError("Please try again in 11.5s")) == 12.0
+    assert retry_after_seconds(RuntimeError("retry after 5 seconds")) == 5.5
+    assert retry_after_seconds(RuntimeError("500 internal error")) is None
+
+
+def test_an_implausible_wait_is_ignored():
+    """An hours-long wait is a daily quota, handled by moving the chain on —
+    never by blocking the run on a sleep."""
+    from src.llm.client import retry_after_seconds
+
+    assert retry_after_seconds(RuntimeError("try again in 3600s")) is None
+
+
+def test_the_hint_is_actually_slept_on():
+    """The saving is only real if the retry loop uses it."""
+    waits: list[float] = []
+    throttled = _client(raises=RuntimeError("429 rate limit reached; try again in 7s"))
+
+    with patch.object(llm_client, "get_client", return_value=throttled), \
+         patch("time.sleep", side_effect=waits.append):
+        with pytest.raises(LLMError):
+            llm_client._complete_with(
+                "primary", Dummy, [{"role": "user", "content": "p"}]
+            )
+
+    assert waits and all(w == 7.5 for w in waits), (
+        f"expected the stated 7s (+0.5 margin) every time, got {waits}"
+    )

@@ -27,6 +27,7 @@ patch ``complete`` without a key or a network.
 from __future__ import annotations
 
 import os
+import re
 import time
 from functools import lru_cache
 from typing import TypeVar
@@ -120,6 +121,42 @@ _TRANSIENT_RATE_MARKERS = (
     "rate_limit_exceeded",
     "please try again in",
 )
+
+
+# Providers that throttle usually say exactly how long to wait. Groq returns
+# "Please try again in 11.344999999s"; others phrase it "retry after 5
+# seconds". Guessing instead — 2s, 4s, 8s — retries before the window has
+# reopened, so every guess is refused and the attempt budget is spent on
+# nothing. That is what exhausted 5 attempts and ended a run on 2026-08-08.
+_RETRY_AFTER = re.compile(
+    r"(?:try again in|retry after|retry in)\s+([0-9]+(?:\.[0-9]+)?)\s*(m?s|seconds?|secs?)?",
+    re.IGNORECASE,
+)
+
+# Never sleep longer than this on a provider's say-so. A limit measured in
+# hours is a daily quota, which is classified as exhaustion and moves the
+# chain on rather than blocking a run.
+_MAX_HINTED_WAIT_SECONDS = 60.0
+
+
+def retry_after_seconds(exc: Exception) -> float | None:
+    """How long the provider asked us to wait, if it said.
+
+    Returns None when there is no usable hint, leaving exponential backoff to
+    decide.
+    """
+    match = _RETRY_AFTER.search(str(exc))
+    if not match:
+        return None
+
+    value = float(match.group(1))
+    if (match.group(2) or "").lower() == "ms":
+        value /= 1000.0
+    if value <= 0 or value > _MAX_HINTED_WAIT_SECONDS:
+        return None
+    # A shade past the stated window: retrying on the exact boundary is
+    # routinely a hair too early.
+    return value + 0.5
 
 
 def _is_budget_exhausted(exc: Exception) -> bool:
@@ -340,15 +377,22 @@ def _complete_with(
                 ) from exc
 
             if attempt < attempts:
+                # The provider's own figure beats our guess: it knows when the
+                # window reopens, and retrying early just spends an attempt.
+                hinted = retry_after_seconds(exc)
+                wait = hinted if hinted is not None else delay
                 log.warning(
                     "llm_retry",
                     which=which,
                     attempt=attempt,
                     max_attempts=attempts,
+                    wait_seconds=round(wait, 2),
+                    hinted=hinted is not None,
                     error=str(exc),
                 )
-                time.sleep(delay)
-                delay = min(delay * 2, max_delay)
+                time.sleep(wait)
+                if hinted is None:
+                    delay = min(delay * 2, max_delay)
 
     # exc_info=last_error (the captured instance), NOT True — we are outside
     # the except block here, so sys.exc_info() is already cleared.
@@ -361,10 +405,15 @@ def _complete_with(
         error=str(last_error),
         exc_info=last_error,
     )
-    raise LLMError(
+    exhausted = LLMError(
         f"Call failed after {attempts} attempts "
         f"(provider={cfg.provider}, model={cfg.model})"
-    ) from last_error
+    )
+    # Retryable errors ran out of attempts rather than proving hopeless: the
+    # window may well have reopened by the next job. Marked so the chain can
+    # tell "this might work again" from "this cannot".
+    exhausted.transient = True
+    raise exhausted from last_error
 
 
 def complete(response_model: type[T], prompt: str, *, system: str | None = None) -> T:
@@ -400,7 +449,7 @@ def complete(response_model: type[T], prompt: str, *, system: str | None = None)
         return _complete_with("primary", response_model, messages)
 
     failures: list[tuple[object, Exception]] = []
-    out_of_budget = False
+    budget_failures = 0
 
     for position, (which, cfg) in enumerate(chain):
         if position:
@@ -415,7 +464,7 @@ def complete(response_model: type[T], prompt: str, *, system: str | None = None)
         try:
             result = _complete_with(which, response_model, messages)
         except LLMBudgetError as exc:
-            out_of_budget = True
+            budget_failures += 1
             failures.append((cfg, exc))
         except LLMError as exc:
             failures.append((cfg, exc))
@@ -434,6 +483,18 @@ def complete(response_model: type[T], prompt: str, *, system: str | None = None)
     summary = f"All {len(chain)} providers failed. {detail}"
     last_error = failures[-1][1]
 
-    if out_of_budget:
+    # Abandon the run only when nothing here can succeed for the NEXT job
+    # either — that is, some account is out of budget and no provider merely
+    # ran out of patience. A retired model plus a capped fallback qualifies:
+    # both fail every job identically.
+    #
+    # A transient failure anywhere disqualifies it. A run on 2026-08-08 was
+    # abandoned after 4 of 13 jobs because Groq was briefly throttled while
+    # Gemini sat behind a spend cap; Groq's window reopens in seconds, so the
+    # remaining 9 jobs were perfectly servable.
+    any_transient = any(
+        getattr(error, "transient", False) for _cfg, error in failures
+    )
+    if budget_failures and not any_transient:
         raise LLMBudgetError(summary) from last_error
     raise LLMError(summary) from last_error
