@@ -5,35 +5,43 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Job Bot{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23101c2e'/><rect x='3' y='9' width='10' height='2' fill='%232b6ce8'/><rect x='7.5' y='5' width='1' height='6' fill='%23f4b942'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%230b1220'/><rect x='2.5' y='9' width='7' height='2' rx='1' fill='%233b82f6'/><rect x='9.5' y='6.5' width='1.4' height='7' rx='.7' fill='%23f0b429'/></svg>">
 </head>
 <body>
 
 <header class="bar">
-  <div class="bar__id">
-    <span class="bar__mark" aria-hidden="true"></span>
-    <span class="bar__name">JOB&nbsp;BOT</span>
-  </div>
+  <a class="brand" href="/dashboard">
+    <span class="brand__mark" aria-hidden="true"></span>
+    <span class="brand__text">Job&nbsp;Bot</span>
+  </a>
 
-  <nav class="bar__nav">
-    <a href="/dashboard" class="tab {% if active == 'matches' %}tab--on{% endif %}">
-      Matches <span class="tab__n">{{ match_count }}</span>
+  <nav class="tabs" aria-label="Views">
+    <a href="/dashboard" class="tab {% if active == 'matches' %}is-on{% endif %}">
+      Matches<span class="tab__n">{{ counts.pending }}</span>
     </a>
-    <a href="/dashboard/skipped" class="tab {% if active == 'skipped' %}tab--on{% endif %}">
-      Skipped <span class="tab__n">{{ skipped_count }}</span>
+    <a href="/dashboard/applied" class="tab {% if active == 'applied' %}is-on{% endif %}">
+      Applied<span class="tab__n">{{ counts.applied }}</span>
+    </a>
+    <a href="/dashboard/skipped" class="tab {% if active == 'skipped' %}is-on{% endif %}">
+      Skipped<span class="tab__n">{{ counts.skipped }}</span>
     </a>
   </nav>
 
-  <div class="bar__run">
-    <label class="check">
+  <div class="runbar">
+    <label class="check" title="Send to the test chat and skip notifications">
       <input type="checkbox" id="dry-run">
       <span>Dry run</span>
     </label>
-    <select id="run-target" aria-label="Where to run">
-      <option value="local">Here</option>
-      <option value="github">GitHub</option>
-    </select>
-    <button id="run-btn" class="btn-run" type="button">Run</button>
+    <div class="seg" role="group" aria-label="Where to run">
+      <input type="radio" name="target" id="t-local" value="local" checked>
+      <label for="t-local">Here</label>
+      <input type="radio" name="target" id="t-github" value="github">
+      <label for="t-github">GitHub</label>
+    </div>
+    <button id="run-btn" class="btn btn--primary" type="button">
+      <span class="btn__spin" aria-hidden="true"></span>
+      <span id="run-btn-text">Run</span>
+    </button>
   </div>
 </header>
 
@@ -41,15 +49,36 @@
   {% block content %}{% endblock %}
 </main>
 
-<!-- Run panel: hidden until a run starts, then streams the pipeline's log. -->
-<section id="run-panel" class="runpanel" hidden aria-live="polite">
-  <div class="runpanel__head">
+<!-- Did-you-apply confirmation. The system never submits an application, so
+     this is the only way it learns that one happened. Armed when Apply is
+     clicked, raised when the operator returns to this tab. -->
+<div id="confirm" class="modal" hidden role="dialog" aria-modal="true"
+     aria-labelledby="confirm-title">
+  <div class="modal__panel">
+    <h2 class="modal__title" id="confirm-title">Did you apply?</h2>
+    <p class="modal__body">
+      <strong id="confirm-role">—</strong><br>
+      <span id="confirm-company" class="muted">—</span>
+    </p>
+    <div class="modal__acts">
+      <button id="confirm-no" class="btn" type="button">Not yet</button>
+      <button id="confirm-yes" class="btn btn--ok" type="button">Yes, I applied</button>
+    </div>
+    <p class="modal__hint">Enter to confirm · Esc to dismiss</p>
+  </div>
+</div>
+
+<!-- Run log. Hidden until a run starts. -->
+<section id="run-panel" class="logpanel" hidden aria-live="polite">
+  <header class="logpanel__head">
     <span id="run-dot" class="dot"></span>
     <span id="run-label">Idle</span>
-    <button id="run-close" class="runpanel__x" type="button" aria-label="Hide log">&times;</button>
-  </div>
-  <pre id="run-log" class="runpanel__log" tabindex="0"></pre>
+    <button id="run-close" class="logpanel__x" type="button" aria-label="Hide log">&times;</button>
+  </header>
+  <pre id="run-log" class="logpanel__log" tabindex="0"></pre>
 </section>
+
+<div id="toast" class="toast" hidden role="status"></div>
 
 <script src="/static/app.js"></script>
 </body>

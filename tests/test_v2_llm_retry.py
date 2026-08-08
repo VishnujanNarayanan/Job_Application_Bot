@@ -141,3 +141,221 @@ def test_configured_model_is_not_a_retired_or_moving_target():
         "a floating alias can change structured-output behaviour mid-run"
     )
     assert "-preview" not in model, "preview models are withdrawn without notice"
+
+
+# ---------------------------------------------------------------------------
+# Budget exhaustion — a 429 that does NOT clear on retry
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("message", [
+    "429 Your project has exceeded its monthly spending cap. Please go to AI Studio",
+    "429 RESOURCE_EXHAUSTED: spend cap reached",
+    "429 You exceeded your current quota, please check your plan and billing details",
+    "429 Quota exceeded for quota metric 'Generate requests per day'",
+])
+def test_budget_exhaustion_is_recognised(message):
+    """Spend caps and daily quotas arrive as 429 but never clear mid-run."""
+    from src.llm.client import _is_budget_exhausted
+
+    exc = RuntimeError(message)
+    assert _is_budget_exhausted(exc) is True
+    assert _is_permanent(exc) is True, "must not be retried"
+
+
+@pytest.mark.parametrize("message", [
+    "429 Resource exhausted. Please retry shortly.",
+    "429 Too many requests per minute",
+])
+def test_ordinary_rate_limiting_still_retries(message):
+    """A per-minute limit clears on its own; it must not abort the run."""
+    from src.llm.client import _is_budget_exhausted
+
+    exc = RuntimeError(message)
+    assert _is_budget_exhausted(exc) is False
+    assert _is_permanent(exc) is False
+
+
+def test_budget_error_raises_the_dedicated_type_on_first_attempt():
+    """The orchestrator distinguishes this from a per-job failure by type."""
+    from src.llm.client import LLMBudgetError
+
+    exc = RuntimeError(
+        "429 Your project has exceeded its monthly spending cap."
+    )
+    fake, calls = _client_raising(exc)
+
+    with patch.object(llm_client, "get_client", return_value=fake), \
+         patch("time.sleep") as sleep:
+        with pytest.raises(LLMBudgetError, match="out of budget"):
+            llm_client.complete(Dummy, "prompt")
+
+    assert calls["n"] == 1, "a spend cap must not be retried"
+    sleep.assert_not_called()
+
+
+def test_budget_error_is_an_llm_error_subclass():
+    """Callers catching LLMError must still catch this."""
+    from src.llm.client import LLMBudgetError
+
+    assert issubclass(LLMBudgetError, LLMError)
+
+
+# ---------------------------------------------------------------------------
+# Fallback provider
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _clean_clients():
+    """Clients are cached per provider; don't leak between tests."""
+    llm_client.reset_clients()
+    yield
+    llm_client.reset_clients()
+
+
+def test_fallback_is_configured_and_enabled():
+    """The escape hatch must actually be on, and point somewhere different."""
+    assert llm_client.fallback_enabled() is True
+
+    primary = llm_client.provider_config("primary")
+    fallback = llm_client.provider_config("fallback")
+    assert str(fallback.base_url) != str(primary.base_url)
+    assert str(fallback.api_key_env) != str(primary.api_key_env)
+
+
+def test_fallback_model_is_not_a_thinking_model():
+    """Reasoning tokens bill as output; the fallback exists to be cheap.
+
+    gemini-3.6-flash cost ~20x its apparent token count on 2026-08-08.
+    """
+    model = str(llm_client.provider_config("fallback").model)
+    assert "3.6" not in model and "3.5" not in model, (
+        f"{model} may emit reasoning tokens; prefer a lite/non-thinking model"
+    )
+    assert "lite" in model
+
+
+def test_permanent_primary_failure_falls_back():
+    """A retired model on the primary must not fail the job."""
+    from src.llm.client import LLMError
+
+    def primary(*a, **k):
+        raise RuntimeError("404 model is no longer available")
+
+    good = MagicMock()
+    good.chat.completions.create.return_value = Dummy(value="from-fallback")
+    bad = MagicMock()
+    bad.chat.completions.create.side_effect = primary
+
+    def pick(which="primary"):
+        return bad if which == "primary" else good
+
+    with patch.object(llm_client, "get_client", side_effect=pick), \
+         patch("time.sleep"):
+        result = llm_client.complete(Dummy, "prompt")
+
+    assert result.value == "from-fallback"
+
+
+def test_primary_spend_cap_falls_back():
+    """The exact failure of 2026-08-08 must now be survivable."""
+    bad = MagicMock()
+    bad.chat.completions.create.side_effect = RuntimeError(
+        "429 Your project has exceeded its monthly spending cap."
+    )
+    good = MagicMock()
+    good.chat.completions.create.return_value = Dummy(value="ok")
+
+    with patch.object(
+        llm_client, "get_client",
+        side_effect=lambda which="primary": bad if which == "primary" else good,
+    ), patch("time.sleep"):
+        assert llm_client.complete(Dummy, "prompt").value == "ok"
+
+
+def test_both_providers_out_of_budget_raises_budget_error():
+    """When neither can serve, the run must abort rather than grind on."""
+    from src.llm.client import LLMBudgetError
+
+    dead = MagicMock()
+    dead.chat.completions.create.side_effect = RuntimeError(
+        "429 exceeded your current quota"
+    )
+
+    with patch.object(llm_client, "get_client", return_value=dead), \
+         patch("time.sleep"):
+        with pytest.raises(LLMBudgetError):
+            llm_client.complete(Dummy, "prompt")
+
+
+def test_both_providers_failing_reports_both():
+    """The error must name both providers, or debugging is guesswork."""
+    from src.llm.client import LLMError
+
+    dead = MagicMock()
+    dead.chat.completions.create.side_effect = RuntimeError("503 unavailable")
+
+    with patch.object(llm_client, "get_client", return_value=dead), \
+         patch("time.sleep"):
+        with pytest.raises(LLMError, match="Both providers failed"):
+            llm_client.complete(Dummy, "prompt")
+
+
+def test_transient_error_does_not_engage_the_fallback():
+    """Rate limiting is the primary's own backoff to handle.
+
+    Switching providers on a per-minute limit would send steady traffic to the
+    secondary for no reason.
+    """
+    calls = {"n": 0}
+
+    def flaky(**kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError("429 Too many requests per minute")
+        return Dummy(value="primary-recovered")
+
+    primary = MagicMock()
+    primary.chat.completions.create.side_effect = flaky
+    fallback = MagicMock()
+
+    with patch.object(
+        llm_client, "get_client",
+        side_effect=lambda which="primary": primary if which == "primary" else fallback,
+    ), patch("time.sleep"):
+        result = llm_client.complete(Dummy, "prompt")
+
+    assert result.value == "primary-recovered"
+    fallback.chat.completions.create.assert_not_called()
+
+
+def test_no_fallback_configured_propagates_the_primary_error():
+    from src.llm.client import LLMError
+
+    dead = MagicMock()
+    dead.chat.completions.create.side_effect = RuntimeError("404 not found")
+
+    with patch.object(llm_client, "get_client", return_value=dead), \
+         patch.object(llm_client, "fallback_enabled", return_value=False), \
+         patch("time.sleep"):
+        with pytest.raises(LLMError, match="permanently"):
+            llm_client.complete(Dummy, "prompt")
+
+
+def test_clients_are_cached_per_provider():
+    """Primary and fallback must be able to coexist in one run."""
+    built = []
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            built.append(kwargs["base_url"])
+
+    with patch("openai.OpenAI", FakeOpenAI), \
+         patch("instructor.from_openai", side_effect=lambda c, mode: c), \
+         patch.dict("os.environ", {"GROQ_API_KEY": "k1", "GEMINI_API_KEY": "k2"}):
+        a = llm_client.get_client("primary")
+        b = llm_client.get_client("primary")
+        c = llm_client.get_client("fallback")
+
+    assert a is b, "primary should be cached"
+    assert a is not c, "fallback must be a separate client"
+    assert len(set(built)) == 2

@@ -3,40 +3,49 @@
 {% block title %}Skipped · Job Bot{% endblock %}
 
 {% block content %}
-<p class="note">
-  Jobs that parsed and scored but landed under {{ threshold }}. Newest first.
-  A cluster just below the line is the signal that the threshold wants moving.
-</p>
+<div class="head">
+  <div>
+    <h1 class="head__title">Skipped</h1>
+    <p class="head__sub">
+      Parsed and scored, but under {{ threshold }}. A cluster sitting just below
+      the line is the signal that the threshold wants moving.
+    </p>
+  </div>
+</div>
 
 {% if not skipped %}
-  <div class="empty">
-    <p class="empty__line">Nothing skipped yet.</p>
-  </div>
+  <div class="empty"><p class="empty__line">Nothing skipped yet.</p></div>
 {% else %}
-  <table class="grid">
-    <thead>
-      <tr><th class="num">Score</th><th>Role</th><th>Company</th><th class="hide-sm">Where</th><th class="hide-sm">Via</th><th></th></tr>
-    </thead>
-    <tbody>
-    {% for s in skipped %}
-      <tr>
-        <td class="num">
-          <span class="near {% if s.score and s.score >= threshold - 0.05 %}near--close{% endif %}">
-            {{ "%.2f"|format(s.score or 0) }}
-          </span>
-        </td>
-        <td>{{ s.title }}</td>
-        <td class="muted">{{ s.company }}</td>
-        <td class="muted hide-sm">{{ s.location }}</td>
-        <td class="muted hide-sm">{{ s.source }}</td>
-        <td>
-          {% if s.apply_url %}
-          <a class="act act--sm" href="{{ s.apply_url }}" target="_blank" rel="noopener">Open</a>
-          {% endif %}
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
+  <div class="tablewrap">
+    <table class="grid">
+      <thead>
+        <tr>
+          <th class="num">Score</th><th>Role</th><th>Company</th>
+          <th class="hide-sm">Where</th><th class="hide-sm">Source</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for s in skipped %}
+        <tr>
+          <td class="num">
+            <span class="miss {% if s.score and s.score >= threshold - 0.05 %}miss--near{% endif %}">
+              {{ "%.2f"|format(s.score or 0) }}
+            </span>
+          </td>
+          <td class="strong">{{ s.title }}</td>
+          <td class="muted">{{ s.company }}</td>
+          <td class="muted hide-sm">{{ s.location }}</td>
+          <td class="muted hide-sm">{{ s.source }}</td>
+          <td>
+            {% if s.apply_url %}
+            <a class="btn btn--quiet btn--xs" href="{{ s.apply_url }}"
+               target="_blank" rel="noopener">Open</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
 {% endif %}
 {% endblock %}

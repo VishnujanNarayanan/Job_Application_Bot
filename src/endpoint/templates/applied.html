@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "_job_card.html" import job_card %}
+{% set active = 'applied' %}
+{% block title %}Applied · Job Bot{% endblock %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1 class="head__title">Applied</h1>
+    <p class="head__sub">
+      Your record of submitted applications, most recent first. The resume you
+      sent is one click away — it rebuilds from the stored selection, so it is
+      the same document even if the template has changed since.
+    </p>
+  </div>
+</div>
+
+{% if not matches %}
+  <div class="empty">
+    <p class="empty__line">No applications recorded yet.</p>
+    <p class="empty__hint">
+      Open a match, click Apply, and confirm when you come back — or use
+      Mark applied.
+    </p>
+  </div>
+{% else %}
+  <ol class="jobs">
+    {% for m in matches %}{{ job_card(m, threshold, settled=True) }}{% endfor %}
+  </ol>
+{% endif %}
+{% endblock %}

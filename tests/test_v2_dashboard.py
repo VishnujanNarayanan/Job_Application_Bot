@@ -59,6 +59,9 @@ def _patch_page(matches=None, skipped=None):
     """Patch out the DB layer for a page render."""
     session = MagicMock()
     session.scalar.return_value = 1
+    # _counts() groups statuses with execute().all(); the views are patched out
+    # separately, so an empty grouping is enough here.
+    session.execute.return_value.all.return_value = []
     scope = MagicMock()
     scope.__enter__ = MagicMock(return_value=session)
     scope.__exit__ = MagicMock(return_value=False)
@@ -113,7 +116,7 @@ def test_dashboard_shows_empty_state_without_matches(client):
     with p1, p2, p3, p4:
         body = client.get("/dashboard").text
 
-    assert "No matches yet" in body
+    assert "Nothing waiting on you" in body
 
 
 def test_dashboard_survives_a_null_score(client):
@@ -147,8 +150,8 @@ def test_skipped_page_flags_near_misses(client):
         body = client.get("/dashboard/skipped").text
 
     # 0.48 is within 0.05 of the 0.50 line, 0.20 is not.
-    assert "near--close" in body
-    assert body.count("near--close") == 1
+    assert "miss--near" in body
+    assert body.count("miss--near") == 1
 
 
 def test_pages_escape_untrusted_job_text(client):

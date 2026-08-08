@@ -436,10 +436,51 @@ spacy:
 # and seniority feeds the success_prob score directly.
 # ---------------------------------------------------------------------------
 llm:
-  provider: "gemini"
-  model: "gemini-3.6-flash"
-  daily_call_budget: 1500
-  max_calls_per_job: 2
+  # Any OpenAI-compatible endpoint. Switching provider is an edit here plus a
+  # key in .env — no code change, and every Pydantic schema is unaffected.
+  #
+  #   groq       https://api.groq.com/openai/v1                 GROQ_API_KEY
+  #   cerebras   https://api.cerebras.ai/v1                     CEREBRAS_API_KEY
+  #   openrouter https://openrouter.ai/api/v1                   OPENROUTER_API_KEY
+  #   gemini     https://generativelanguage.googleapis.com/v1beta/openai/
+  #                                                             GEMINI_API_KEY
+  #
+  # List a provider's real model names before setting `model` — a name that
+  # merely appears in a docs page or a list_models() call is not necessarily
+  # callable (Gemini listed a retired model that 404'd on every request):
+  #     python -m src.cli.llm_check --list
+  provider: "groq"
+  base_url: "https://api.groq.com/openai/v1"
+  api_key_env: "GROQ_API_KEY"
+  model: "llama-3.3-70b-versatile"
+  # Instructor strategy. TOOLS works on providers with function calling (Groq,
+  # Cerebras, OpenAI); JSON_SCHEMA where native schema enforcement exists; JSON
+  # is the lowest common denominator. Verify with llm_check after changing it.
+  instructor_mode: "TOOLS"
+  request_timeout_seconds: 60
+  max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
+
+  # Second provider, tried once when the primary gives up. Both of the
+  # 2026-08-08 failures were provider-wide rather than per-job — a retired
+  # model 404'd every request, and a spend cap 429'd every request — so either
+  # would have taken a whole run down. A fallback turns that into a slower run.
+  #
+  # Ordinary rate limiting does NOT trigger it: the primary's own backoff
+  # handles that, and switching on it would send steady traffic here for
+  # nothing. Only permanent errors and budget exhaustion do.
+  #
+  # gemini-2.5-flash-lite is deliberate: cheap, and NON-thinking. The pricier
+  # gemini-3.6-flash emits reasoning tokens that bill as output — 60 job-ad
+  # parses cost roughly 20x what the token count implied.
+  fallback:
+    enabled: true
+    provider: "gemini"
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+    api_key_env: "GEMINI_API_KEY"
+    model: "gemini-2.5-flash-lite"
+    instructor_mode: "JSON"
+    request_timeout_seconds: 60
+
   backoff:
     # Sized for paid Tier 1 (hundreds of requests/minute), not the free tier's
     # 5/min which the old 20s/90s values were fighting. Permanent errors (404

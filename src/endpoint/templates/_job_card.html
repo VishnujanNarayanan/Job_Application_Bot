@@ -1,0 +1,82 @@
+{# One matched job. Shared by Matches and Applied so the two views cannot
+   drift apart; `settled` mutes the score furniture for an already-actioned
+   job, where the decision matters more than the number. #}
+{% macro job_card(m, threshold, settled=False) %}
+<li class="job {% if settled %}job--settled{% endif %}" data-job-id="{{ m.job_id }}">
+
+  {# The signature: the score against its gate, drawn to scale. A bar that
+     clears the amber gate matched; one that stops short did not. #}
+  <div class="gauge">
+    <div class="gauge__value">{{ "%.2f"|format(m.score or 0) }}</div>
+    <div class="gauge__track" role="img"
+         aria-label="Score {{ "%.2f"|format(m.score or 0) }} against a threshold of {{ threshold }}">
+      <div class="gauge__fill" style="width: {{ (100 * (m.score or 0))|round(1) }}%"></div>
+      <div class="gauge__gate" style="left: {{ (100 * threshold)|round(1) }}%"></div>
+    </div>
+    <div class="gauge__scale">
+      <span>0</span><span class="gauge__thr">{{ threshold }}</span><span>1</span>
+    </div>
+  </div>
+
+  <div class="job__main">
+    <h2 class="job__title">{{ m.title }}</h2>
+    <p class="job__company">
+      {{ m.company }}
+      {% if m.scraped_role and m.scraped_role != m.title %}
+      <span class="job__aka" title="Title on the listing">· listed as {{ m.scraped_role }}</span>
+      {% endif %}
+    </p>
+
+    <dl class="facts">
+      {% if m.location or m.location_type %}
+      <div class="fact">
+        <dt>Where</dt>
+        <dd>{{ [m.location_type, m.location]|select|unique|join(' · ') }}</dd>
+      </div>
+      {% endif %}
+      {% if m.salary %}<div class="fact"><dt>CTC</dt><dd>{{ m.salary }}</dd></div>{% endif %}
+      <div class="fact"><dt>Source</dt><dd>{{ m.source }}</dd></div>
+      <div class="fact"><dt>Fit</dt><dd>{{ "%.2f"|format(m.fit or 0) }}</dd></div>
+      {% if settled and m.actioned_at %}
+      <div class="fact"><dt>Applied</dt><dd class="ok" data-date="{{ m.actioned_at }}">—</dd></div>
+      {% endif %}
+    </dl>
+
+    {% if m.gap_skills %}
+    <p class="gaps">
+      <span class="gaps__label">Gaps</span>
+      {% for skill in m.gap_skills[:8] %}<span class="gap">{{ skill }}</span>{% endfor %}
+      {% if m.gap_skills|length > 8 %}
+      <span class="gap gap--more">+{{ m.gap_skills|length - 8 }}</span>
+      {% endif %}
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="job__acts">
+    {% if not settled %}
+      {% if m.apply_url %}
+      <a class="btn btn--primary js-apply" href="{{ m.apply_url }}"
+         target="_blank" rel="noopener"
+         data-job-id="{{ m.job_id }}"
+         data-role="{{ m.title }}" data-company="{{ m.company }}">Apply</a>
+      {% endif %}
+      <a class="btn" href="{{ m.pdf_url }}">Resume PDF</a>
+      <a class="btn btn--quiet" href="{{ m.docx_url }}">DOCX</a>
+      <button class="btn btn--quiet js-status" type="button"
+              data-job-id="{{ m.job_id }}" data-status="applied"
+              title="Mark applied without opening the posting">Mark applied</button>
+      <button class="btn btn--quiet js-status" type="button"
+              data-job-id="{{ m.job_id }}" data-status="dismissed">Dismiss</button>
+    {% else %}
+      <a class="btn btn--primary" href="{{ m.pdf_url }}">Resume PDF</a>
+      <a class="btn" href="{{ m.docx_url }}">DOCX</a>
+      {% if m.apply_url %}
+      <a class="btn btn--quiet" href="{{ m.apply_url }}" target="_blank" rel="noopener">Posting</a>
+      {% endif %}
+      <button class="btn btn--quiet js-status" type="button"
+              data-job-id="{{ m.job_id }}" data-status="pending">Undo</button>
+    {% endif %}
+  </div>
+</li>
+{% endmacro %}
