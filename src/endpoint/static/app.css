@@ -1,0 +1,340 @@
+/* Job Bot dashboard — a scoring instrument, not a CRM.
+ *
+ * The design leans on one idea: the match score against its threshold is the
+ * only number that decides anything, so it is drawn to scale on every row
+ * rather than merely printed. Everything else stays quiet around it.
+ *
+ * Typography: the interface is monospace because it is mostly numbers, IDs
+ * and labels, and aligned digits are genuinely easier to scan down a column.
+ * Job titles and company names break to a sans face — they're prose, and
+ * mono makes prose slow to read.
+ */
+
+:root {
+  --ink:        #101c2e;
+  --ink-soft:   #4a5a70;
+  --ink-faint:  #8595a8;
+  --paper:      #f3f5f8;
+  --card:       #ffffff;
+  --rule:       #d5dce5;
+  --signal:     #2b6ce8;   /* above threshold, links, focus */
+  --warn:       #f4b942;   /* the threshold tick itself */
+  --under:      #9aa8ba;   /* below threshold */
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+
+  --bar-h: 3.25rem;
+  --r: 3px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink:       #e7edf5;
+    --ink-soft:  #9fb0c6;
+    --ink-faint: #6b7d94;
+    --paper:     #0b1320;
+    --card:      #121d2e;
+    --rule:      #24354c;
+    --signal:    #5b95ff;
+    --warn:      #f4b942;
+    --under:     #47586e;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+}
+
+a { color: var(--signal); }
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- top bar */
+
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: var(--bar-h);
+  padding: 0 1rem;
+  background: var(--card);
+  border-bottom: 1px solid var(--rule);
+  flex-wrap: wrap;
+}
+
+.bar__id { display: flex; align-items: center; gap: .5rem; }
+
+/* A miniature of the score measure — the page's own mark. */
+.bar__mark {
+  width: 22px; height: 10px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, var(--signal) 0 60%, var(--rule) 60% 100%);
+  box-shadow: inset -8px 0 0 -7px var(--warn);
+}
+
+.bar__name { font-weight: 700; letter-spacing: .14em; font-size: 12px; }
+
+.bar__nav { display: flex; gap: .25rem; margin-right: auto; }
+
+.tab {
+  display: flex; align-items: center; gap: .4rem;
+  padding: .3rem .6rem;
+  border-radius: var(--r);
+  color: var(--ink-soft);
+  text-decoration: none;
+  font-size: 12px;
+}
+.tab:hover { background: var(--paper); color: var(--ink); }
+.tab--on { background: var(--ink); color: var(--card); }
+.tab__n { color: inherit; opacity: .65; font-variant-numeric: tabular-nums; }
+
+.bar__run { display: flex; align-items: center; gap: .5rem; }
+
+.check { display: flex; align-items: center; gap: .3rem; color: var(--ink-soft); font-size: 12px; cursor: pointer; }
+.check input { accent-color: var(--signal); }
+
+#run-target {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: .3rem .4rem;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+}
+
+.btn-run {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  padding: .4rem 1rem;
+  color: #fff;
+  background: var(--signal);
+  border: none;
+  border-radius: var(--r);
+  cursor: pointer;
+}
+.btn-run:hover { filter: brightness(1.08); }
+.btn-run[disabled] { background: var(--under); cursor: not-allowed; }
+
+/* ------------------------------------------------------------------- page */
+
+.page { max-width: 62rem; margin: 0 auto; padding: 1.25rem 1rem 6rem; }
+
+.note { color: var(--ink-soft); margin: 0 0 1rem; font-size: 12px; }
+
+.empty { padding: 4rem 1rem; text-align: center; }
+.empty__line { font-size: 15px; margin: 0 0 .4rem; }
+.empty__hint { color: var(--ink-soft); margin: 0; font-size: 12px; }
+
+/* ------------------------------------------------------------------- jobs */
+
+.jobs { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+
+.job {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr auto;
+  gap: 1.25rem;
+  align-items: start;
+  padding: .9rem 1rem;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+}
+
+/* --- the signature: score drawn against its threshold --- */
+
+.score__n {
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+
+.score__measure {
+  position: relative;
+  height: 6px;
+  margin: .45rem 0 .3rem;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.score__fill {
+  position: absolute; inset: 0 auto 0 0;
+  background: var(--signal);
+}
+
+/* The threshold, standing above the fill so it reads as a gate. */
+.score__tick {
+  position: absolute; top: -2px; bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--warn);
+}
+
+.score__scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- body --- */
+
+.job__title {
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 .1rem;
+  line-height: 1.3;
+}
+
+.job__co {
+  font-family: var(--sans);
+  color: var(--ink-soft);
+  margin: 0 0 .55rem;
+  font-size: 13px;
+}
+
+.facts { display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; margin: 0; }
+.fact { display: flex; gap: .4rem; }
+.fact dt { color: var(--ink-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.fact dd { margin: 0; font-size: 12px; }
+
+.gaps { margin: .55rem 0 0; display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; }
+.gaps__label { color: var(--ink-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.gap {
+  font-size: 11px;
+  padding: .1rem .4rem;
+  color: var(--ink-soft);
+  border: 1px dashed var(--rule);
+  border-radius: 2px;
+}
+
+/* --- actions --- */
+
+.job__acts { display: flex; flex-direction: column; gap: .35rem; }
+
+.act {
+  display: block;
+  text-align: center;
+  min-width: 5rem;
+  padding: .35rem .7rem;
+  font-size: 12px;
+  text-decoration: none;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: var(--r);
+}
+.act:hover { border-color: var(--signal); color: var(--signal); }
+.act--go { background: var(--ink); color: var(--card); border-color: var(--ink); }
+.act--go:hover { filter: brightness(1.25); color: var(--card); }
+.act--sm { min-width: 0; padding: .15rem .5rem; font-size: 11px; }
+
+/* ------------------------------------------------------------------ table */
+
+.grid { width: 100%; border-collapse: collapse; font-size: 12px; }
+.grid th {
+  text-align: left;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--ink-faint);
+  font-weight: 600;
+  padding: .4rem .6rem;
+  border-bottom: 1px solid var(--rule);
+}
+.grid td { padding: .45rem .6rem; border-bottom: 1px solid var(--rule); }
+.grid tr:hover td { background: var(--card); }
+.grid .num { text-align: right; font-variant-numeric: tabular-nums; width: 4.5rem; }
+.muted { color: var(--ink-soft); }
+
+.near { color: var(--under); }
+/* Within 0.05 of the line — the ones worth a second look. */
+.near--close { color: var(--warn); font-weight: 700; }
+
+/* -------------------------------------------------------------- run panel */
+
+.runpanel {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 30;
+  background: var(--card);
+  border-top: 1px solid var(--rule);
+  box-shadow: 0 -6px 24px rgb(0 0 0 / .12);
+}
+
+.runpanel__head {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .45rem .9rem;
+  border-bottom: 1px solid var(--rule);
+  font-size: 12px;
+}
+
+.runpanel__x {
+  margin-left: auto;
+  background: none; border: none; cursor: pointer;
+  color: var(--ink-soft); font-size: 17px; line-height: 1;
+}
+
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--under); flex: none; }
+.dot--live { background: var(--signal); animation: pulse 1.4s ease-in-out infinite; }
+.dot--ok   { background: #2f9e5f; }
+.dot--bad  { background: #d6453d; }
+
+@keyframes pulse { 50% { opacity: .25; } }
+
+.runpanel__log {
+  margin: 0;
+  padding: .6rem .9rem;
+  max-height: 14rem;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* ------------------------------------------------------------------ small */
+
+@media (max-width: 40rem) {
+  .job {
+    grid-template-columns: 1fr;
+    gap: .7rem;
+  }
+  .score { display: grid; grid-template-columns: 3.2rem 1fr; gap: .6rem; align-items: center; }
+  .score__scale { display: none; }
+  .score__measure { margin: 0; }
+  .job__acts { flex-direction: row; flex-wrap: wrap; }
+  .act { flex: 1 1 auto; }
+  .hide-sm { display: none; }
+  .bar { gap: .5rem; padding: .5rem .75rem; }
+  .bar__nav { order: 3; width: 100%; margin-right: 0; }
+}

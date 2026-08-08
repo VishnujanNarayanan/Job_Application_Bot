@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% set active = 'skipped' %}
+{% block title %}Skipped · Job Bot{% endblock %}
+
+{% block content %}
+<p class="note">
+  Jobs that parsed and scored but landed under {{ threshold }}. Newest first.
+  A cluster just below the line is the signal that the threshold wants moving.
+</p>
+
+{% if not skipped %}
+  <div class="empty">
+    <p class="empty__line">Nothing skipped yet.</p>
+  </div>
+{% else %}
+  <table class="grid">
+    <thead>
+      <tr><th class="num">Score</th><th>Role</th><th>Company</th><th class="hide-sm">Where</th><th class="hide-sm">Via</th><th></th></tr>
+    </thead>
+    <tbody>
+    {% for s in skipped %}
+      <tr>
+        <td class="num">
+          <span class="near {% if s.score and s.score >= threshold - 0.05 %}near--close{% endif %}">
+            {{ "%.2f"|format(s.score or 0) }}
+          </span>
+        </td>
+        <td>{{ s.title }}</td>
+        <td class="muted">{{ s.company }}</td>
+        <td class="muted hide-sm">{{ s.location }}</td>
+        <td class="muted hide-sm">{{ s.source }}</td>
+        <td>
+          {% if s.apply_url %}
+          <a class="act act--sm" href="{{ s.apply_url }}" target="_blank" rel="noopener">Open</a>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Job Bot{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%23101c2e'/><rect x='3' y='9' width='10' height='2' fill='%232b6ce8'/><rect x='7.5' y='5' width='1' height='6' fill='%23f4b942'/></svg>">
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar__id">
+    <span class="bar__mark" aria-hidden="true"></span>
+    <span class="bar__name">JOB&nbsp;BOT</span>
+  </div>
+
+  <nav class="bar__nav">
+    <a href="/dashboard" class="tab {% if active == 'matches' %}tab--on{% endif %}">
+      Matches <span class="tab__n">{{ match_count }}</span>
+    </a>
+    <a href="/dashboard/skipped" class="tab {% if active == 'skipped' %}tab--on{% endif %}">
+      Skipped <span class="tab__n">{{ skipped_count }}</span>
+    </a>
+  </nav>
+
+  <div class="bar__run">
+    <label class="check">
+      <input type="checkbox" id="dry-run">
+      <span>Dry run</span>
+    </label>
+    <select id="run-target" aria-label="Where to run">
+      <option value="local">Here</option>
+      <option value="github">GitHub</option>
+    </select>
+    <button id="run-btn" class="btn-run" type="button">Run</button>
+  </div>
+</header>
+
+<main class="page">
+  {% block content %}{% endblock %}
+</main>
+
+<!-- Run panel: hidden until a run starts, then streams the pipeline's log. -->
+<section id="run-panel" class="runpanel" hidden aria-live="polite">
+  <div class="runpanel__head">
+    <span id="run-dot" class="dot"></span>
+    <span id="run-label">Idle</span>
+    <button id="run-close" class="runpanel__x" type="button" aria-label="Hide log">&times;</button>
+  </div>
+  <pre id="run-log" class="runpanel__log" tabindex="0"></pre>
+</section>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -21,17 +21,29 @@ supervisor) on port 8000 with a reverse proxy or direct access.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import Response as FastAPIResponse
+from fastapi.staticfiles import StaticFiles
 
+from src.endpoint import dashboard
 from src.endpoint.cache import get_or_build
 from src.state.db import session_scope
 
 log = structlog.get_logger(__name__)
 
-app = FastAPI(title="Job Bot Resume Endpoint", version="2.0")
+app = FastAPI(title="Job Bot", version="2.0")
+
+# Only the dashboard's own assets are served statically. `data/` is never
+# mounted: the CSV index holds every JD snippet, score and gap-skill list.
+app.mount(
+    "/static",
+    StaticFiles(directory=str(Path(__file__).resolve().parent / "static")),
+    name="static",
+)
+app.include_router(dashboard.router)
 
 # Valid extensions
 _VALID_EXT = re.compile(r"^(pdf|docx)$")
