@@ -1,66 +1,26 @@
 {% extends "base.html" %}
+{% from "_job_card.html" import job_card %}
 {% set active = 'matches' %}
 {% block title %}Matches · Job Bot{% endblock %}
 
 {% block content %}
-<div id="matches">
+<div class="head">
+  <div>
+    <h1 class="head__title">Matches</h1>
+    <p class="head__sub">
+      Scored at or above {{ threshold }} and awaiting your decision, best fit first.
+    </p>
+  </div>
+</div>
+
 {% if not matches %}
   <div class="empty">
-    <p class="empty__line">No matches yet.</p>
+    <p class="empty__line">Nothing waiting on you.</p>
     <p class="empty__hint">Press Run to scrape and score the next batch of listings.</p>
   </div>
 {% else %}
   <ol class="jobs">
-  {% for m in matches %}
-    <li class="job">
-      <!-- The measure is the point of this row: where the job landed against
-           the threshold, drawn to scale rather than stated. -->
-      <div class="score">
-        <div class="score__n">{{ "%.2f"|format(m.score or 0) }}</div>
-        <div class="score__measure" role="img"
-             aria-label="Score {{ "%.2f"|format(m.score or 0) }} against a threshold of {{ threshold }}">
-          <div class="score__fill" style="width: {{ (100 * (m.score or 0))|round(1) }}%"></div>
-          <div class="score__tick" style="left: {{ (100 * threshold)|round(1) }}%"></div>
-        </div>
-        <div class="score__scale"><span>0</span><span>{{ threshold }}</span><span>1</span></div>
-      </div>
-
-      <div class="job__body">
-        <h2 class="job__title">{{ m.title }}</h2>
-        <p class="job__co">{{ m.company }}</p>
-
-        <dl class="facts">
-          {% if m.location or m.location_type %}
-          <div class="fact">
-            <dt>Where</dt>
-            <dd>{{ [m.location_type, m.location]|select|unique|join(' · ') }}</dd>
-          </div>
-          {% endif %}
-          {% if m.salary %}
-          <div class="fact"><dt>CTC</dt><dd>{{ m.salary }}</dd></div>
-          {% endif %}
-          <div class="fact"><dt>Via</dt><dd>{{ m.source }}</dd></div>
-          <div class="fact"><dt>Fit</dt><dd>{{ "%.2f"|format(m.fit or 0) }}</dd></div>
-        </dl>
-
-        {% if m.gap_skills %}
-        <p class="gaps">
-          <span class="gaps__label">Gaps</span>
-          {% for skill in m.gap_skills %}<span class="gap">{{ skill }}</span>{% endfor %}
-        </p>
-        {% endif %}
-      </div>
-
-      <div class="job__acts">
-        {% if m.apply_url %}
-        <a class="act act--go" href="{{ m.apply_url }}" target="_blank" rel="noopener">Apply</a>
-        {% endif %}
-        <a class="act" href="{{ m.pdf_url }}">PDF</a>
-        <a class="act" href="{{ m.docx_url }}">DOCX</a>
-      </div>
-    </li>
-  {% endfor %}
+    {% for m in matches %}{{ job_card(m, threshold) }}{% endfor %}
   </ol>
 {% endif %}
-</div>
 {% endblock %}

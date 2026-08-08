@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class JDParsed(BaseModel):
@@ -26,8 +26,15 @@ class JDParsed(BaseModel):
     (CLAUDE.md: "Don't add JDParsed fields unused by Layer 4 or 5").
     """
 
+    # 1500, not 500: providers that validate tool calls server-side (Groq)
+    # REJECT the whole call when a bound is exceeded, and the retry costs a
+    # full call's tokens. A 632-character summary did that twice on
+    # 2026-08-08 and the wasted tokens are what breached the per-minute
+    # limit. The cap is a sanity bound, not a budget — nothing downstream
+    # cares about the exact length, so it should be loose enough never to be
+    # the reason a parse fails.
     role_summary: str = Field(
-        ..., max_length=500, description="2-3 sentence summary of the role"
+        ..., max_length=1500, description="2-3 sentence summary of the role"
     )
     role_category: str = Field(
         ..., description="Short slug classifying the role type (e.g. backend, data, ml, fullstack, devops, quant)"
@@ -48,6 +55,20 @@ class JDParsed(BaseModel):
         default_factory=list,
         description="Key responsibilities — informs bullet scoring in Layer 4",
     )
+
+    @field_validator(
+        "required_skills", "nice_to_have", "responsibilities", mode="before"
+    )
+    @classmethod
+    def _null_list_means_empty(cls, value):
+        """Accept an explicit null for a list field and read it as "none".
+
+        A default only applies when a key is ABSENT; models routinely emit the
+        key with null instead, which is the same statement. Groq validates
+        tool calls server-side and rejected the whole call for it — one wasted
+        call per occurrence, against a per-minute token limit.
+        """
+        return [] if value is None else value
 
     # --- Iteration 2 additions (notification + informational salary) -------
     team_or_product: str | None = Field(

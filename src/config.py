@@ -23,6 +23,17 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import load_dotenv
+
+# Load .env here, in the one module every entrypoint imports, so secrets are
+# present no matter how the process was started. Previously only db.py,
+# notifications.py and aws_check.py loaded it, which meant a CLI that touched
+# none of them silently saw no keys at all — src.cli.llm_check, whose entire
+# job is verifying keys, reported "NO KEY" for keys that were set.
+#
+# load_dotenv does not overwrite existing variables, so a real environment
+# (GitHub Actions secrets) still wins over the file.
+load_dotenv()
 
 
 def resolve_endpoint_base_url(config_url: str) -> str:

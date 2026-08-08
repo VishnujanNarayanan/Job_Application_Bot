@@ -83,7 +83,7 @@ def _run(dry_run: bool, log) -> int:
     from src.builder.llm_call import build as build_selection
     from src.config import settings, resolve_endpoint_base_url
     from src.endpoint.cache import prerender
-    from src.llm.client import LLMError
+    from src.llm.client import LLMBudgetError, LLMError
     from src.notifications import send_dry_run_summary, send_match_notification
     from src.parser import apply_to_row, grounded_skills, parse
     from src.reasons import (
@@ -221,12 +221,28 @@ def _run(dry_run: bool, log) -> int:
 
         matched_count = 0
         skipped_count = 0
+        budget_exhausted = False
         short_circuit = int(cfg.scraper.short_circuit_count)
 
         for job in passing:
             # --- Layer 3: parse ---
             try:
                 parsed = parse(job)
+            except LLMBudgetError as exc:
+                # The account is out of budget or daily quota, so every
+                # remaining job would fail the same way. Stop the batch and
+                # keep what has already been committed rather than logging 24
+                # more identical failures (observed 2026-08-08: a spend cap
+                # took a 25-job run through ~15 minutes of doomed retries).
+                log.error(
+                    "run_aborted",
+                    reason="llm_budget_exhausted",
+                    processed=matched_count + skipped_count,
+                    remaining=len(passing) - (matched_count + skipped_count),
+                    error=str(exc),
+                )
+                budget_exhausted = True
+                break
             except LLMError as exc:
                 log.error(
                     "gemini_failure",
@@ -426,8 +442,11 @@ def _run(dry_run: bool, log) -> int:
         scraped=total,
         matched=matched_count,
         skipped=skipped_count,
+        aborted="llm_budget_exhausted" if budget_exhausted else None,
     )
-    return 0
+    # Non-zero so a scheduled run surfaces as failed rather than quietly
+    # reporting success while having processed almost nothing.
+    return 2 if budget_exhausted else 0
 
 
 def _compute_gap_skills(required: list[str], pool: list[str]) -> list[str]:

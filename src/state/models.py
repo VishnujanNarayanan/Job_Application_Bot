@@ -121,8 +121,13 @@ class Applied(Base):
     final_score: Mapped[float | None] = mapped_column(Float)
     gap_skills: Mapped[Any | None] = mapped_column(JSONB)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # pending | applied | skipped (operator sets via Telegram/Sheet).
+    # pending | applied | dismissed — set by the operator from the dashboard,
+    # which asks "did you apply?" when they return from the job posting.
     user_status: Mapped[str] = mapped_column(Text, default="pending")
+    # When user_status last changed. NULL means never actioned; it is not
+    # backfilled from built_at, which is when the resume was built rather than
+    # when the operator acted.
+    user_status_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     built_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

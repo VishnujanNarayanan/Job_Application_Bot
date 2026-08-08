@@ -186,7 +186,13 @@ def test_presign_returns_none_on_error():
 # notification link selection
 # ---------------------------------------------------------------------------
 
-def _notify_capturing_buttons(resume_urls):
+# A configured instance reaches its endpoint over Tailscale, not localhost.
+# The helper used "http://localhost:8000" until 2026-08-08, which hid the fact
+# that Telegram rejects such a url outright.
+_BASE_URL = "https://box.tail1234.ts.net"
+
+
+def _notify_capturing_buttons(resume_urls, base_url=_BASE_URL):
     """Run send_match_notification and return {label: url} for its buttons."""
     from src.state.models import AllJobs
     from src.llm.schemas import JDParsed
@@ -239,7 +245,7 @@ def _notify_capturing_buttons(resume_urls):
         from src.notifications import send_match_notification
         send_match_notification(
             job=job, parsed=parsed, result=result, gap_skills=[],
-            endpoint_base_url="http://localhost:8000",
+            endpoint_base_url=base_url,
             title_alias="Backend Engineer", resume_urls=resume_urls,
         )
     return captured
@@ -259,13 +265,44 @@ def test_presigned_urls_win_over_endpoint_urls():
 def test_falls_back_to_endpoint_urls_without_prerender():
     buttons = _notify_capturing_buttons(None)
 
-    assert buttons["Resume PDF"] == "http://localhost:8000/resume/job123.pdf"
-    assert buttons["Resume DOCX"] == "http://localhost:8000/resume/job123.docx"
+    assert buttons["Resume PDF"] == "https://box.tail1234.ts.net/resume/job123.pdf"
+    assert buttons["Resume DOCX"] == "https://box.tail1234.ts.net/resume/job123.docx"
 
 
 def test_falls_back_per_format():
     """A half-successful pre-render still yields two working buttons."""
     buttons = _notify_capturing_buttons({"docx": "https://s3.example/signed.docx"})
 
-    assert buttons["Resume PDF"] == "http://localhost:8000/resume/job123.pdf"
+    assert buttons["Resume PDF"] == "https://box.tail1234.ts.net/resume/job123.pdf"
     assert buttons["Resume DOCX"] == "https://s3.example/signed.docx"
+
+
+def test_an_unconfigured_base_url_still_delivers_the_match():
+    """The exact loss of 2026-08-08.
+
+    endpoint.base_url ships as the placeholder "http://localhost:8000". A
+    match was found and its resume built, then Telegram refused the whole
+    message — "Inline keyboard button url ... is invalid: wrong http url" —
+    and the only output this pipeline exists to produce was thrown away.
+
+    The unreachable buttons must drop; the apply link and the message must
+    still arrive.
+    """
+    buttons = _notify_capturing_buttons(
+        {}, base_url="http://localhost:8000"
+    )
+
+    assert "Resume PDF" not in buttons
+    assert "Resume DOCX" not in buttons
+    assert buttons["Apply"] == "https://apply.example/123"
+
+
+def test_a_presigned_link_survives_an_unconfigured_base_url():
+    """Pre-rendered formats go to S3, so they work regardless of base_url."""
+    buttons = _notify_capturing_buttons(
+        {"pdf": "https://s3.example/signed.pdf"},
+        base_url="http://localhost:8000",
+    )
+
+    assert buttons["Resume PDF"] == "https://s3.example/signed.pdf"
+    assert "Resume DOCX" not in buttons, "the un-prerendered format is unreachable"
