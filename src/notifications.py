@@ -82,6 +82,7 @@ def send_match_notification(
     endpoint_base_url: str,
     *,
     title_alias: str | None = None,
+    resume_urls: dict[str, str] | None = None,
 ) -> None:
     """Send a per-match Telegram message with apply + resume links.
 
@@ -94,6 +95,12 @@ def send_match_notification(
 
     ``title_alias`` is the LLM-chosen title from the StoredSelection;
     falls back to ``job.role`` when not yet available at call time.
+
+    ``resume_urls`` optionally supplies ``{"pdf": url, "docx": url}`` from a
+    build-time render (see ``endpoint.cache.prerender``). When present those
+    win, because they point at S3 and keep working with the operator's laptop
+    switched off. Any format missing from the dict falls back to the endpoint
+    URL, which only resolves while the laptop is on.
     """
     score = f"{result.final_score:.2f}"
     fields = match_display_fields(job, parsed, title_alias=title_alias)
@@ -118,8 +125,10 @@ def send_match_notification(
     text = "\n".join(line for line in text_lines if line is not None)
 
     apply_url = fields["apply_url"]
-    pdf_url = f"{endpoint_base_url}/resume/{job.job_id}.pdf"
-    docx_url = f"{endpoint_base_url}/resume/{job.job_id}.docx"
+    resume_urls = resume_urls or {}
+    base = endpoint_base_url.rstrip("/")
+    pdf_url = resume_urls.get("pdf") or f"{base}/resume/{job.job_id}.pdf"
+    docx_url = resume_urls.get("docx") or f"{base}/resume/{job.job_id}.docx"
 
     try:
         # Build the button row first, then construct the markup once —

@@ -1,0 +1,110 @@
+# Layer 1 — the scheduler, as a manually-triggered GitHub Actions job.
+#
+# Why this exists: the pipeline used to run only while the operator's laptop
+# was awake. Running it here means a run can be started from the GitHub mobile
+# app with the laptop shut, and matches still arrive over Telegram with
+# working resume links (the runner pre-renders them to S3 — see the
+# `prerender` block in config.yaml).
+#
+# Trigger: manual only. `schedule:` is left commented below rather than
+# deleted, because the free-tier minutes budget is the reason it's off:
+# private repos get 2,000 min/month, and at ~5 min a run a 40-minute cadence
+# would need roughly 1,080 runs (~5,400 min). Uncomment for a 2-hourly sweep
+# (~360 runs, ~1,800 min) if that trade ever looks worth it.
+#
+# Note: GitHub disables scheduled workflows on private repos after a stretch
+# with no repository activity, so a cron here is not a fire-and-forget.
+
+name: pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Scrape, score and build, but send to the test chat only"
+        type: boolean
+        default: false
+  # schedule:
+  #   - cron: "0 */2 * * *"   # every 2 hours, UTC
+
+# Never let two runs overlap: they would double-scrape, double-spend Gemini
+# quota, and race on the same rows. The data/run.lock flock in src/main.py
+# only guards a single machine, so the guarantee has to come from here.
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+      AWS_CLOUDWATCH_LOG_GROUP: ${{ secrets.AWS_CLOUDWATCH_LOG_GROUP }}
+      AWS_CLOUDWATCH_NAMESPACE: ${{ secrets.AWS_CLOUDWATCH_NAMESPACE }}
+      TZ: Asia/Kolkata
+      LOG_LEVEL: INFO
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # LibreOffice converts the assembled DOCX to PDF. Needed here (unlike a
+      # scrape-only runner) because this job pre-renders resumes so the
+      # Telegram links work while the laptop is off.
+      - name: Install LibreOffice
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer
+
+      # MiniLM is ~90 MB and is fetched on first embed; cache it so only the
+      # first run pays for it.
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-minilm-v1
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # The operator profile and resume template are not in git (personal
+      # data) and are too big for GitHub secrets (48 KB cap vs a ~142 KB
+      # profile), so they come from the S3 bucket that already backs the
+      # render cache. Run `python -m src.cli.assets push` on the laptop after
+      # editing master_profile.yaml.
+      - name: Pull operator assets from S3
+        run: python -m src.cli.assets pull
+
+      - name: Run pipeline
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python -m src.main --dry-run
+          else
+            python -m src.main
+          fi
+
+      # The CSV index is deliberately NOT written here — this filesystem is
+      # destroyed when the job ends. It is a projection of the rows just
+      # committed to Postgres, so the laptop regenerates it (dashboard load,
+      # or `python -m src.cli.export`) with this run's results included.
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-logs-${{ github.run_id }}
+          path: data/logs/
+          if-no-files-found: ignore
+          retention-days: 7

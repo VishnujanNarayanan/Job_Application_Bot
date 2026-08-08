@@ -32,21 +32,24 @@ python-docx==1.1.2
 reportlab==4.2.5
 # PDF conversion uses LibreOffice headless (system binary, not pip).
 
-# --- Resume endpoint (Layer 6) ----------------------------------------------
-# FastAPI serves /resume/{job_id}.pdf|.docx on demand; uvicorn is the ASGI
-# server; httpx backs fastapi.testclient.TestClient in unit tests.
+# --- Resume endpoint + dashboard (Layer 6) ----------------------------------
+# FastAPI serves /resume/{job_id}.pdf|.docx on demand and the operator
+# dashboard; uvicorn is the ASGI server; httpx backs both
+# fastapi.testclient.TestClient and the GitHub workflow-dispatch call.
+# jinja2 is listed explicitly: Starlette needs it for Jinja2Templates but does
+# not depend on it.
 fastapi==0.115.6
 uvicorn==0.34.0
 httpx==0.28.1
+jinja2==3.1.4
 
 # --- Notifications ----------------------------------------------------------
 python-telegram-bot==21.7
 
-# --- Reporting (Google Sheets + Docs) ---------------------------------------
-gspread==6.1.4
-google-api-python-client==2.154.0
-google-auth==2.36.0
-google-auth-oauthlib==1.2.1
+# --- Reporting --------------------------------------------------------------
+# Layer 9 writes local CSV/text files via the stdlib `csv` module — no
+# dependency. Google Sheets/Docs (gspread, google-api-python-client,
+# google-auth, google-auth-oauthlib) were removed in v2.
 
 # --- Logging + config -------------------------------------------------------
 structlog==24.4.0

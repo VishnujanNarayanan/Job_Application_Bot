@@ -29,6 +29,8 @@ from src.config import settings
 log = structlog.get_logger(__name__)
 
 _MONTH_SECONDS = 30 * 24 * 3600
+# AWS SigV4 hard limit on presigned URL lifetime.
+_MAX_PRESIGN_SECONDS = 7 * 24 * 3600
 
 
 def _s3():
@@ -73,6 +75,37 @@ def cache_get_bytes(cache_key: str, ext: str) -> bytes | None:
     except Exception as exc:
         # botocore.exceptions.ClientError with 404 is a normal cache miss.
         log.debug("s3_cache_miss", cache_key=cache_key, ext=ext, error=str(exc))
+        return None
+
+
+def cache_presigned_url(
+    cache_key: str, ext: str, expires_seconds: int
+) -> str | None:
+    """Return a time-limited public URL for a cached render, or None.
+
+    Used when the pipeline runs somewhere that isn't serving HTTP (a GitHub
+    Actions runner): the resume endpoint on the operator's laptop is
+    unreachable, so the notification links point straight at S3 instead.
+
+    SigV4 caps presigned URLs at 7 days; longer expiries are clamped, since
+    the alternative is a URL that AWS rejects outright. Signing is a local
+    computation — no network call, and no object existence check, so callers
+    must only presign keys they have just uploaded.
+
+    Needs only ``s3:GetObject``, already granted per hard rule #19.
+    """
+    key = f"{_prefix(ext)}/{cache_key}.{ext}"
+    expires = min(int(expires_seconds), _MAX_PRESIGN_SECONDS)
+    try:
+        url = _s3().generate_presigned_url(
+            "get_object",
+            Params={"Bucket": _bucket(), "Key": key},
+            ExpiresIn=expires,
+        )
+        log.info("s3_presigned", cache_key=cache_key, ext=ext, expires_in=expires)
+        return url
+    except Exception as exc:
+        log.error("s3_presign_failed", cache_key=cache_key, ext=ext, error=str(exc))
         return None
 
 

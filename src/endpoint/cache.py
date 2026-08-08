@@ -71,6 +71,60 @@ def get_or_build(
     return data, _CONTENT_TYPES[ext]
 
 
+def prerender(
+    job_id: str,
+    db_session: Session,
+    *,
+    formats: tuple[str, ...] = ("pdf", "docx"),
+    expires_seconds: int,
+) -> dict[str, str]:
+    """Render a matched job's resume now and return presigned S3 URLs.
+
+    Called by the pipeline (not the endpoint) so resume links work when the
+    operator's laptop — and therefore the resume endpoint — is switched off.
+    The render itself goes through ``get_or_build``, so it shares the cache,
+    the assembler, the diff validation, and the ``render_cache`` bookkeeping;
+    the only addition is presigning the resulting S3 object.
+
+    This is the amendment to hard rule #8 ("render on demand, never store
+    PDFs at build time"): the operator opted into build-time rendering so
+    phone-triggered runs produce usable links. It stays a cache rather than a
+    permanent pile — the ``{ext}_cache/`` prefix carries a 1-month S3
+    lifecycle rule and ``render_cache`` carries a matching TTL.
+
+    Best-effort per format: a failure to render or presign one format logs
+    and is omitted from the result rather than raising, so a render problem
+    can never cost the operator the notification itself.
+
+    Returns ``{ext: presigned_url}`` for the formats that succeeded.
+    """
+    from src.aws.s3 import cache_presigned_url
+
+    urls: dict[str, str] = {}
+    for ext in formats:
+        try:
+            applied_row: Applied | None = db_session.get(Applied, job_id)
+            if applied_row is None or applied_row.selection_json is None:
+                log.warning("prerender_skipped", job_id=job_id, reason="no_selection")
+                return urls
+
+            get_or_build(job_id, ext, db_session)
+
+            selection = StoredSelection.model_validate(applied_row.selection_json)
+            url = cache_presigned_url(
+                f"{job_id}_{selection.template_version}", ext, expires_seconds
+            )
+            if url:
+                urls[ext] = url
+        except Exception as exc:
+            log.error(
+                "prerender_failed", job_id=job_id, fmt=ext, error=str(exc), exc_info=True
+            )
+
+    log.info("prerendered", job_id=job_id, formats=sorted(urls))
+    return urls
+
+
 def _check_render_cache(
     session: Session, cache_key: str, ext: str
 ) -> str | None:

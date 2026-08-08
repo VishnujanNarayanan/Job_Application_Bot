@@ -68,8 +68,12 @@ scheduler:
 scraper:
   hours_old:
     # JobSpy `hours_old` parameter — how far back to look per run.
-    peak: 2
-    off_peak: 5
+    # Runs are manually triggered (v2), not every 40 minutes, so a 2-hour
+    # window would show almost nothing on a once-a-day click. Sized to cover
+    # a day between clicks; the company cooldown and the all_jobs duplicate
+    # check stop the wider window re-notifying anything already seen.
+    peak: 24
+    off_peak: 48
   # Stop searching when this many jobs have passed hard filters in one run.
   short_circuit_count: 20
   # JobSpy results_wanted cap per query term.
@@ -108,8 +112,15 @@ scraper:
     # Temporarily LinkedIn-only: apis.indeed.com is timing out from this
     # network. Re-add "indeed" and "glassdoor" once connectivity is restored.
     - "linkedin"
-  # Serial search rotation — one term per run, advances on short-circuit.
-  # Rotation state persisted in search_rotation_state DB table.
+  # Search-term rotation. Each run takes `terms_per_run` terms starting at the
+  # persisted index (search_rotation_state table) and advances past them, so
+  # consecutive runs sweep the list rather than repeating its head.
+  #
+  # Sizing is a cost/coverage trade: each scraped job costs 1 Gemini call to
+  # parse, plus 1 more to build if it scores >= 0.50. More terms per run means
+  # fewer clicks to sweep the 24-term list, but a bigger bill per click.
+  # Currently 1 — the cheapest setting, one term per run as before.
+  terms_per_run: 1
   search_terms:
     - "backend engineer"
     - "backend developer"
@@ -336,16 +347,27 @@ notifications:
   portal_zero_results_threshold: 3
 
 # ---------------------------------------------------------------------------
-# Analytics — Layer 9 (Google Sheets + Docs)
+# Analytics — Layer 9 (local files). Google Sheets/Docs were removed in v2:
+# they needed a GCP project, a service-account JSON, and a bind mount to
+# produce a table and a text report that local files do just as well.
+#
+# The CSVs are DERIVED from Postgres by `export_index`, never appended during
+# a run — a phone-triggered run executes on an ephemeral GitHub Actions runner
+# whose disk is destroyed at job end, so inline appends would be lost. Every
+# column is derivable from the DB, so regenerating on the laptop picks up
+# remote runs automatically. Paths are relative to the repo root.
 # ---------------------------------------------------------------------------
 analytics:
-  sheets:
-    applied_tab: "Applied"
-    skipped_tab: "Skipped"
-  docs:
-    monthly_report_enabled: true
-    # Skills appearing in >= this fraction of weekly JDs trigger a
-    # "consider learning" alert in the Sunday report.
+  local:
+    dir: "data/index"
+    matches_file: "matches.csv"
+    skipped_file: "skipped.csv"
+    near_duplicates_file: "near_duplicates.csv"
+  report:
+    monthly_enabled: true
+    dir: "data/reports"
+    # Skills appearing in >= this fraction of the month's JDs trigger a
+    # "consider learning" alert in the report.
     skill_demand_alert_threshold: 0.30
 
 # ---------------------------------------------------------------------------
@@ -358,17 +380,60 @@ aws:
   s3_bucket: "application-bot-vishnujan-resumes"
 
 # ---------------------------------------------------------------------------
-# Resume endpoint — FastAPI (Layer 6). Serves /resume/{job_id}.pdf|.docx.
-# base_url: the public URL embedded in Telegram/Sheets resume links. When
-# running locally this is the operator's reserved (static) ngrok domain, so
-# links survive ngrok/laptop restarts. resolve_endpoint_base_url() still
-# prefers the live ngrok tunnel at runtime; this is the durable fallback.
+# Pre-render — Layer 6 at build time (amends CLAUDE.md hard rule #8).
+#
+# Rule #8 says resumes render on demand and are never stored at build time.
+# The operator explicitly overrode this so resume links work with the laptop
+# switched off: the on-demand endpoint runs on the laptop, so a run triggered
+# from the phone would otherwise produce links that 404 until it is reopened.
+#
+# It stays a CACHE, not a permanent pile — renders go to the same
+# `{ext}_cache/` S3 prefix, which already carries a 1-month lifecycle rule,
+# and are recorded in render_cache with a matching TTL. The endpoint still
+# renders on demand for anything expired or never pre-rendered.
+# ---------------------------------------------------------------------------
+prerender:
+  enabled: true
+  # Presigned-URL lifetime. AWS SigV4 caps this at 7 days; longer values are
+  # clamped. A listing is usually stale by then anyway, and the endpoint still
+  # serves the resume once the laptop is back on.
+  link_expiry_days: 7
+
+# ---------------------------------------------------------------------------
+# Resume endpoint + dashboard — FastAPI (Layer 6).
+#
+# base_url is the host embedded in Telegram resume links. It is the machine's
+# Tailscale name: reachable from the operator's phone and laptop and from
+# nothing else, with a stable hostname and real certificates. ngrok was
+# dropped in v2 — it published the endpoint, which has no authentication, to
+# the whole internet on a guessable URL scheme (/resume/{job_id} where job_id
+# is the portal's own public posting id).
+#
+# Set this up once on the host:   tailscale serve --bg 8000
+# then read the name from:        tailscale status --json | grep DNSName
+#
+# Links only resolve on tailnet devices. Build-time pre-rendered resumes
+# (see `prerender` above) are served from S3 instead, so a phone-triggered
+# run still produces links that work anywhere.
 # ---------------------------------------------------------------------------
 endpoint:
-  base_url: "https://murky-bonding-epileptic.ngrok-free.dev"
+  base_url: "http://localhost:8000"   # replace with https://<host>.<tailnet>.ts.net
   port: 8000
   # Template path is config-driven so any instance can swap the file.
   template_path: "resumes/templates/Templete.docx"
+  # Operator dashboard (Layer 6 browser surface).
+  dashboard:
+    # The skipped table is the biggest one and only its top is ever scanned.
+    skipped_limit: 200
+    github:
+      # Dispatch target for the "GitHub" run option. Repo and token come from
+      # GITHUB_REPO / GITHUB_TOKEN in .env — the token needs only
+      # `actions: write` on this repository.
+      workflow_file: "pipeline.yml"
+      # The branch the workflow runs from. GitHub also only lists
+      # workflow_dispatch workflows in the Actions UI (and the mobile app)
+      # for the DEFAULT branch, so this must stay in step with it.
+      ref: "main"
 
 # ---------------------------------------------------------------------------
 # Logging

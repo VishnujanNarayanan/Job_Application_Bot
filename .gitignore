@@ -8,6 +8,8 @@ CHANGELOG.md
 
 # --- Secrets & credentials --------------------------------------------------
 .env
+# Google was removed in v2, but keep this ignored: any leftover service-account
+# JSON on an existing checkout must never become committable.
 config/google_service_account.json
 
 # --- User-owned source of truth (gitignored per spec) -----------------------
@@ -33,6 +35,12 @@ data/manual_queue/*
 !data/manual_queue/.gitkeep
 data/logs/*
 !data/logs/.gitkeep
+# Layer 9 index + reports: derived from Postgres, and they contain company
+# names, JD snippets and scores — never committed.
+data/index/*
+!data/index/.gitkeep
+data/reports/*
+!data/reports/.gitkeep
 data/pending_writes.jsonl
 data/run.lock
 
