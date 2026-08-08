@@ -184,20 +184,126 @@ selection:
   skills:
     # Step 1: deterministic scoring takes top-14 pool candidates.
     top_candidates: 14
-    # Step 2: LLM names exactly this many categories (3-5 skills each).
+    # Step 2: group the candidates using the explicit taxonomy below, then show
+    # the `categories_count` categories whose skills best match this JD.
+    #
+    # Why an explicit map rather than embedding similarity: knowing Grafana is
+    # observability, or that pytest is testing rather than infrastructure, is
+    # world knowledge. Sentence-transformer cosines between a short tech token
+    # and a category phrase do NOT carry it — measured on this pool, correct
+    # pairings scored 0.106-0.375 while wrong ones scored 0.054-0.347. The
+    # ranges overlap, so no threshold can separate them: "Grafana ->
+    # Monitoring" (right) scores 0.106 while "Linux -> Web & Frontend" (wrong)
+    # scores 0.347. A lookup is exact and costs nothing.
+    #
+    # Headings still vary per job, because which categories appear depends on
+    # which skills this JD pulled to the top: a data JD surfaces the data
+    # categories, a backend JD surfaces the backend ones.
+    #
+    # Keep in step with master_profile.yaml's skills_pool. A skill missing from
+    # here still gets grouped (nearest category by embedding) and is logged as
+    # `skill_untaxonomised` so it can be added.
     categories_count: 3
+    taxonomy:
+      "Languages":
+        - "Python"
+        - "JavaScript"
+        - "TypeScript"
+        - "SQL"
+        - "C++"
+        - "Bash"
+      "Backend & APIs":
+        - "Backend Development"
+        - "REST API Development"
+        - "FastAPI"
+        - "NestJS"
+        - "Node.js"
+        - "Express.js"
+        - "WebSockets / Socket.IO"
+        - "JWT Authentication"
+        - "Webhook & Callback Handling"
+      "Frontend & Full-Stack":
+        - "Full-Stack Development"
+        - "React"
+        - "Next.js"
+        - "React Native"
+        - "Tailwind CSS"
+        - "Responsive Web Design"
+      "Data Engineering & ETL":
+        - "Data Engineering"
+        - "ETL Pipelines"
+        - "Data Ingestion"
+        - "Incremental / Resumable ETL"
+        - "Data Quality & Validation"
+        - "Anomaly Detection"
+      "Scraping & Browser Automation":
+        - "Web Scraping"
+        - "Browser Automation"
+        - "Playwright"
+        - "Selenium"
+        - "Scrapy"
+        - "Crawlee"
+        - "BeautifulSoup"
+        - "Proxy Rotation"
+        - "Anti-bot / Stealth Scraping"
+        - "Session Management"
+        - "HTML Parsing / DOM Traversal"
+      "Concurrency & Networking":
+        - "Async Programming (asyncio)"
+        - "Concurrent / Parallel Programming"
+        - "Rate-limit Handling & Backoff"
+        - "HTTP Internals (headers, cookies, TLS, sessions)"
+      "Machine Learning & NLP":
+        - "Machine Learning"
+        - "Deep Learning"
+        - "Natural Language Processing"
+        - "Feature Engineering"
+        - "scikit-learn"
+        - "PyTorch"
+        - "TensorFlow"
+        - "Keras"
+        - "Computer Vision"
+        - "Semantic Search / Vector Retrieval"
+        - "sentence-transformers"
+        - "FAISS"
+      "Data Analysis & Visualisation":
+        - "Statistical Analysis / Hypothesis Testing"
+        - "pandas"
+        - "NumPy"
+        - "Matplotlib"
+        - "Seaborn"
+        - "Jupyter"
+      "Databases & Storage":
+        - "PostgreSQL"
+        - "MongoDB"
+        - "Redis"
+        - "SQLite"
+        - "TypeORM"
+        - "Database Schema Design"
+        - "Caching Strategies"
+      "Cloud, DevOps & Tooling":
+        - "Docker"
+        - "AWS"
+        - "Linux"
+        - "Git / GitHub"
+        - "CI/CD (GitHub Actions)"
+        - "Vercel"
+        - "Railway"
+      "Quantitative Finance":
+        - "Quantitative Finance / Market Data"
+        - "Time-Series Analysis"
+        - "Backtesting"
+        - "Financial Data Analysis"
+        - "NSE / Indian Equity Markets"
+        - "Risk-adjusted Scoring"
+      "Integrations & Platform":
+        - "Twilio (Voice / IVR)"
+        - "Geospatial / Location-Based Matching"
     skills_per_category_min: 3
     skills_per_category_max: 5
-    # Step 3: LLM picks up to this many Familiar With gap skills.
+    # Gap skills shown under "Familiar With" (ordered against the other
+    # categories by match, never pinned first — hard rule #7).
     familiar_with_max: 4
-    # Total pool skills shown: 10-14 (LLM optimises for clean grouping).
-    # Post-validation regenerates on banned category names.
-    banned_category_names:
-      - "Miscellaneous"
-      - "Other"
-      - "Various"
-      - "Additional Skills"
-      - "Soft Skills"
 
 # ---------------------------------------------------------------------------
 # Scoring — Layer 4 final score formula

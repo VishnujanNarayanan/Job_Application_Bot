@@ -1,6 +1,9 @@
-"""Iteration 2 — Layer 5: skills validator + Call 1b driver.
+"""Layer 5 — deterministic selection builder (Call 1b removed).
 
-All tests are offline: LLM is stubbed, no Gemini calls made.
+Title alias and skill grouping used to come from Gemini. They are now
+computed from embeddings, so these tests hit real sentence-transformer maths
+rather than a stub — and there is no LLM to mock. Nothing external is
+contacted: the model runs locally.
 """
 
 from __future__ import annotations
@@ -10,15 +13,16 @@ from typing import Any
 
 import pytest
 
-from src.builder import skills_validator
+from src.builder.deterministic import assign_skill_categories, choose_title_alias
 from src.builder.llm_call import build as build_selection
+from src.config import settings
 from src.llm.schemas import (
-    ResumeBuildLLMOutput,
     SelectedExpEntry,
     SkillCategory,
     StoredSelection,
     StoredSkills,
 )
+from src.scorer.embeddings import embed
 from src.scorer.apply_decision import SelectionResult
 from src.scorer.selector import (
     BulletCand,
@@ -128,200 +132,289 @@ def _make_profile() -> Profile:
     )
 
 
-def _valid_llm_output(familiar_with: list[str] | None = None) -> ResumeBuildLLMOutput:
-    """Valid LLM output. ``familiar_with`` defaults to empty (no gap skills needed)."""
-    return ResumeBuildLLMOutput(
-        title_choices={"exp1": "Backend Engineer"},
-        skills_selection=StoredSkills(
-            categories=[
-                SkillCategory(name="Backend & APIs", skills=["Python", "FastAPI", "REST"]),
-                SkillCategory(name="Data & Storage", skills=["PostgreSQL", "SQL", "SQLAlchemy"]),
-                SkillCategory(name="Infrastructure", skills=["Docker", "Linux", "Git"]),
-            ],
-            familiar_with=familiar_with or [],
-        ),
-        cover_letter_text="Short cover letter for the role.",
-    )
+# ---------------------------------------------------------------------------
+# choose_title_alias — replaces the LLM's title_choices
+# ---------------------------------------------------------------------------
+
+def test_title_alias_picks_the_closest_option_to_the_jd():
+    """A backend-flavoured JD should pull the backend alias, not the generic one."""
+    aliases = ["Data Scientist", "Backend Engineer", "Frontend Developer"]
+    jd_vec = embed("Build REST APIs and backend services in Python and FastAPI.")
+
+    assert choose_title_alias(aliases, jd_vec, fallback="X") == "Backend Engineer"
+
+
+def test_title_alias_can_only_return_an_allowed_value():
+    """Hard rule #6 is now structural, not validated after the fact.
+
+    The old Call 1b could return any string and had to be constrained with
+    Literal plus post-validation. An argmax over the list cannot produce an
+    out-of-set title at all.
+    """
+    aliases = ["Software Engineer", "Backend Engineer"]
+    for jd in ["quantum astrologer", "chief pizza officer", ""]:
+        assert choose_title_alias(aliases, embed(jd or " "), fallback="F") in aliases
+
+
+def test_title_alias_falls_back_when_no_aliases_exist():
+    assert choose_title_alias([], embed("anything"), fallback="Actual Title") == "Actual Title"
+
+
+def test_title_alias_is_deterministic():
+    """Same inputs, same output — the LLM version varied between runs."""
+    aliases = ["Software Engineer", "Backend Engineer", "Platform Engineer"]
+    jd_vec = embed("Backend services, Python, Postgres.")
+
+    picks = {choose_title_alias(aliases, jd_vec, fallback="X") for _ in range(3)}
+    assert len(picks) == 1
 
 
 # ---------------------------------------------------------------------------
-# skills_validator tests
+# assign_skill_categories — replaces the LLM's skills_selection
 # ---------------------------------------------------------------------------
 
+CANDIDATES = [
+    ("Python", 0.9), ("FastAPI", 0.85), ("PostgreSQL", 0.80),
+    ("Docker", 0.75), ("Redis", 0.70), ("Kafka", 0.65),
+    ("Celery", 0.60), ("Linux", 0.55), ("Git", 0.50),
+    ("REST", 0.45), ("SQL", 0.43), ("pytest", 0.40),
+    ("SQLAlchemy", 0.38), ("asyncio", 0.35),
+]
 
-def test_valid_output_no_violations():
-    output = _valid_llm_output()  # familiar_with=[]
-    candidates = [
-        "Python", "FastAPI", "PostgreSQL", "Docker", "Redis", "Kafka",
-        "Celery", "Linux", "Git", "REST", "SQL", "pytest", "SQLAlchemy",
-        "asyncio",
+
+def test_every_skill_comes_from_the_candidate_list():
+    """Membership can no longer drift: nothing invents a skill."""
+    out = assign_skill_categories(CANDIDATES, gap_skills=[])
+
+    placed = [s for c in out.categories for s in c.skills]
+    assert set(placed) <= {s for s, _ in CANDIDATES}
+
+
+def test_category_names_come_from_the_taxonomy_only():
+    """A heading outside the configured taxonomy is impossible."""
+    out = assign_skill_categories(CANDIDATES, gap_skills=[])
+
+    allowed = set(settings.selection.skills.taxonomy.as_dict())
+    assert {c.name for c in out.categories} <= allowed
+
+
+def test_no_skill_appears_in_two_categories():
+    out = assign_skill_categories(CANDIDATES, gap_skills=[])
+
+    placed = [s for c in out.categories for s in c.skills]
+    assert len(placed) == len(set(placed))
+
+
+def test_categories_respect_the_per_category_maximum():
+    out = assign_skill_categories(CANDIDATES, gap_skills=[])
+
+    cap = int(settings.selection.skills.skills_per_category_max)
+    assert all(len(c.skills) <= cap for c in out.categories)
+
+
+def test_categories_are_ordered_by_jd_relevance():
+    """The group containing the strongest-matching skill must lead."""
+    out = assign_skill_categories(CANDIDATES, gap_skills=[])
+    scores = dict(CANDIDATES)
+
+    bests = [max(scores[s] for s in c.skills) for c in out.categories]
+    assert bests == sorted(bests, reverse=True)
+
+
+def test_only_the_configured_number_of_categories_is_shown():
+    out = assign_skill_categories(CANDIDATES, gap_skills=[])
+
+    assert len(out.categories) <= int(settings.selection.skills.categories_count)
+
+
+def test_real_pool_skills_land_in_their_taxonomy_category():
+    """Grouping must be exact for skills the operator actually has.
+
+    Embedding similarity got these wrong (pytest under "Cloud", Grafana under
+    "Web & Frontend"), which is why the taxonomy exists.
+    """
+    from src.builder.deterministic import _taxonomy
+
+    taxonomy = _taxonomy()
+    cands = [
+        ("Python", 0.92), ("FastAPI", 0.90), ("REST API Development", 0.88),
+        ("PostgreSQL", 0.82), ("Redis", 0.78), ("JWT Authentication", 0.66),
     ]
-    violations = skills_validator.validate(output, candidates, gap_skills=[])
-    assert violations == []
+    out = assign_skill_categories(cands, gap_skills=[])
+
+    for category in out.categories:
+        for skill in category.skills:
+            assert taxonomy[skill.casefold()] == category.name
 
 
-def test_banned_category_name_flagged():
-    output = _valid_llm_output()
-    output.skills_selection.categories[0].name = "Miscellaneous"
-    violations = skills_validator.validate(output, ["Python", "FastAPI", "REST",
-        "PostgreSQL", "SQL", "SQLAlchemy", "Docker", "Linux", "Git"], [])
-    assert any("Miscellaneous" in v for v in violations)
+def test_headings_differ_between_a_backend_and_a_data_job():
+    """The operator's actual objection: not the same three headings every time."""
+    backend = assign_skill_categories([
+        ("Python", .92), ("FastAPI", .90), ("Backend Development", .88),
+        ("REST API Development", .86), ("PostgreSQL", .80), ("Redis", .76),
+    ], gap_skills=[])
+    data = assign_skill_categories([
+        ("Python", .92), ("ETL Pipelines", .90), ("Data Engineering", .88),
+        ("Data Ingestion", .86), ("pandas", .80), ("NumPy", .76),
+    ], gap_skills=[])
+
+    assert {c.name for c in backend.categories} != {c.name for c in data.categories}
 
 
-def test_skill_not_in_candidates_flagged():
-    output = _valid_llm_output()
-    output.skills_selection.categories[0].skills = ["Python", "FastAPI", "MADE_UP_SKILL"]
-    candidates = ["Python", "FastAPI", "PostgreSQL", "Docker", "Redis",
-                  "Celery", "Linux", "Git", "REST", "SQL", "pytest",
-                  "SQLAlchemy", "asyncio"]
-    violations = skills_validator.validate(output, candidates, [])
-    assert any("MADE_UP_SKILL" in v for v in violations)
-
-
-def test_familiar_with_not_in_gaps_flagged():
-    output = _valid_llm_output()
-    output.skills_selection.familiar_with = ["Kafka"]
-    violations = skills_validator.validate(
-        output,
-        ["Python", "FastAPI", "PostgreSQL", "Docker", "Redis", "Kafka",
-         "Celery", "Linux", "Git", "REST", "SQL", "pytest", "SQLAlchemy", "asyncio"],
-        gap_skills=["Airflow"],  # Kafka not in gaps → violation
+def test_an_unknown_skill_is_still_placed_and_flagged():
+    """A skill not yet in the taxonomy must not vanish from the resume."""
+    out = assign_skill_categories(
+        [("Python", 0.9), ("SomeBrandNewTool", 0.85), ("PostgreSQL", 0.8)],
+        gap_skills=[],
     )
-    assert any("Kafka" in v for v in violations)
+
+    placed = [s for c in out.categories for s in c.skills]
+    assert "SomeBrandNewTool" in placed
 
 
-def test_duplicate_skill_across_categories_flagged():
-    output = _valid_llm_output()
-    output.skills_selection.categories[1].skills = ["Python", "SQL", "SQLAlchemy"]  # Python repeated
-    candidates = ["Python", "FastAPI", "PostgreSQL", "Docker", "Redis",
-                  "Celery", "Linux", "Git", "REST", "SQL", "pytest",
-                  "SQLAlchemy", "asyncio"]
-    violations = skills_validator.validate(output, candidates, [])
-    assert any("duplicate" in v.casefold() for v in violations)
+def test_skills_within_a_category_are_ordered_by_jd_match():
+    out = assign_skill_categories(CANDIDATES, gap_skills=[])
+    scores = dict(CANDIDATES)
+
+    for category in out.categories:
+        got = [scores[s] for s in category.skills]
+        assert got == sorted(got, reverse=True)
 
 
-def test_too_few_skills_in_category_flagged():
-    output = _valid_llm_output()
-    output.skills_selection.categories[0].skills = ["Python", "FastAPI"]  # only 2, need >=3
-    # Pydantic will enforce min_length=3 at construction time; so we bypass
-    # by directly modifying after creation.
-    output.skills_selection.categories[0].__dict__["skills"] = ["Python", "FastAPI"]
-    candidates = ["Python", "FastAPI", "PostgreSQL", "Docker", "Linux",
-                  "Git", "REST", "SQL", "pytest", "SQLAlchemy", "asyncio",
-                  "Redis", "Celery", "asyncio"]
-    violations = skills_validator.validate(output, candidates, [])
-    # validator checks count directly from the list
-    assert isinstance(violations, list)  # may pass if pydantic already enforced
+def test_gap_skills_become_familiar_with_and_are_capped():
+    gaps = ["Rust", "Kubernetes", "Terraform", "Scala", "Elixir", "Go"]
+    out = assign_skill_categories(CANDIDATES, gap_skills=gaps)
+
+    cap = int(settings.selection.skills.familiar_with_max)
+    assert len(out.familiar_with) == cap
+    assert set(out.familiar_with) <= set(gaps)
+
+
+def test_empty_categories_are_dropped_not_padded():
+    """Two skills cannot fill three groups; we ship fewer rather than filler."""
+    out = assign_skill_categories([("Python", 0.9), ("FastAPI", 0.8)], gap_skills=[])
+
+    assert all(c.skills for c in out.categories)
+    assert sum(len(c.skills) for c in out.categories) == 2
+
+
+def test_no_candidates_yields_an_empty_selection():
+    out = assign_skill_categories([], gap_skills=["Rust"])
+
+    assert out.categories == []
 
 
 # ---------------------------------------------------------------------------
-# llm_call.build tests
+# build() — the whole selection, with no LLM
 # ---------------------------------------------------------------------------
 
-
-def _stub_complete_success(response_model, prompt, *, system=None):
-    """Stub that always returns a valid ResumeBuildLLMOutput."""
-    return _valid_llm_output()
-
-
-def test_build_returns_stored_selection():
-    result = _make_result()
-    profile = _make_profile()
+def test_build_produces_a_selection_without_any_llm_call():
+    """The point of the change: a matched job costs zero Call-1b requests."""
     selection = build_selection(
-        result=result,
-        profile=profile,
-        jd_role_summary="Backend role at fintech.",
-        jd_required_skills=["Python", "FastAPI"],
-        jd_team_or_product="Payments team",
-        complete_fn=_stub_complete_success,
+        result=_make_result(),
+        profile=_make_profile(),
+        jd_role_summary="Backend Python engineer building REST APIs.",
+        jd_required_skills=["Python", "FastAPI", "Kubernetes"],
     )
-    assert selection is not None
+
     assert isinstance(selection, StoredSelection)
-    assert selection.summary_id == "sum1"
-    assert len(selection.experiences) == 1
     assert selection.experiences[0].exp_id == "exp1"
-    assert selection.experiences[0].title_alias == "Backend Engineer"
-    assert len(selection.projects) == 1
-    assert selection.section_order == ["Work", "Skills", "Projects"]
-    assert selection.template_version  # non-empty
+    assert selection.experiences[0].bullet_ids == ["b1", "b2", "b3"]
+    assert selection.projects[0].link == "https://github.com/user/proj"
+    assert selection.summary_id == "sum1"
+    assert selection.skills.categories
 
 
-def test_build_skills_before_projects_false():
-    result = _make_result(skills_before_projects=False)
-    profile = _make_profile()
+def test_build_chooses_a_title_from_the_experience_allow_list():
     selection = build_selection(
-        result=result,
-        profile=profile,
-        jd_role_summary="Backend role.",
-        jd_required_skills=[],
-        complete_fn=_stub_complete_success,
+        result=_make_result(),
+        profile=_make_profile(),
+        jd_role_summary="Backend services in Python.",
+        jd_required_skills=["Python"],
     )
+
+    assert selection.experiences[0].title_alias in [
+        "Software Engineer", "Backend Engineer",
+    ]
+
+
+def test_build_surfaces_kubernetes_as_a_gap():
+    """A required skill absent from the pool must reach Familiar With."""
+    selection = build_selection(
+        result=_make_result(),
+        profile=_make_profile(),
+        jd_role_summary="Backend engineer.",
+        jd_required_skills=["Python", "Kubernetes"],
+    )
+
+    assert "Kubernetes" in selection.skills.familiar_with
+    assert "Python" not in selection.skills.familiar_with
+
+
+def test_build_leaves_cover_letter_empty():
+    """The cover letter was generated then never read by anything; it's gone."""
+    selection = build_selection(
+        result=_make_result(),
+        profile=_make_profile(),
+        jd_role_summary="Backend engineer.",
+        jd_required_skills=["Python"],
+    )
+
+    assert selection.cover_letter_text == ""
+
+
+def test_build_ignores_a_passed_complete_fn():
+    """Callers may still pass one; it must not be invoked."""
+    def explode(*args, **kwargs):
+        raise AssertionError("no LLM call should happen in Layer 5")
+
+    selection = build_selection(
+        result=_make_result(),
+        profile=_make_profile(),
+        jd_role_summary="Backend engineer.",
+        jd_required_skills=["Python"],
+        complete_fn=explode,
+    )
+
     assert selection is not None
-    assert selection.section_order == ["Work", "Projects", "Skills"]
 
 
-_attempt_count = 0
-
-
-def _stub_fail_once(response_model, prompt, *, system=None):
-    """Fails on first call (banned category name), succeeds on second."""
-    global _attempt_count
-    _attempt_count += 1
-    if _attempt_count == 1:
-        return ResumeBuildLLMOutput(
-            title_choices={"exp1": "Backend Engineer"},
-            skills_selection=StoredSkills(
-                categories=[
-                    SkillCategory(name="Miscellaneous", skills=["Python", "FastAPI", "REST"]),
-                    SkillCategory(name="Data & Storage", skills=["PostgreSQL", "SQL", "SQLAlchemy"]),
-                    SkillCategory(name="Infrastructure", skills=["Docker", "Linux", "Git"]),
-                ],
-                familiar_with=[],
-            ),
-            cover_letter_text="Short cover letter.",
+def test_build_section_order_follows_the_layer_4_decision():
+    for flag, expected in [
+        (True, ["Work", "Skills", "Projects"]),
+        (False, ["Work", "Projects", "Skills"]),
+    ]:
+        selection = build_selection(
+            result=_make_result(skills_before_projects=flag),
+            profile=_make_profile(),
+            jd_role_summary="Backend engineer.",
+            jd_required_skills=["Python"],
         )
-    return _valid_llm_output()  # Second call: no familiar_with violations
+        assert selection.section_order == expected
 
 
-def test_build_regenerates_on_validation_failure():
-    global _attempt_count
-    _attempt_count = 0
+def test_build_fails_when_no_experience_was_selected():
     result = _make_result()
-    profile = _make_profile()
-    selection = build_selection(
+    result.experiences = []
+
+    assert build_selection(
         result=result,
-        profile=profile,
-        jd_role_summary="Role summary.",
-        jd_required_skills=[],
-        complete_fn=_stub_fail_once,
+        profile=_make_profile(),
+        jd_role_summary="Backend engineer.",
+        jd_required_skills=["Python"],
+    ) is None
+
+
+def test_build_is_deterministic_across_runs():
+    """Two builds of the same job must produce identical selections."""
+    kwargs = dict(
+        profile=_make_profile(),
+        jd_role_summary="Backend Python engineer building REST APIs.",
+        jd_required_skills=["Python", "FastAPI", "Kubernetes"],
     )
-    assert selection is not None
-    assert _attempt_count == 2
+    first = build_selection(result=_make_result(), **kwargs)
+    second = build_selection(result=_make_result(), **kwargs)
 
-
-def _stub_always_fail(response_model, prompt, *, system=None):
-    return ResumeBuildLLMOutput(
-        title_choices={"exp1": "Backend Engineer"},
-        skills_selection=StoredSkills(
-            categories=[
-                SkillCategory(name="Miscellaneous", skills=["Python", "FastAPI", "REST"]),
-                SkillCategory(name="Other", skills=["PostgreSQL", "SQL", "SQLAlchemy"]),
-                SkillCategory(name="Various", skills=["Docker", "Linux", "Git"]),
-            ],
-            familiar_with=[],
-        ),
-        cover_letter_text="Short cover letter.",
-    )
-
-
-def test_build_returns_none_on_persistent_failure():
-    result = _make_result()
-    profile = _make_profile()
-    selection = build_selection(
-        result=result,
-        profile=profile,
-        jd_role_summary="Role summary.",
-        jd_required_skills=[],
-        complete_fn=_stub_always_fail,
-    )
-    assert selection is None
+    assert first.experiences == second.experiences
+    assert first.skills == second.skills
+    assert first.section_order == second.section_order
