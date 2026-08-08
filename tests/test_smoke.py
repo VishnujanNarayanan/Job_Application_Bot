@@ -73,13 +73,44 @@ def test_repo_layout(repo_root: Path) -> None:
         ".gitignore",
         "master_profile.example.yaml",
         "README.md",
+        # CHANGELOG.md, PRD.md, CLAUDE.md and job_automation_architecture.md
+        # are deliberately NOT listed. They were gitignored and untracked on
+        # 2026-07-05 as operator-owned docs, so they exist on the operator's
+        # disk but not in a fresh clone. Asserting them here passed locally
+        # and failed every CI run from that day onward.
+    ]
+    missing = [p for p in must_exist if not (repo_root / p).exists()]
+    assert not missing, f"Missing scaffold paths:\n" + "\n".join(f"  {p}" for p in missing)
+
+
+def test_operator_docs_are_not_tracked_by_git() -> None:
+    """The operator docs must stay out of the repo.
+
+    The inverse of the bug above: rather than asserting these files exist
+    (which broke CI), assert they are not tracked — that is the property that
+    was actually intended, and it holds in a clone as well as on the
+    operator's machine.
+    """
+    import subprocess
+
+    operator_docs = [
         "CHANGELOG.md",
         "PRD.md",
         "CLAUDE.md",
         "job_automation_architecture.md",
+        "TODO.md",
     ]
-    missing = [p for p in must_exist if not (repo_root / p).exists()]
-    assert not missing, f"Missing scaffold paths:\n" + "\n".join(f"  {p}" for p in missing)
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", *operator_docs],
+        cwd=str(Path(__file__).resolve().parent.parent),
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+
+    assert not tracked, (
+        "operator docs must stay untracked (gitignored on 2026-07-05): "
+        f"{tracked}"
+    )
 
 
 def test_role_clusters_yaml_absent(repo_root: Path) -> None:
