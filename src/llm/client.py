@@ -88,18 +88,51 @@ _BUDGET_ERROR_MARKERS = (
     "spending cap",
     "spend cap",
     "exceeded your current quota",
-    "billing",
     "insufficient_quota",
     "free_tier_requests",
+    # A hard paywall: the account cannot serve at all until someone pays.
+    # Cerebras returns this for a key that authenticates and lists models
+    # perfectly happily (verified 2026-08-08).
+    "payment_required",
+    "payment required",
+)
+
+# A quota measured PER DAY does not clear inside a run, so it counts as
+# exhaustion even though it arrives worded as a rate limit.
+_DAILY_QUOTA_MARKERS = (
     "requests per day",
     "tokens per day",
     "per_day",
 )
 
+# A quota measured PER MINUTE clears in seconds — the backoff exists for
+# exactly this. These must never be mistaken for exhaustion.
+#
+# Groq appends "Upgrade to Dev Tier today at .../settings/billing" to EVERY
+# per-minute rate-limit message. A bare "billing" marker therefore matched
+# routine throttling and abandoned a live run after 5 of 21 jobs on
+# 2026-08-08, sending it to a capped fallback for a limit that would have
+# cleared in 3 seconds. That marker is gone; these take precedence instead.
+_TRANSIENT_RATE_MARKERS = (
+    "tokens per minute",
+    "requests per minute",
+    "rate limit reached",
+    "rate_limit_exceeded",
+    "please try again in",
+)
+
 
 def _is_budget_exhausted(exc: Exception) -> bool:
-    """True when the account itself is out of budget or daily quota."""
+    """True when the account itself is out of budget or daily quota.
+
+    Order matters: a daily quota outranks the rate-limit wording it shares,
+    and per-minute throttling outranks any billing chatter in the message.
+    """
     message = str(exc).casefold()
+    if any(marker in message for marker in _DAILY_QUOTA_MARKERS):
+        return True
+    if any(marker in message for marker in _TRANSIENT_RATE_MARKERS):
+        return False
     return any(marker in message for marker in _BUDGET_ERROR_MARKERS)
 
 

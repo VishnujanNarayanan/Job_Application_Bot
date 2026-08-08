@@ -314,3 +314,99 @@ def test_system_prompt_reaches_both_providers():
     sent = fallback.chat.completions.create.call_args.kwargs["messages"]
     assert sent[0] == {"role": "system", "content": "system text"}
     assert sent[1] == {"role": "user", "content": "user text"}
+
+
+# ---------------------------------------------------------------------------
+# Classification regressions from the live run of 2026-08-08
+#
+# Verbatim provider messages. Paraphrasing them would defeat the point: the
+# bug was a substring match against wording nobody predicted.
+# ---------------------------------------------------------------------------
+
+_GROQ_TPM = (
+    "Error code: 429 - {'error': {'message': 'Rate limit reached for model "
+    "`llama-3.3-70b-versatile` in organization `org_01kzh` service tier "
+    "`on_demand` on tokens per minute (TPM): Limit 12000, Used 10986, "
+    "Requested 1621. Please try again in 3.035s. Need more tokens? Upgrade to "
+    "Dev Tier today at https://console.groq.com/settings/billing', 'type': "
+    "'tokens', 'code': 'rate_limit_exceeded'}}"
+)
+
+
+def test_groq_per_minute_limit_is_not_budget_exhaustion():
+    """The bug that ended a live run after 5 of 21 jobs.
+
+    Groq appends a billing upsell URL to every rate-limit message, and a bare
+    "billing" marker matched it — so a limit that clears in three seconds was
+    read as an exhausted account, which sent the run to a capped fallback and
+    then abandoned it.
+    """
+    from src.llm.client import _is_budget_exhausted, _is_permanent
+
+    exc = RuntimeError(_GROQ_TPM)
+    assert _is_budget_exhausted(exc) is False
+    assert _is_permanent(exc) is False, "it must be retried, not given up on"
+
+
+def test_a_per_minute_limit_does_not_abandon_the_run():
+    """End to end: throttling must cost a retry, never the batch."""
+    calls = {"n": 0}
+
+    def throttled(**kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise RuntimeError(_GROQ_TPM)
+        return Dummy(value="recovered")
+
+    primary = MagicMock()
+    primary.chat.completions.create.side_effect = throttled
+    fallback = MagicMock()
+
+    with _split(primary, fallback), patch("time.sleep"):
+        assert llm_client.complete(Dummy, "p").value == "recovered"
+
+    fallback.chat.completions.create.assert_not_called(), (
+        "a per-minute limit must not reach for another provider"
+    )
+
+
+def test_a_per_day_quota_is_still_exhaustion():
+    """Daily quotas share the rate-limit wording but do NOT clear in a run,
+    so they must outrank the per-minute markers."""
+    from src.llm.client import _is_budget_exhausted
+
+    exc = RuntimeError(
+        "429 Rate limit reached: Limit 200 requests per day. "
+        "Please try again in 3600s."
+    )
+    assert _is_budget_exhausted(exc) is True
+
+
+def test_a_real_spend_cap_is_still_exhaustion():
+    """The Gemini message from the same run must keep aborting the run."""
+    from src.llm.client import _is_budget_exhausted
+
+    exc = RuntimeError(
+        "Error code: 429 - [{'error': {'code': 429, 'message': 'Your project "
+        "has exceeded its monthly spending cap. Please go to AI Studio at "
+        "https://ai.studio/spend to manage your project spend cap.', "
+        "'status': 'RESOURCE_EXHAUSTED'}}]"
+    )
+    assert _is_budget_exhausted(exc) is True
+
+
+def test_a_payment_wall_is_exhaustion_not_a_retry():
+    """Cerebras returns this for a key that authenticates and lists models.
+
+    Retrying a paywall never helps, so it must move the chain on rather than
+    burn the backoff budget. It was briefly misread as transient when the
+    over-broad "billing" marker was removed — its message says "billing tab".
+    """
+    from src.llm.client import _is_budget_exhausted
+
+    exc = RuntimeError(
+        "Error code: 402 - {'message': 'Payment required to access this "
+        "resource. Visit your billing tab.', 'type': 'payment_required_error', "
+        "'code': 'payment_required'}"
+    )
+    assert _is_budget_exhausted(exc) is True

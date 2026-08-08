@@ -120,3 +120,49 @@ def test_grounded_skills_lemma_fallback() -> None:
     jd = "You will own data pipelines end to end."
     out = grounded_skills(["pipeline"], jd)
     assert out == ["pipeline"]
+
+
+# ---------------------------------------------------------------------------
+# Schema shapes that a provider rejected server-side on 2026-08-08
+# ---------------------------------------------------------------------------
+
+def test_null_list_fields_are_read_as_empty():
+    """Models emit `"responsibilities": null` instead of omitting the key.
+
+    A default only applies to an ABSENT key, so this failed validation — and
+    Groq validates tool calls server-side, making each occurrence cost a whole
+    retried call against a per-minute token limit.
+    """
+    from src.llm.schemas import JDParsed
+
+    parsed = JDParsed.model_validate({
+        "role_summary": "Backend role.",
+        "role_category": "backend",
+        "role_level": "mid",
+        "years_required": 3,
+        "required_skills": None,
+        "nice_to_have": None,
+        "responsibilities": None,
+    })
+
+    assert parsed.responsibilities == []
+    assert parsed.required_skills == []
+    assert parsed.nice_to_have == []
+
+
+def test_a_long_role_summary_is_accepted():
+    """A 632-character summary was rejected by a 500 cap, wasting two calls.
+
+    The bound is a sanity check, not a budget — it must never be the reason a
+    parse fails.
+    """
+    from src.llm.schemas import JDParsed
+
+    parsed = JDParsed.model_validate({
+        "role_summary": "x" * 632,
+        "role_category": "backend",
+        "role_level": "mid",
+        "years_required": 3,
+    })
+
+    assert len(parsed.role_summary) == 632
