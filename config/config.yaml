@@ -339,12 +339,26 @@ scoring:
       null: 0.80  # treat unknown level as mid
 
   recency_score:
-    # Bands by hours since the job was posted.
-    under_1h: 1.00
-    under_3h: 0.80
-    under_6h: 0.60
-    under_12h: 0.40
-    over_12h: 0.20
+    # Bands by hours since the job was posted, first match wins. Ordered
+    # ascending by `under_hours`; both the edges and the scores are tunable
+    # here (they used to be hardcoded at 1/3/6/12h in apply_decision.py).
+    #
+    # Sized to the 24h `scraper.hours_old` window. The old bands topped out at
+    # "over_12h" so, once runs became manual and the lookback widened to 24h,
+    # EVERY scraped job landed in the last band and recency became a constant
+    # 0.20 rather than a signal — costing every job up to 0.08 of final score
+    # (0.10 weight x the 0.8 spread) and pushing a cluster of real candidates
+    # from ~0.50 down to ~0.43. Observed on the live run of 2026-08-08, where
+    # all 9 scored jobs reported recency 0.2.
+    bands:
+      - under_hours: 6
+        score: 1.00
+      - under_hours: 24
+        score: 0.60
+      - under_hours: 72
+        score: 0.40
+    # Older than the last band, or no posting timestamp at all.
+    default: 0.30
 
 # ---------------------------------------------------------------------------
 # Resume builder — Layer 5
