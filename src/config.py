@@ -19,9 +19,6 @@ filenames are DERIVED from ``operator.full_name`` here, never hardcoded.
 from __future__ import annotations
 
 import re
-import urllib.error
-import urllib.request
-import json
 from pathlib import Path
 from typing import Any
 
@@ -29,22 +26,19 @@ import yaml
 
 
 def resolve_endpoint_base_url(config_url: str) -> str:
-    """Return the public endpoint URL.
+    """Return the base URL that resume links should point at.
 
-    If ngrok is running locally (port 4040 API), uses its current public
-    HTTPS tunnel URL so Telegram resume links work on mobile without any
-    manual config edits. Falls back to config.yaml value (used in production
-    or when ngrok is not running).
+    Now a straight pass-through of ``endpoint.base_url``. It used to probe
+    the local ngrok API (``localhost:4040``) for a live tunnel, because the
+    free ngrok URL changed on every restart. That is gone with ngrok itself:
+    the endpoint is reached over Tailscale, whose hostname is stable, so
+    there is nothing to discover at runtime.
+
+    Kept as a function rather than inlined because the caller in
+    ``src/main.py`` reads better this way, and because the next hosting
+    change (a real domain) lands here rather than in the orchestrator.
     """
-    try:
-        with urllib.request.urlopen("http://localhost:4040/api/tunnels", timeout=1) as resp:
-            data = json.loads(resp.read())
-        for tunnel in data.get("tunnels", []):
-            if tunnel.get("proto") == "https":
-                return tunnel["public_url"]
-    except Exception:
-        pass
-    return config_url
+    return config_url.rstrip("/")
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "config.yaml"
 

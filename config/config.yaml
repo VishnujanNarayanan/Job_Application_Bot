@@ -116,11 +116,11 @@ scraper:
   # persisted index (search_rotation_state table) and advances past them, so
   # consecutive runs sweep the list rather than repeating its head.
   #
-  # Sizing: each scraped job costs 1 Gemini call to parse, +1 to build if it
-  # scores >= 0.50. The free tier is 250 calls/day, so ~4 terms per run keeps
-  # a run near 60-80 calls — roughly 3 clicks a day — and covers all 24 terms
-  # in about 6 clicks. Raise only with a paid Gemini key.
-  terms_per_run: 4
+  # Sizing is a cost/coverage trade: each scraped job costs 1 Gemini call to
+  # parse, plus 1 more to build if it scores >= 0.50. More terms per run means
+  # fewer clicks to sweep the 24-term list, but a bigger bill per click.
+  # Currently 1 — the cheapest setting, one term per run as before.
+  terms_per_run: 1
   search_terms:
     - "backend engineer"
     - "backend developer"
@@ -400,14 +400,24 @@ prerender:
   link_expiry_days: 7
 
 # ---------------------------------------------------------------------------
-# Resume endpoint — FastAPI (Layer 6). Serves /resume/{job_id}.pdf|.docx.
-# base_url: the public URL embedded in Telegram/Sheets resume links. When
-# running locally this is the operator's reserved (static) ngrok domain, so
-# links survive ngrok/laptop restarts. resolve_endpoint_base_url() still
-# prefers the live ngrok tunnel at runtime; this is the durable fallback.
+# Resume endpoint + dashboard — FastAPI (Layer 6).
+#
+# base_url is the host embedded in Telegram resume links. It is the machine's
+# Tailscale name: reachable from the operator's phone and laptop and from
+# nothing else, with a stable hostname and real certificates. ngrok was
+# dropped in v2 — it published the endpoint, which has no authentication, to
+# the whole internet on a guessable URL scheme (/resume/{job_id} where job_id
+# is the portal's own public posting id).
+#
+# Set this up once on the host:   tailscale serve --bg 8000
+# then read the name from:        tailscale status --json | grep DNSName
+#
+# Links only resolve on tailnet devices. Build-time pre-rendered resumes
+# (see `prerender` above) are served from S3 instead, so a phone-triggered
+# run still produces links that work anywhere.
 # ---------------------------------------------------------------------------
 endpoint:
-  base_url: "https://murky-bonding-epileptic.ngrok-free.dev"
+  base_url: "http://localhost:8000"   # replace with https://<host>.<tailnet>.ts.net
   port: 8000
   # Template path is config-driven so any instance can swap the file.
   template_path: "resumes/templates/Templete.docx"

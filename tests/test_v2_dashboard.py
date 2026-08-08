@@ -335,3 +335,31 @@ def test_resume_route_still_works_alongside_the_dashboard(client):
 
     assert response.status_code == 200
     assert response.content == b"%PDF-1.4"
+
+
+# ---------------------------------------------------------------------------
+# Endpoint base URL (ngrok removal)
+# ---------------------------------------------------------------------------
+
+def test_base_url_is_a_passthrough_and_never_probes_the_network():
+    """It used to call localhost:4040 to discover an ngrok tunnel.
+
+    Tailscale hostnames are stable, so there is nothing to discover — and a
+    network call here would add latency (and a failure mode) to every match
+    notification.
+    """
+    from src.config import resolve_endpoint_base_url
+
+    with patch("urllib.request.urlopen", side_effect=AssertionError("no network")):
+        assert (
+            resolve_endpoint_base_url("https://box.tailnet.ts.net")
+            == "https://box.tailnet.ts.net"
+        )
+
+
+def test_base_url_strips_a_trailing_slash():
+    """Resume links are built by concatenation; a trailing slash would
+    produce //resume/... ."""
+    from src.config import resolve_endpoint_base_url
+
+    assert resolve_endpoint_base_url("http://localhost:8000/") == "http://localhost:8000"

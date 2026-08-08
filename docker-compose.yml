@@ -43,7 +43,11 @@ services:
     container_name: job-bot-endpoint
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Loopback only. The endpoint and dashboard have no authentication, so
+      # the port must never be on the LAN, let alone the internet. Remote
+      # access is `tailscale serve --bg 8000` on the host, which proxies the
+      # tailnet to localhost:8000 — the private network is the boundary.
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
       interval: 30s
