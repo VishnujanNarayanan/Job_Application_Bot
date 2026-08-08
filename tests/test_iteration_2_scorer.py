@@ -194,13 +194,56 @@ def test_seniority_score_from_config_and_unknown() -> None:
 
 
 def test_recency_score_bands() -> None:
+    """Bands come from config (6h / 24h / 72h), first match wins."""
     now = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
     assert recency_score(now - timedelta(minutes=30), now) == 1.00
-    assert recency_score(now - timedelta(hours=2), now) == 0.80
-    assert recency_score(now - timedelta(hours=5), now) == 0.60
-    assert recency_score(now - timedelta(hours=10), now) == 0.40
-    assert recency_score(now - timedelta(days=3), now) == 0.20
-    assert recency_score(None, now) == 0.20  # unknown posting age
+    assert recency_score(now - timedelta(hours=5), now) == 1.00
+    assert recency_score(now - timedelta(hours=7), now) == 0.60
+    assert recency_score(now - timedelta(hours=23), now) == 0.60
+    assert recency_score(now - timedelta(hours=30), now) == 0.40
+    assert recency_score(now - timedelta(days=5), now) == 0.30   # past every band
+    assert recency_score(None, now) == 0.30                      # unknown age
+
+
+def test_recency_discriminates_across_the_scrape_window() -> None:
+    """The bands must actually separate jobs inside `scraper.hours_old`.
+
+    Regression for the live run of 2026-08-08: the old bands topped out at
+    "over_12h", so once the lookback widened to 24h every scraped job landed in
+    the final band and recency became a constant 0.20 instead of a signal —
+    silently docking every job up to 0.08 of final score.
+    """
+    from src.config import settings
+
+    now = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+    window = float(settings.scraper.hours_old.peak)
+    scores = {
+        recency_score(now - timedelta(hours=h), now)
+        for h in (0.5, window / 4, window / 2, window - 0.5)
+    }
+
+    assert len(scores) > 1, "recency does not vary within the scrape window"
+
+
+def test_recency_bands_are_read_in_ascending_order() -> None:
+    """A mis-ordered config must still band correctly."""
+    from unittest.mock import patch
+
+    from src.scorer import apply_decision as ad
+
+    class FakeCfg:
+        bands = [
+            {"under_hours": 72, "score": 0.40},
+            {"under_hours": 6, "score": 1.00},
+            {"under_hours": 24, "score": 0.60},
+        ]
+        default = 0.30
+
+    fake = type("S", (), {"scoring": type("SC", (), {"recency_score": FakeCfg})})
+    now = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+    with patch.object(ad, "settings", fake):
+        assert ad.recency_score(now - timedelta(hours=2), now) == 1.00
+        assert ad.recency_score(now - timedelta(hours=10), now) == 0.60
 
 
 # ---------------------------------------------------------------------------

@@ -65,24 +65,29 @@ def seniority_score(role_level: str | None) -> float:
 
 
 def recency_score(posted_at: datetime | None, now: datetime) -> float:
-    """Band the hours since posting into a recency score (config)."""
+    """Band the hours since posting into a recency score.
+
+    Both the band edges and their scores come from
+    ``scoring.recency_score.bands`` — they used to be hardcoded at 1/3/6/12
+    hours here, which meant the bands could not be resized when the scrape
+    window changed. A listing older than every band (or with no timestamp at
+    all) gets ``default``.
+    """
     cfg = settings.scoring.recency_score
     if posted_at is None:
-        return float(cfg.over_12h)
+        return float(cfg.default)
+
     if posted_at.tzinfo is None:
         posted_at = posted_at.replace(tzinfo=timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     hours = (now - posted_at).total_seconds() / 3600.0
-    if hours < 1:
-        return float(cfg.under_1h)
-    if hours < 3:
-        return float(cfg.under_3h)
-    if hours < 6:
-        return float(cfg.under_6h)
-    if hours < 12:
-        return float(cfg.under_12h)
-    return float(cfg.over_12h)
+
+    # Ascending by edge, so a mis-ordered config still behaves sanely.
+    for band in sorted(cfg.bands, key=lambda b: float(b["under_hours"])):
+        if hours < float(band["under_hours"]):
+            return float(band["score"])
+    return float(cfg.default)
 
 
 def evaluate(
