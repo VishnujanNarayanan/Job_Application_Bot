@@ -4,7 +4,7 @@ Every LLM call returns a Pydantic model — Instructor enforces the schema
 at the API boundary so malformed responses are physically impossible.
 
 Call 1a: ``JDParsed`` (Layer 3 — always run).
-Call 1b: ``ResumeBuildLLMOutput`` (Layer 5 — matched jobs only).
+Call 1b removed: Layer 5 selection is deterministic.
 ``StoredSelection`` is the ~2 KB blob written to ``applied.selection_json``
 and consumed by the endpoint assembler at render time.
 """
@@ -82,27 +82,33 @@ class JDParsed(BaseModel):
 
 
 class SkillCategory(BaseModel):
-    """One named skills grouping chosen by the LLM from pool candidates."""
+    """One named skills grouping, filled from Layer 4's pool candidates."""
 
     name: str = Field(
         ...,
         max_length=60,
-        description="Short category label (e.g. 'Backend & APIs'). Must not be "
-        "a generic banned name like 'Miscellaneous' or 'Other'.",
+        description="Category label, from selection.skills.category_names.",
     )
     skills: list[str] = Field(
         ...,
-        min_length=3,
+        min_length=1,
         max_length=5,
-        description="3-5 skills drawn from the provided top-14 pool candidates.",
+        description="Skills drawn from Layer 4's top-N pool candidates.",
     )
 
 
 class StoredSkills(BaseModel):
     """Skills section of a resume selection."""
 
+    # The bounds were "exactly 3" when this was the LLM's output contract and
+    # the prompt asked for three. Grouping is now computed, so the count is a
+    # RESULT: with a full candidate list all configured categories fill, but a
+    # sparse pool legitimately yields fewer, and an empty category is dropped
+    # rather than padded with filler.
     categories: list[SkillCategory] = Field(
-        ..., min_length=3, max_length=3, description="Exactly 3 skill categories."
+        ...,
+        max_length=6,
+        description="Non-empty skill categories, ordered by JD relevance.",
     )
     familiar_with: list[str] = Field(
         default_factory=list,
@@ -111,32 +117,9 @@ class StoredSkills(BaseModel):
     )
 
 
-class ResumeBuildLLMOutput(BaseModel):
-    """Structured output of Gemini Call 1b (title alias + skills + cover letter).
-
-    The LLM picks one title alias per selected experience from the allow-list,
-    names 3 skill categories and assigns pool-candidate skills to each, selects
-    up to 4 gap skills for 'Familiar With', and writes a short cover letter.
-    """
-
-    title_choices: dict[str, str] = Field(
-        ...,
-        description="Mapping of experience id → chosen title alias. Must be "
-        "one of the provided safe_title_aliases for that experience.",
-    )
-    skills_selection: StoredSkills
-    cover_letter_text: str = Field(
-        ...,
-        max_length=900,
-        description="Short cover-letter paragraph (plain text, no headers). "
-        "Must not contain any banned words.",
-    )
-
-
-# ---------------------------------------------------------------------------
-# StoredSelection — written to applied.selection_json (~2 KB)
-# ---------------------------------------------------------------------------
-
+# ResumeBuildLLMOutput was removed with Call 1b. Title alias and skill
+# grouping are now deterministic (src/builder/deterministic.py), so no model
+# returns them and there is nothing to validate at the API boundary.
 
 class SelectedExpEntry(BaseModel):
     """One selected work-experience entry."""

@@ -1,12 +1,19 @@
-"""Layer 5 — Gemini Call 1b driver: title alias + skills + cover letter.
+"""Layer 5 — selection builder: title alias + skills, no LLM.
 
-Accepts the Layer-4 ``SelectionResult`` and ``Profile``, calls the LLM,
-post-validates the output, and returns a ``StoredSelection`` ready to be
-written to ``applied.selection_json``. Returns ``None`` on irrecoverable
-failure (caller records BUILD_FAILURE in ``not_applied``).
+Accepts the Layer-4 ``SelectionResult`` and ``Profile`` and returns a
+``StoredSelection`` ready to be written to ``applied.selection_json``.
+Returns ``None`` on irrecoverable failure (caller records BUILD_FAILURE in
+``not_applied``).
 
-Budget: this is Call 1b — the 2nd and final call per matched job (Call 1a
-is the JD parse). Hard rule #13 is never violated here.
+**Call 1b was removed.** It asked Gemini for a title alias, skill-category
+names, and cover-letter text; none needed a language model. Title choice is an
+argmax over an allow-list, the skills were already chosen deterministically by
+Layer 4 (only their grouping came from the LLM), and the cover letter was
+written to the DB and never read by anything. See
+``src/builder/deterministic.py`` for the reasoning.
+
+Budget: a matched job now costs ONE Gemini call (Call 1a, the JD parse) rather
+than two. Hard rule #13 caps it at two; this is comfortably under.
 """
 
 from __future__ import annotations
@@ -17,13 +24,13 @@ from pathlib import Path
 
 import structlog
 
-from src.builder.skills_validator import validate
+from src.builder.deterministic import (
+    assign_skill_categories,
+    choose_title_alias,
+    jd_role_vector,
+)
 from src.config import settings
-from src.llm.client import LLMError
-from src.llm.client import complete as _default_complete
-from src.llm.prompts import build_prompt, build_system
 from src.llm.schemas import (
-    ResumeBuildLLMOutput,
     SelectedExpEntry,
     SelectedProjEntry,
     StoredSelection,
@@ -59,16 +66,6 @@ def _gap_skills_for_jd(
     ]
 
 
-def _cover_letter_clean(text: str) -> list[str]:
-    """Return list of banned-word violations in the cover letter text."""
-    violations = []
-    lower = text.casefold()
-    for word in settings.voice.banned_words:
-        if word.casefold() in lower:
-            violations.append(f"banned word in cover letter: {word!r}")
-    return violations
-
-
 def build(
     result: SelectionResult,
     profile: Profile,
@@ -78,78 +75,29 @@ def build(
     *,
     complete_fn=None,
 ) -> StoredSelection | None:
-    """Run Call 1b, validate, and return a ``StoredSelection`` or ``None``.
+    """Build the ``StoredSelection`` for a matched job. No LLM call.
 
-    ``complete_fn`` is injectable for tests (avoids real Gemini calls).
+    ``complete_fn`` is accepted and ignored: it existed so tests could stub
+    Gemini, and callers (including ``src/main.py``) still pass nothing. Kept in
+    the signature so removing Call 1b is not a breaking change for anything
+    that already calls this.
     """
-    run = complete_fn or _default_complete
-    max_attempts = int(settings.builder.llm_regenerate_attempts)
-    banned_names: list[str] = settings.selection.skills.banned_category_names
+    if complete_fn is not None:
+        log.debug("complete_fn_ignored", reason="call_1b_removed")
 
-    # Derive inputs from profile + selection
     skills_pool = [sc.skill for sc in profile.skills]
     gap_skills = _gap_skills_for_jd(jd_required_skills, skills_pool)
 
-    title_candidates: dict[str, list[str]] = {
-        exp.id: list(exp.safe_title_aliases)
-        for exp in profile.experiences
-        if any(se.id == exp.id for se in result.experiences)
-    }
+    # One embedding of the JD role text, reused for every experience's aliases.
+    jd_role_vec = jd_role_vector(jd_role_summary, fallback_text=jd_team_or_product or "")
 
-    skill_candidates: list[tuple[str, float]] = result.skill_candidates
-    cand_names = [s for s, _ in skill_candidates]
-
-    prompt = build_prompt(
-        result=result,
-        title_candidates=title_candidates,
-        skill_candidates=skill_candidates,
-        gap_skills=gap_skills,
-        jd_role_summary=jd_role_summary,
-        jd_team_or_product=jd_team_or_product,
-        banned_category_names=banned_names,
-    )
-    system = build_system()
-
-    last_violations: list[str] = []
-    for attempt in range(1, max_attempts + 2):  # up to regenerate_attempts+1 total
-        try:
-            output: ResumeBuildLLMOutput = run(ResumeBuildLLMOutput, prompt, system=system)
-        except LLMError as exc:
-            log.error(
-                BUILD_FAILURE_EVENT,
-                caller="builder",
-                reason="gemini_error",
-                attempt=attempt,
-                error=str(exc),
-            )
-            return None
-
-        violations = validate(output, cand_names, gap_skills)
-        violations += _cover_letter_clean(output.cover_letter_text)
-
-        if not violations:
-            break
-
-        last_violations = violations
-        if attempt <= max_attempts:
-            log.warning(
-                "build_validation_retry",
-                attempt=attempt,
-                violations=violations,
-            )
-    else:
-        log.error(
-            BUILD_FAILURE_EVENT,
-            caller="builder",
-            reason="validation_failed",
-            violations=last_violations,
-        )
-        return None
-
-    # Assemble StoredSelection from result + LLM output
     exp_entries: list[SelectedExpEntry] = []
     for se in result.experiences:
-        alias = output.title_choices.get(se.id, se.actual_title)
+        alias = choose_title_alias(
+            list(se.safe_title_aliases),
+            jd_role_vec,
+            fallback=se.actual_title,
+        )
         exp_entries.append(
             SelectedExpEntry(
                 exp_id=se.id,
@@ -157,6 +105,20 @@ def build(
                 bullet_ids=[b.id for b in se.bullets],
             )
         )
+
+    skills_selection = assign_skill_categories(
+        result.skill_candidates, gap_skills, jd_role_vec=jd_role_vec
+    )
+
+    # A selection with no experiences cannot produce a resume; Layer 4 should
+    # force-include two, so this means the profile or the selection is broken.
+    if not exp_entries:
+        log.error(
+            BUILD_FAILURE_EVENT,
+            caller="builder",
+            reason="no_experiences_selected",
+        )
+        return None
 
     # Look up project links from profile
     proj_link_map = {p.id: p.link for p in profile.projects}
@@ -184,9 +146,9 @@ def build(
         summary_id=summary_id,
         experiences=exp_entries,
         projects=proj_entries,
-        skills=output.skills_selection,
+        skills=skills_selection,
         section_order=section_order,
-        cover_letter_text=output.cover_letter_text,
+        cover_letter_text="",
         template_version=_template_version(),
         built_at=datetime.now(timezone.utc).isoformat(),
     )

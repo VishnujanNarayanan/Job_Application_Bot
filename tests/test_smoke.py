@@ -34,7 +34,6 @@ def test_repo_layout(repo_root: Path) -> None:
         "src/builder",
         "src/builder/__init__.py",
         "src/builder/llm_call.py",
-        "src/builder/skills_validator.py",
         "src/endpoint",
         "src/endpoint/__init__.py",
         "src/endpoint/app.py",
