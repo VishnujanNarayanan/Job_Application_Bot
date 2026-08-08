@@ -1,11 +1,15 @@
-"""CLI — Layer 9: write the monthly Gemini analytics report to Google Docs.
+"""CLI — Layer 9: write the monthly Gemini analytics report to a text file.
 
 Run monthly (cron or manual):
 
     python -m src.cli.report
 
-Best-effort: if Docs is unconfigured or any step fails, it logs and exits 0
-(a failed report must not look like a pipeline failure).
+Writes ``data/reports/report-YYYY-MM.txt`` (path from config). Runs on the
+laptop and reads Postgres, so the report covers every pipeline run regardless
+of where it executed.
+
+Best-effort: if the report is disabled in config or any step fails, it logs
+and exits 0 (a failed report must not look like a pipeline failure).
 """
 
 import logging

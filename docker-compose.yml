@@ -8,6 +8,7 @@
 #
 # First-deploy ordering (host):
 #   1. cp .env.example .env  (fill in DATABASE_URL, GEMINI_API_KEY, Telegram, AWS)
+#      (no Google credentials — Layer 9 writes local CSV/text under data/)
 #   2. provide master_profile.yaml + a template under resumes/templates/
 #   3. touch master_profile.json   (so the bind mount is a file, not a dir)
 #   4. docker compose build
@@ -31,13 +32,10 @@ x-app: &app
     - ./master_profile.json:/app/master_profile.json
     # Resume template(s), read-only.
     - ./resumes/templates:/app/resumes/templates:ro
-    # Runtime state (run.lock, logs).
+    # Runtime state (run.lock, logs, and the Layer 9 CSV index + reports).
     - ./data:/app/data
     # HuggingFace cache so the MiniLM embedding model downloads once, not per run.
     - hf_cache:/cache/hf
-    # Google service-account JSON — Layer 9 (Sheets/Docs). The file must exist
-    # (bind-mounting a missing file would create a directory).
-    - ./config/google_service_account.json:/app/config/google_service_account.json:ro
 
 services:
   endpoint:
