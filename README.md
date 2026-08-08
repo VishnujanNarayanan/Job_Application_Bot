@@ -2,7 +2,7 @@
 
 <p align="center">
   A nine-layer pipeline that scrapes Indian job listings, scores them against a master profile,<br>
-  and builds a tailored resume per match — rendered on demand, delivered over Telegram, $0/month.
+  and builds a tailored resume per match — delivered over Telegram, reviewed in a local dashboard.
 </p>
 
 <p align="center">
@@ -12,9 +12,10 @@
   <img alt="Gemini" src="https://img.shields.io/badge/Gemini-2.5_Flash-8E75B2?logo=googlegemini&logoColor=white"/>
   <img alt="Docker" src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white"/>
   <img alt="Telegram" src="https://img.shields.io/badge/Telegram-Bot_API-26A5E4?logo=telegram&logoColor=white"/>
+  <img alt="Tailscale" src="https://img.shields.io/badge/Tailscale-private_mesh-242424?logo=tailscale&logoColor=white"/>
   <img alt="AWS" src="https://img.shields.io/badge/AWS-S3_·_CloudWatch-232F3E?logo=amazonwebservices&logoColor=white"/>
   <img alt="CI" src="https://img.shields.io/badge/CI-GitHub_Actions-2088FF?logo=githubactions&logoColor=white"/>
-  <img alt="Tests" src="https://img.shields.io/badge/Tests-101_passing-3FB950?logo=pytest&logoColor=white"/>
+  <img alt="Tests" src="https://img.shields.io/badge/Tests-154_passing-3FB950?logo=pytest&logoColor=white"/>
   <br>
   <a href="https://vishnujan-narayanan.vercel.app/"><img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-vishnujan--narayanan.vercel.app-3b5998?logo=googlechrome&logoColor=white&style=for-the-badge"/></a>
   <a href="https://github.com/VishnujanNarayanan"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-VishnujanNarayanan-181717?logo=github&logoColor=white&style=for-the-badge"/></a>
@@ -38,7 +39,7 @@
 
 ## Version history
 
-### v1.0.0 — current release
+### v1.0.0 — released 2026-08-08
 
 The nine-layer pipeline described in this README, running end to end:
 
@@ -60,15 +61,27 @@ logged `notification_error`, so live match notifications had been failing silent
 
 Triggered by host cron or `scripts/start_bot.sh`; runs only while the operator's laptop is on.
 
-### v2.0.0 — in development
+### v2.0.0 — unreleased
 
-- Google Sheets and Docs removed; the analytics index becomes local CSV files derived from
-  Postgres, plus a plain-text monthly report.
-- A browser dashboard served by the existing FastAPI app — match and skipped views, job and resume
-  links, and a Run button.
-- The pipeline moves to a manually-triggered GitHub Actions workflow, so runs no longer require the
-  laptop to be awake.
-- ngrok replaced by a private Tailscale mesh; the endpoint is no longer exposed to the internet.
+The theme is **making the system usable from a phone without leaving it exposed.**
+
+- **Google removed.** Sheets and Docs are gone, along with four pip packages, a service-account
+  JSON, three env vars and a bind mount. The analytics index is now local CSV files *derived from
+  Postgres* rather than appended during a run — which is what lets a run that happened on a
+  throwaway CI runner show up in the local files with no sync step.
+- **Laptop-off runs.** A manually-dispatched GitHub Actions workflow runs the whole pipeline on
+  GitHub's runners, triggerable from the GitHub mobile app. The operator profile and resume
+  template travel through S3, since they exceed GitHub's 48 KB secret limit.
+- **Resumes that survive a sleeping laptop.** Matched jobs are pre-rendered to S3 during the run
+  and delivered as presigned links, so a notification from a remote run is fully actionable. This
+  amends hard rule #8 by explicit decision; it remains an expiring cache, not a permanent pile.
+- **A browser dashboard** served by the existing FastAPI app — matches, near-misses, apply and
+  resume links, and a Run button that goes either local or remote.
+- **ngrok replaced by Tailscale.** The endpoint has no authentication and ngrok published it to the
+  entire internet on a guessable URL scheme. It now binds loopback only and is reached over a
+  private mesh.
+- Match notifications fixed (see v1.0.0), 154 tests, and one search term per run by default to
+  keep per-run LLM spend low.
 
 ---
 
@@ -103,10 +116,16 @@ authorship. That constraint is what makes the output defensible.
   the operator's template and converting via headless LibreOffice.
 - **Diff-validated assembly** — a render that changes anything outside permitted regions fails
   rather than shipping; the resume header is never touched.
+- **Build-time pre-render** — matched resumes are rendered to S3 as the run happens and delivered
+  as presigned links, so they work even when the laptop that hosts the endpoint is switched off.
 - **Telegram delivery** — match notifications with Apply, Resume PDF, and Resume DOCX buttons.
-- **Analytics** — Google Sheets index (Matches / Skipped / Near-duplicates) plus a monthly
-  Gemini-written Google Docs report.
-- **Free tier throughout** — Neon, Gemini, Telegram, Google Workspace APIs, AWS S3 and CloudWatch.
+- **Browser dashboard** — matches and near-misses with apply and resume links, plus a Run button
+  that starts the pipeline locally or dispatches it to GitHub Actions.
+- **Laptop-off runs** — a manually-dispatched GitHub Actions workflow runs the whole pipeline on
+  GitHub's runners, triggerable from the GitHub mobile app.
+- **Analytics** — a local CSV index (Matches / Skipped / Near-duplicates) derived from Postgres,
+  plus a monthly Gemini-written text report.
+- **Free tier throughout** — Neon, Telegram, AWS S3 and CloudWatch, GitHub Actions.
 - **Instance-ready** — no operator identity in `src/`; a second operator swaps config files and
   runs their own instance with zero code edits.
 
@@ -140,7 +159,7 @@ flowchart TB
     ASM --> S3
     S3 --> USER
 
-    L8 --> L9["Layer 9 · Analytics<br/>Sheets index + monthly Docs report"]
+    L8 --> L9["Layer 9 · Analytics<br/>local CSV index + monthly text report"]
     L8 --> CW["CloudWatch<br/>structlog via watchtower"]
 ```
 
@@ -148,15 +167,15 @@ flowchart TB
 
 | Layer | Component | Status | Implementation |
 |---|---|---|---|
-| 1 | Scheduler | 🟡 Stub | Cron documented; `scripts/start_bot.sh` loops locally |
-| 2 | Scraper | ✅ Real | JobSpy + dedup + source rotation |
+| 1 | Scheduler | ✅ Real | Manually-dispatched GitHub Actions workflow |
+| 2 | Scraper | ✅ Real | JobSpy + dedup + term rotation |
 | 3 | JD Parser | ✅ Real | Gemini Call 1a with Pydantic validation |
 | 4 | Scoring | ✅ Real | Deterministic selection, notify ≥ 0.50 |
 | 5 | Resume Builder | ✅ Real | Gemini Call 1b → `selection_json` |
-| 6 | Endpoint | ✅ Real | FastAPI on-demand PDF/DOCX render |
+| 6 | Endpoint | ✅ Real | FastAPI PDF/DOCX render + operator dashboard |
 | 7 | State | ✅ Real | Neon Postgres + pgvector, master-profile rebuild |
 | 8 | Notifications | ✅ Real | Telegram matches + dry-run summaries |
-| 9 | Analytics | ✅ Real | Sheets index + monthly Docs report |
+| 9 | Analytics | ✅ Real | Local CSV index + monthly text report |
 
 ### Module map
 
@@ -167,13 +186,15 @@ flowchart TB
 | `src/parser.py` | JD parsing (Gemini Call 1a) |
 | `src/scorer/` | `embeddings`, `selector`, `ordering`, `apply_decision` |
 | `src/builder/` | `llm_call` (Call 1b), `skills_validator` |
-| `src/endpoint/` | `app`, `assembler`, `pdf_convert`, `cache`, `hyperlinks` |
+| `src/endpoint/` | `app`, `assembler`, `pdf_convert`, `cache`, `hyperlinks`, `dashboard`, `runner` |
+| `src/endpoint/templates/`, `static/` | Dashboard markup, CSS and JS (no build step) |
 | `src/state/` | `db`, `models`, `master_profile`, `cleanup`, Alembic migrations |
 | `src/llm/` | `client`, `prompts`, `schemas` |
 | `src/aws/` | `s3`, `cloudwatch`, `iam_session` |
-| `src/analytics.py` | Google Sheets index and monthly Docs report |
+| `src/analytics.py` | Local CSV index (derived from Postgres) and monthly text report |
 | `src/notifications.py` | Telegram formatting and delivery |
-| `src/cli/` | `dryrun`, `inspect`, `reparse`, `report`, `aws_check` |
+| `src/cli/` | `dryrun`, `inspect`, `reparse`, `report`, `export`, `assets`, `aws_check` |
+| `.github/workflows/pipeline.yml` | Layer 1 — the laptop-off pipeline run |
 
 ## Design Decisions
 
@@ -249,16 +270,19 @@ job_application_bot/
 │   ├── main.py                  # Orchestrator
 │   ├── config.py                # Settings from config.yaml + .env
 │   ├── scraper/ parser.py scorer/ builder/
-│   ├── endpoint/                # FastAPI resume server + DOCX assembler
+│   ├── endpoint/                # Resume server, DOCX assembler, dashboard
+│   │   ├── templates/ static/   # Dashboard markup, CSS, JS (no build step)
 │   ├── state/                   # SQLAlchemy models, Alembic migrations
 │   ├── llm/                     # Gemini client, prompts, Pydantic schemas
 │   ├── aws/                     # S3, CloudWatch, IAM session
 │   ├── analytics.py notifications.py scheduler.py reasons.py
-│   └── cli/                     # dryrun, inspect, reparse, report, aws_check
-├── tests/                       # 13 test modules, mocked external services
+│   └── cli/                     # dryrun, inspect, reparse, report, export, assets, aws_check
+├── .github/workflows/pipeline.yml  # Layer 1 — the laptop-off pipeline run
+├── tests/                       # 15 test modules, mocked external services
 ├── config/config.yaml           # All runtime tunables (checked in, no secrets)
 ├── resumes/templates/           # Operator DOCX template
-├── scripts/start_bot.sh         # Local runner: endpoint + ngrok + run loop
+├── data/index/ data/reports/    # Layer 9 CSV index and monthly reports (gitignored)
+├── scripts/start_bot.sh         # Local runner: endpoint + tailscale check
 ├── Dockerfile docker-compose.yml
 ├── .env.example                 # Every secret the pipeline reads
 ├── master_profile.example.yaml  # Template for the operator's profile
@@ -334,8 +358,7 @@ in `src/`.
 | `DATABASE_URL` | Neon Postgres connection string (pgvector enabled) |
 | `GEMINI_API_KEY` | Google AI Studio key |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Notification delivery |
-| `GOOGLE_SHEETS_ID` / `GOOGLE_DOC_ID` | Layer 9 analytics targets |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Path to the service-account JSON |
+| `GITHUB_REPO` / `GITHUB_TOKEN` | Optional — lets the dashboard dispatch runs to GitHub Actions |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | S3 + CloudWatch |
 | `AWS_S3_BUCKET` | Render cache and selection backups |
 | `AWS_CLOUDWATCH_LOG_GROUP` / `AWS_CLOUDWATCH_NAMESPACE` | Log and metric destinations |
@@ -348,10 +371,12 @@ in `src/`.
 | `operator` | Full name (drives derived filenames), years of experience, timezone |
 | `filters` | Job type, years ceiling, disallowed regions, company blocklist |
 | `salary` | Default expected LPA — informational only, never auto-filled |
-| `scheduler` | Documented cron cadence: 40 min peak, 4 h off-peak |
+| `scraper.terms_per_run` | How many search terms one run sweeps (cost vs coverage) |
 | `scoring` | Every threshold and weight in the selection formula |
-| `endpoint` | Public base URL for resume links |
-| `analytics` | Sheets tabs, monthly report thresholds |
+| `prerender` | Build-time render + presigned-link lifetime |
+| `endpoint` | Tailnet base URL, dashboard limits, GitHub dispatch target |
+| `analytics` | Local CSV index paths, monthly report settings |
+| `analytics` | Local CSV index paths, monthly report settings |
 
 Current filter settings reject anything above 5 years' experience, restrict to full-time, and
 exclude Delhi NCR (Delhi, Gurgaon, Gurugram, Noida, Ghaziabad, Faridabad).
@@ -375,29 +400,69 @@ A run lock prevents overlapping cron executions.
 | `python -m src.cli.dryrun` | Full pipeline into the test chat |
 | `python -m src.cli.inspect --job-id XYZ` | Full pipeline state for one job |
 | `python -m src.cli.reparse` | Rebuild the master profile in the DB from YAML |
-| `python -m src.cli.report` | Write the monthly analytics report to Google Docs |
+| `python -m src.cli.report` | Write the monthly analytics report to a text file |
 | `python -m src.cli.aws_check` | Verify S3, IAM, and CloudWatch connectivity |
 
 ### Endpoint
 
 | Route | Purpose |
 |---|---|
+| `GET /dashboard` | Matched jobs with apply and resume links, and the Run button |
+| `GET /dashboard/skipped` | Jobs that scored below the threshold, near-misses flagged |
 | `GET /resume/{job_id}.pdf` | Render or serve the cached tailored resume as PDF |
 | `GET /resume/{job_id}.docx` | Same, as DOCX |
+| `GET /api/jobs` | Match data as JSON |
+| `POST /api/run` | Start a run — `{"dry_run": bool, "target": "local"\|"github"}` |
+| `GET /api/run/status` | Poll run progress and log lines |
 | `GET /health` | Healthcheck used by the compose healthcheck |
 
-Roughly 5 s cold, instant when cached.
+Rendering is roughly 5 s cold, instant when cached.
+
+### Remote access
+
+The endpoint and dashboard have **no authentication**, so the container binds `127.0.0.1` only and
+remote access goes over a private Tailscale mesh — reachable from the operator's own devices and
+nothing else. ngrok, which published the same unauthenticated surface to the whole internet, was
+removed in v2.
+
+One-time setup:
+
+```bash
+# In the Tailscale admin console: enable MagicDNS and HTTPS certificates.
+tailscale up
+tailscale serve --bg 8000        # start_bot.sh does this and prints the URL
+```
+
+Then set `endpoint.base_url` in `config/config.yaml` to `https://<host>.<tailnet>.ts.net`.
+
+Use `tailscale serve`, never `tailscale funnel` — `funnel` publishes to the public internet and
+would undo the reason ngrok was dropped.
 
 ### Local operation
 
 ```bash
-./scripts/start_bot.sh 40    # endpoint + ngrok, then a live run every 40 minutes
-./scripts/start_bot.sh 0     # run once
+./scripts/start_bot.sh          # endpoint + dashboard only
+./scripts/start_bot.sh 90       # ...and a live run every 90 minutes
+./scripts/start_bot.sh once     # ...and a single run, then exit
 ```
 
-The pipeline queries the ngrok local API at `localhost:4040` for the current public HTTPS tunnel
-and uses it for Telegram resume links, falling back to `endpoint.base_url` in `config.yaml` when
-ngrok is not running.
+The loop is off by default: runs normally come from the dashboard's Run button or the GitHub
+Actions workflow.
+
+### Running with the laptop off
+
+`.github/workflows/pipeline.yml` runs the whole pipeline on GitHub's runners, dispatched manually
+from the Actions tab or the GitHub mobile app. Matched resumes are pre-rendered to S3 during the
+run and delivered as presigned links, so Telegram notifications stay fully usable — apply link and
+resume both — with the laptop shut. Only the dashboard needs the machine awake.
+
+Before the first remote run:
+
+```bash
+python -m src.cli.assets push   # profile + template -> S3 (too big for GitHub secrets)
+```
+
+Add `DATABASE_URL`, `GEMINI_API_KEY`, `TELEGRAM_*` and `AWS_*` as repository secrets.
 
 ## Example Workflow
 
@@ -407,20 +472,22 @@ ngrok is not running.
 3. Each JD is embedded. If cosine similarity to an already-notified job exceeds 0.95, it is marked
    `NEAR_DUPLICATE`, linked to the original, and skipped.
 4. **Layer 3** sends Gemini Call 1a and validates the response into a Pydantic model.
-5. **Layer 4** scores the job. Below 0.50 it is recorded as `LOW_SCORE` with a reason and written
-   to the Skipped tab — no second LLM call is spent.
+5. **Layer 4** scores the job. Below 0.50 it is recorded as `LOW_SCORE` with a reason — no second
+   LLM call is spent.
 6. **Layer 5** sends Call 1b for a title alias, three skill categories, and cover-letter text,
    then validates every skill against the pool and every claim against the profile text.
    Failures regenerate up to twice, then raise `BUILD_FAILURE`.
 7. The `selection_json` is written to Postgres.
-8. **Layer 8** sends a Telegram message with role, company, score, threshold, location, CTC, gap
+8. **Layer 6** pre-renders the resume: assembles the DOCX against the current template,
+   diff-validates, converts through LibreOffice, caches to S3, and presigns a 7-day link. This is
+   what makes the links usable when the machine that hosts the endpoint is off.
+9. **Layer 8** sends a Telegram message with role, company, score, threshold, location, CTC, gap
    skills, and three buttons: Apply, Resume PDF, Resume DOCX.
-9. The operator taps Resume PDF. **Layer 6** checks `render_cache`; on a miss it loads the
-   selection, assembles the DOCX against the current template, diff-validates, converts through
-   LibreOffice, caches to S3, and serves.
-10. The operator applies manually through the Apply link.
-11. **Layer 9** appends a row to the Sheets Matches tab. Monthly, `src.cli.report` aggregates the
-    last 30 days and appends a Gemini-written section to the Google Doc.
+10. The operator taps Resume PDF — served from S3, or rendered on demand by the endpoint for
+    anything expired or never pre-rendered — and applies manually through the Apply link.
+11. **Layer 9** regenerates the CSV index from Postgres at the end of a local run, or the next
+    time the dashboard is opened after a remote one. Monthly, `src.cli.report` aggregates the last
+    30 days into a Gemini-written text report.
 
 ## Dependencies
 
@@ -432,9 +499,8 @@ ngrok is not running.
 | `google-generativeai` + `instructor` + `pydantic` | Structured Gemini calls, never raw JSON |
 | `sqlalchemy` + `psycopg` + `pgvector` + `alembic` | Postgres access, vector columns, migrations |
 | `python-docx` + `reportlab` | DOCX assembly and PDF primitives |
-| `fastapi` + `uvicorn` + `httpx` | Resume endpoint and its test client |
+| `fastapi` + `uvicorn` + `httpx` + `jinja2` | Resume endpoint, dashboard, test client, GitHub dispatch |
 | `python-telegram-bot` | Notification delivery |
-| `gspread` + `google-api-python-client` + `google-auth` | Sheets index and Docs report |
 | `boto3` + `watchtower` | S3 cache/backup and structlog → CloudWatch |
 | `structlog` + `pyyaml` + `python-dotenv` | Structured logging and configuration |
 | `pytest` + `pytest-asyncio` + `moto` | Test suite with mocked AWS |
@@ -448,32 +514,37 @@ pytest          # full suite
 pytest -v       # as CI runs it
 ```
 
-Around 101 unit tests across 13 modules. Nothing external is contacted: Gemini is mocked, the DB
+Around 154 unit tests across 15 modules. Nothing external is contacted: Gemini is mocked, the DB
 session is mocked, boto3 runs under `moto`, and FastAPI is exercised through `TestClient`. Layer 4
-selection is pure functions and is tested against synthetic profiles and JDs.
+selection is pure functions and is tested against synthetic profiles and JDs. The dashboard tests
+render the real Jinja templates, so a template referencing a missing field fails in CI rather than
+in the browser.
 
 CI runs on every push to `main` and every pull request — Python 3.11, a clean
 `pip install -r requirements.txt` (which is itself the honest test that the file is complete),
 then `pytest -v`.
 
-Integration testing is manual against a real Neon branch, GCP, and S3. The dry-run path was
-verified end to end on 2026-06-11.
+Integration testing is manual against a real Neon branch and S3. The dry-run path was verified end
+to end on 2026-06-11.
 
 ## Limitations
 
-- **Layer 1 is a stub.** There is no in-process scheduler; runs are triggered by host cron or
-  `scripts/start_bot.sh`.
-- **It runs on a laptop.** Oracle and AWS VM deployment was abandoned for want of a payment card,
-  so the endpoint is exposed through ngrok. Resume links die when the machine sleeps.
+- **The dashboard needs the laptop awake.** Notifications, apply links and pre-rendered resume
+  links all work with the machine off, and runs can be dispatched from the GitHub mobile app — but
+  the dashboard itself is served from the laptop, so it is unreachable while that sleeps. Hosting
+  it always-on would mean a public, authenticated surface; deliberately out of scope.
+- **Resume links expire after 7 days.** AWS SigV4 caps presigned URLs there. Past that the resume
+  still renders on demand from the endpoint, which needs the laptop and the tailnet.
+- **Remote access requires Tailscale on every device.** The endpoint has no authentication, so the
+  private network is the security boundary. Links cannot be shared with anyone else.
+- **Runs are manual.** The Actions workflow is `workflow_dispatch` only; the `schedule:` block is
+  present but commented out, with the minutes arithmetic that explains why.
 - **Indeed is currently disabled.** `apis.indeed.com` times out from the operator's network, so
   `scraper.sites` is temporarily LinkedIn-only. Glassdoor is likewise dropped for now.
-- **Gemini free-tier quotas bind.** The model was moved from `gemini-2.5-flash-lite` (20
-  requests/day) to `gemini-2.5-flash` (250/day) after repeated 429s, and retry backoff was widened
-  to 5 attempts with a 90 s ceiling to survive the 5-requests-per-minute limit.
+- **One search term per run.** `terms_per_run` is 1 to keep per-run LLM spend low, so sweeping the
+  full 24-term list takes 24 runs. Raise it to trade cost for coverage.
 - **Generated resumes run long** — currently around five pages. The length comes from static
   template content, not from the assembler.
-- **No browser dashboard.** The Iteration 7 spec for local `/dashboard` routes exists; the
-  routes and templates are not built.
 - **Single operator.** Instance-ready by config, but there is no auth, no accounts, and no tenant
   isolation — by design.
 - **Scraper reliability is outside this system's control.** Portal HTML and API changes break
@@ -484,13 +555,13 @@ verified end to end on 2026-06-11.
 
 ## Roadmap
 
-- **Layer 1** — automatic scheduled runs rather than a manual trigger.
-- **Browser dashboard** — local-only `/dashboard` views for matches, skipped jobs, and job
-  detail, plus a one-off run trigger and scrape-frequency control.
+- **Scheduled runs** — uncomment the workflow's `schedule:` block once the cost of a cadence is
+  worth it.
 - **Resume length** — trim template content to bring output under five pages.
 - Re-enable Indeed and Glassdoor once connectivity allows.
 - Naukri as a fourth source (Iteration 6).
-- Host the endpoint somewhere permanent so resume links outlive the laptop.
+- Host the dashboard somewhere always-on so it outlives the laptop, which would mean adding real
+  authentication.
 
 ## What this is NOT
 
