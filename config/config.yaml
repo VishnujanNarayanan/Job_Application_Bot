@@ -633,7 +633,11 @@ prerender:
 # run still produces links that work anywhere.
 # ---------------------------------------------------------------------------
 endpoint:
-  base_url: "http://localhost:8000"   # replace with https://<host>.<tailnet>.ts.net
+  # Reachable only from devices on this operator's tailnet, which is the
+  # security boundary — the dashboard and resume endpoint have no auth.
+  # Telegram also rejects a localhost url outright, discarding the whole
+  # notification, so leaving this as the placeholder silently cost a match.
+  base_url: "https://asus-tuf-f16-vishnu.tail106cde.ts.net"
   port: 8000
   # Template path is config-driven so any instance can swap the file.
   template_path: "resumes/templates/Templete.docx"
