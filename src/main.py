@@ -82,6 +82,7 @@ def _run(dry_run: bool, log) -> int:
     from src import analytics
     from src.builder.llm_call import build as build_selection
     from src.config import settings, resolve_endpoint_base_url
+    from src.endpoint.cache import prerender
     from src.llm.client import LLMError
     from src.notifications import send_dry_run_summary, send_match_notification
     from src.parser import apply_to_row, grounded_skills, parse
@@ -125,34 +126,56 @@ def _run(dry_run: bool, log) -> int:
         profile = master_profile.load_profile(session)
 
         # --- Layer 2: scraper ---
+        # Several terms per run: runs are manually triggered now, so one term
+        # per run would need as many clicks as there are terms to sweep the
+        # list once.
         terms = list(cfg.scraper.search_terms)
-        term = rotation.current_term(session, terms)
+        terms_per_run = int(cfg.scraper.terms_per_run)
+        run_terms = rotation.current_terms(session, terms, terms_per_run)
         is_peak = True  # TODO: detect from time-of-day in Layer 1
         hours_old = int(cfg.scraper.hours_old.peak if is_peak else cfg.scraper.hours_old.off_peak)
 
-        log.info("scrape_start", term=term, hours_old=hours_old, dry_run=dry_run)
+        log.info(
+            "scrape_start", terms=run_terms, hours_old=hours_old, dry_run=dry_run
+        )
         rl = cfg.scraper.rate_limit
-        try:
-            raw_jobs = jobspy_wrapper.scrape(
-                term,
-                sites=list(cfg.scraper.sites),
-                country=str(cfg.scraper.country),
-                location=cfg.scraper.get("location"),
-                results_wanted=int(cfg.scraper.results_wanted_per_term),
-                hours_old=hours_old,
-                linkedin_fetch_description=bool(cfg.scraper.linkedin_fetch_description),
-                linkedin_results_wanted=int(rl.linkedin_results_wanted),
-                per_site=bool(rl.per_site),
-                max_retries=int(rl.max_retries),
-                backoff_base_seconds=float(rl.backoff_base_seconds),
-                inter_site_delay_seconds=float(rl.inter_site_delay_seconds),
-                proxies=list(rl.proxies),
-            )
-        except Exception as exc:
-            log.error("scraper_error", term=term, error=str(exc))
-            raw_jobs = []
+        raw_jobs = []
+        seen_job_ids: set[str] = set()
+        for term in run_terms:
+            try:
+                term_jobs = jobspy_wrapper.scrape(
+                    term,
+                    sites=list(cfg.scraper.sites),
+                    country=str(cfg.scraper.country),
+                    location=cfg.scraper.get("location"),
+                    results_wanted=int(cfg.scraper.results_wanted_per_term),
+                    hours_old=hours_old,
+                    linkedin_fetch_description=bool(cfg.scraper.linkedin_fetch_description),
+                    linkedin_results_wanted=int(rl.linkedin_results_wanted),
+                    per_site=bool(rl.per_site),
+                    max_retries=int(rl.max_retries),
+                    backoff_base_seconds=float(rl.backoff_base_seconds),
+                    inter_site_delay_seconds=float(rl.inter_site_delay_seconds),
+                    proxies=list(rl.proxies),
+                )
+            except Exception as exc:
+                # One term failing must not discard the other terms' results.
+                log.error("scraper_error", term=term, error=str(exc))
+                continue
 
-        log.info("scrape_done", term=term, raw_count=len(raw_jobs))
+            # Terms overlap heavily ("backend engineer" / "backend developer"),
+            # so de-dupe across them before anything downstream pays per job.
+            new = [j for j in term_jobs if j.job_id not in seen_job_ids]
+            seen_job_ids.update(j.job_id for j in new)
+            raw_jobs.extend(new)
+            log.info(
+                "scrape_term_done",
+                term=term,
+                raw_count=len(term_jobs),
+                new_count=len(new),
+            )
+
+        log.info("scrape_done", terms=run_terms, raw_count=len(raw_jobs))
 
         # --- Layer 2: hard filters (raw fields) ---
         existing_ids = filters.existing_job_ids(session, [j.job_id for j in raw_jobs])
@@ -290,6 +313,21 @@ def _run(dry_run: bool, log) -> int:
             # --- Layer 8: notify ---
             if not dry_run:
                 endpoint_url = resolve_endpoint_base_url(str(cfg.endpoint.base_url))
+
+                # --- Layer 6: pre-render so links survive a sleeping laptop ---
+                # Amends hard rule #8 by explicit operator decision: without
+                # this, a run triggered from the phone produces links that
+                # 404 until the laptop is opened, because the endpoint that
+                # renders on demand lives there. Best-effort — a render
+                # failure must not cost us the notification.
+                resume_urls: dict[str, str] = {}
+                if bool(cfg.prerender.enabled):
+                    resume_urls = prerender(
+                        job.job_id,
+                        session,
+                        expires_seconds=int(cfg.prerender.link_expiry_days) * 86400,
+                    )
+
                 try:
                     send_match_notification(
                         job=job,
@@ -298,6 +336,7 @@ def _run(dry_run: bool, log) -> int:
                         gap_skills=gap_skills,
                         endpoint_base_url=endpoint_url,
                         title_alias=title_alias,
+                        resume_urls=resume_urls,
                     )
                 except Exception as exc:
                     log.error("notification_error", job_id=job.job_id, error=str(exc))
@@ -327,8 +366,8 @@ def _run(dry_run: bool, log) -> int:
         # --- Persist not-applied records (+ Layer 9 skipped/near-dup rows) ---
         _write_not_applied(session, not_applied_queue, now, dry_run=dry_run)
 
-        # --- Advance rotation ---
-        rotation.advance(session, terms)
+        # --- Advance rotation past every term used this run ---
+        rotation.advance(session, terms, step=len(run_terms))
 
         session.commit()
 

@@ -68,8 +68,12 @@ scheduler:
 scraper:
   hours_old:
     # JobSpy `hours_old` parameter — how far back to look per run.
-    peak: 2
-    off_peak: 5
+    # Runs are manually triggered (v2), not every 40 minutes, so a 2-hour
+    # window would show almost nothing on a once-a-day click. Sized to cover
+    # a day between clicks; the company cooldown and the all_jobs duplicate
+    # check stop the wider window re-notifying anything already seen.
+    peak: 24
+    off_peak: 48
   # Stop searching when this many jobs have passed hard filters in one run.
   short_circuit_count: 20
   # JobSpy results_wanted cap per query term.
@@ -108,8 +112,15 @@ scraper:
     # Temporarily LinkedIn-only: apis.indeed.com is timing out from this
     # network. Re-add "indeed" and "glassdoor" once connectivity is restored.
     - "linkedin"
-  # Serial search rotation — one term per run, advances on short-circuit.
-  # Rotation state persisted in search_rotation_state DB table.
+  # Search-term rotation. Each run takes `terms_per_run` terms starting at the
+  # persisted index (search_rotation_state table) and advances past them, so
+  # consecutive runs sweep the list rather than repeating its head.
+  #
+  # Sizing: each scraped job costs 1 Gemini call to parse, +1 to build if it
+  # scores >= 0.50. The free tier is 250 calls/day, so ~4 terms per run keeps
+  # a run near 60-80 calls — roughly 3 clicks a day — and covers all 24 terms
+  # in about 6 clicks. Raise only with a paid Gemini key.
+  terms_per_run: 4
   search_terms:
     - "backend engineer"
     - "backend developer"
@@ -367,6 +378,26 @@ aws:
   region: "ap-south-1"
   # Bucket name is operator-specific (not a secret). Override here per instance.
   s3_bucket: "application-bot-vishnujan-resumes"
+
+# ---------------------------------------------------------------------------
+# Pre-render — Layer 6 at build time (amends CLAUDE.md hard rule #8).
+#
+# Rule #8 says resumes render on demand and are never stored at build time.
+# The operator explicitly overrode this so resume links work with the laptop
+# switched off: the on-demand endpoint runs on the laptop, so a run triggered
+# from the phone would otherwise produce links that 404 until it is reopened.
+#
+# It stays a CACHE, not a permanent pile — renders go to the same
+# `{ext}_cache/` S3 prefix, which already carries a 1-month lifecycle rule,
+# and are recorded in render_cache with a matching TTL. The endpoint still
+# renders on demand for anything expired or never pre-rendered.
+# ---------------------------------------------------------------------------
+prerender:
+  enabled: true
+  # Presigned-URL lifetime. AWS SigV4 caps this at 7 days; longer values are
+  # clamped. A listing is usually stale by then anyway, and the endpoint still
+  # serves the resume once the laptop is back on.
+  link_expiry_days: 7
 
 # ---------------------------------------------------------------------------
 # Resume endpoint — FastAPI (Layer 6). Serves /resume/{job_id}.pdf|.docx.
