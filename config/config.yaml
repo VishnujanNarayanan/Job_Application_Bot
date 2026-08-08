@@ -299,20 +299,34 @@ spacy:
   model: "en_core_web_sm"
 
 # ---------------------------------------------------------------------------
-# LLM — Gemini 2.5 Flash (2-call budget max per job)
+# LLM — Gemini (2-call budget max per job)
 # Call 1a: JD parse (always). Call 1b: title+skills+cover (if score >= 0.50).
 # Old Call 2 (batched form questions) removed with auto-apply.
-# Note: free-tier RPD is PER-MODEL. flash = 250/day free, flash-lite = 20/day.
-# (flash-lite was chosen believing it had higher RPD — it does not.)
+#
+# Model choice: `gemini-2.5-flash` was retired mid-flight on 2026-08-08 —
+# every call 404'd with "no longer available to new users", which killed a
+# live run. Note the model still appeared in list_models(); being listed does
+# NOT mean it is callable. Verify with a real generateContent call.
+#
+# `gemini-3.6-flash` is the newest stable flash, so it buys the longest runway
+# before the next retirement. Avoid `-preview` suffixes (withdrawn without
+# notice) and `gemini-flash-latest` (silently changes under you, which can
+# break structured output mid-run). Lite variants are cheaper and ~3x faster
+# but measurably worse at extraction — one dropped "Senior" from a job title,
+# and seniority feeds the success_prob score directly.
 # ---------------------------------------------------------------------------
 llm:
   provider: "gemini"
-  model: "gemini-2.5-flash"
-  daily_call_budget: 1500   # free tier ceiling; expected ~600/day
+  model: "gemini-3.6-flash"
+  daily_call_budget: 1500
   max_calls_per_job: 2
   backoff:
-    initial_seconds: 20   # free-tier RPM is 5/min; server asks for ~19-55s waits
-    max_seconds: 90
+    # Sized for paid Tier 1 (hundreds of requests/minute), not the free tier's
+    # 5/min which the old 20s/90s values were fighting. Permanent errors (404
+    # retired model, bad key, malformed request) no longer consume this budget
+    # at all — see _is_permanent() in src/llm/client.py.
+    initial_seconds: 2
+    max_seconds: 30
     max_attempts: 5
 
 # ---------------------------------------------------------------------------
