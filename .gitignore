@@ -1,10 +1,11 @@
 # --- Operator docs (personal / instance-specific, not committed) ------------
+# CHANGELOG.md is deliberately NOT here: it records what changed in the code,
+# so it belongs to the repo rather than to this instance.
 job_automation_architecture.md
 alembic.ini
 TODO.md
 PRD.md
 CLAUDE.md
-CHANGELOG.md
 
 # --- Secrets & credentials --------------------------------------------------
 .env
