@@ -460,6 +460,26 @@ llm:
   request_timeout_seconds: 60
   max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
 
+  # Bound how much of a job description reaches the model. BOTH ends are kept:
+  # the head carries the role and its requirements, the tail carries pay and
+  # application details.
+  #
+  # Measured over 667 real listings (median 4,172 chars, max 11,815):
+  #   head+tail    chars   pay   years   level   jobs clipped
+  #   1600+900      53%    70%     53%     86%       78%
+  #   2000+1000     61%    73%     67%     90%       70%
+  #   3000+1500     81%    87%     88%     97%       45%   <- configured
+  #   5000+2000     96%    99%     97%    100%       12%
+  #
+  # Clipping harder saves real tokens but measurably degrades years_required
+  # and role_level, which drive success_prob (30% of the final score). This
+  # setting exists to cap the OUTLIERS that spike the per-minute token limit,
+  # not to shave every job — the big saving belongs to an embedding pre-filter
+  # that skips the parse entirely, which costs no accuracy at all.
+  jd_text:
+    head_chars: 3000
+    tail_chars: 1500
+
   # Providers tried, in order, when the one before gives up. Both of the
   # 2026-08-08 failures were provider-wide rather than per-job — a retired
   # model 404'd every request, and a spend cap 429'd every request — so either

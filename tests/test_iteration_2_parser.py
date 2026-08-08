@@ -166,3 +166,77 @@ def test_a_long_role_summary_is_accepted():
     })
 
     assert len(parsed.role_summary) == 632
+
+
+# ---------------------------------------------------------------------------
+# JD clipping — bounding what reaches the model
+# ---------------------------------------------------------------------------
+
+def test_short_descriptions_are_untouched():
+    """Most of the value is in bounding outliers; typical JDs pass through."""
+    from src.llm.prompts import clip_jd_text
+
+    text = "Short and sweet."
+    assert clip_jd_text(text) is text
+
+
+def test_clipping_keeps_both_ends():
+    """Head-only truncation was measured and rejected: pay is stated a median
+    77% of the way into a JD, so cutting the tail loses the salary signal in
+    most listings that carry one.
+    """
+    from src.llm.prompts import clip_jd_text
+
+    text = "HEAD" + ("x" * 20_000) + "12 LPA TAIL"
+    clipped = clip_jd_text(text, head=200, tail=100)
+
+    assert clipped.startswith("HEAD")
+    assert clipped.endswith("12 LPA TAIL")
+    assert len(clipped) < len(text)
+
+
+def test_clipping_marks_the_gap():
+    """The model must be told text is missing, not handed a sentence that
+    stops mid-clause and invited to infer the rest."""
+    from src.llm.prompts import clip_jd_text
+
+    clipped = clip_jd_text("a" * 9000, head=100, tail=50)
+    assert "omitted" in clipped
+
+
+def test_a_zero_tail_does_not_return_the_whole_text():
+    """`text[-0:]` is the entire string, not the empty one — a slicing trap
+    that silently disables clipping."""
+    from src.llm.prompts import clip_jd_text
+
+    clipped = clip_jd_text("a" * 5000, head=100, tail=0)
+    assert len(clipped) < 200
+
+
+def test_the_prompt_uses_the_clipped_text():
+    """The saving is only real if the prompt builder applies it."""
+    from src.llm.prompts import jd_parse_prompt
+    from src.state.models import AllJobs
+
+    job = AllJobs(
+        job_id="clip-1", company="X", role="Engineer", site="test",
+        jd_text="START" + ("y" * 40_000) + "END",
+    )
+    prompt = jd_parse_prompt(job)
+
+    assert len(prompt) < 10_000, "the full 40k description must not be sent"
+    assert "START" in prompt and "END" in prompt
+
+
+def test_configured_bounds_keep_the_scoring_signals():
+    """Guards the trade this setting was chosen for.
+
+    Clipping harder measurably degraded years_required and role_level, which
+    drive success_prob (30% of the final score). These floors are what stops
+    someone tuning tokens down at the scorer's expense.
+    """
+    from src.config import settings
+
+    cfg = settings.llm.jd_text
+    assert int(cfg.head_chars) >= 2500, "the head carries role and requirements"
+    assert int(cfg.tail_chars) >= 1000, "the tail carries pay and how to apply"
