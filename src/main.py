@@ -141,6 +141,9 @@ def _run(dry_run: bool, log) -> int:
         rl = cfg.scraper.rate_limit
         raw_jobs = []
         seen_job_ids: set[str] = set()
+        # Which term surfaced each job, so `job_scored` can attribute a run's
+        # hits and misses to the search term that produced them.
+        term_of: dict[str, str] = {}
         for term in run_terms:
             try:
                 term_jobs = jobspy_wrapper.scrape(
@@ -168,6 +171,7 @@ def _run(dry_run: bool, log) -> int:
             new = [j for j in term_jobs if j.job_id not in seen_job_ids]
             seen_job_ids.update(j.job_id for j in new)
             raw_jobs.extend(new)
+            term_of.update({j.job_id: term for j in new})
             log.info(
                 "scrape_term_done",
                 term=term,
@@ -245,6 +249,29 @@ def _run(dry_run: bool, log) -> int:
             # --- Layer 4: scoring ---
             jd_context = build_jd_context(parsed, posted_at=job.posted_at)
             result = evaluate(profile, jd_context)
+
+            # Log every score, matched or not, with the components that made
+            # it. Without this a run is opaque: a batch of near-misses at 0.48
+            # means the threshold is slightly high, while a batch at 0.15 means
+            # the search term was simply wrong for this profile — and those
+            # call for opposite fixes. Runs on an ephemeral runner have no
+            # other way to surface it, since the CSV index isn't written there.
+            log.info(
+                "job_scored",
+                job_id=job.job_id,
+                company=job.company,
+                role=job.role,
+                term=term_of.get(job.job_id, ""),
+                score=round(result.final_score, 3),
+                threshold=float(cfg.scoring.apply_threshold),
+                matched=result.apply,
+                fit=round(result.fit, 3),
+                success_prob=round(result.success_prob, 3),
+                recency=round(result.recency, 3),
+                project=round(result.project_score, 3),
+                role_level=parsed.role_level,
+                years_required=parsed.years_required,
+            )
 
             if not result.apply:
                 not_applied_queue.append((job, LOW_SCORE, str(result.final_score)))
