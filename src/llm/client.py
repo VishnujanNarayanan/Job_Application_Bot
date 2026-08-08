@@ -35,6 +35,41 @@ class LLMError(RuntimeError):
     """Raised when a Gemini call fails after exhausting retries."""
 
 
+# Substrings identifying failures that will NEVER succeed on retry: a retired
+# or misspelled model, a malformed request, a bad or unauthorised key. Retrying
+# these burns the whole backoff budget (minutes per job, every job) on an
+# outcome that cannot change — which is exactly what a retired `gemini-2.5-flash`
+# did on 2026-08-08 before this guard existed.
+#
+# 429 is deliberately absent: rate limiting IS transient and must still retry.
+_PERMANENT_ERROR_MARKERS = (
+    "is no longer available",
+    "not found for api version",
+    "is not found",
+    "404",
+    "api key not valid",
+    "api_key_invalid",
+    "permission denied",
+    "permission_denied",
+    "403",
+    "invalid argument",
+    "invalid_argument",
+)
+
+
+def _is_permanent(exc: Exception) -> bool:
+    """True when retrying ``exc`` cannot possibly help.
+
+    Matched on message text rather than exception type because the SDK,
+    Instructor and the transport each raise their own classes and wrap one
+    another; the status text is the one thing that survives the layers.
+    """
+    message = str(exc).casefold()
+    if "429" in message or "resource_exhausted" in message or "quota" in message:
+        return False   # rate limited — transient, keep retrying
+    return any(marker in message for marker in _PERMANENT_ERROR_MARKERS)
+
+
 @lru_cache(maxsize=1)
 def get_client():
     """Build and cache the Instructor-wrapped Gemini client.
@@ -84,6 +119,22 @@ def complete(response_model: type[T], prompt: str, *, system: str | None = None)
             )
         except Exception as exc:  # noqa: BLE001 - SDK raises many types; we retry then re-wrap
             last_error = exc
+
+            # Fail fast on errors retrying cannot fix. Without this a retired
+            # model costs the full backoff budget on every job in the run.
+            if _is_permanent(exc):
+                log.error(
+                    "gemini_failure",
+                    error=str(exc),
+                    attempt=attempt,
+                    permanent=True,
+                    model=settings.llm.model,
+                    exc_info=exc,
+                )
+                raise LLMError(
+                    f"Gemini call failed permanently (model={settings.llm.model}): {exc}"
+                ) from exc
+
             if attempt < attempts:
                 log.warning(
                     "gemini_retry",
