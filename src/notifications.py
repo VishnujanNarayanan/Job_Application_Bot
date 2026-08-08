@@ -28,6 +28,25 @@ log = structlog.get_logger(__name__)
 load_dotenv()
 
 
+# Hosts Telegram will not accept in an inline button, and that would not be
+# reachable from a phone anyway.
+_PRIVATE_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+
+
+def _is_public_url(url: str) -> bool:
+    """True when Telegram will accept this as an inline button target.
+
+    Telegram rejects the ENTIRE message if any button url is unreachable —
+    "Inline keyboard button url 'http://localhost:8000/...' is invalid: wrong
+    http url" — so an unset endpoint.base_url silently cost a real match its
+    notification. Checking here turns that into a missing button.
+    """
+    if not url or not url.startswith(("http://", "https://")):
+        return False
+    host = url.split("//", 1)[1].split("/", 1)[0].split(":", 1)[0]
+    return host not in _PRIVATE_HOSTS and not host.endswith(".local")
+
+
 def _env_or_die(key: str) -> str:
     value = os.environ.get(key)
     if not value:
@@ -133,17 +152,43 @@ def send_match_notification(
     try:
         # Build the button row first, then construct the markup once —
         # InlineKeyboardMarkup.inline_keyboard is read-only after init.
+        #
+        # Unreachable links are dropped rather than sent: Telegram rejects the
+        # WHOLE message over one bad button url, so a single localhost link
+        # cost a real match its notification on 2026-08-08. A message with two
+        # buttons beats no message at all.
         row = []
-        if apply_url:
-            row.append(InlineKeyboardButton("Apply", url=apply_url))
-        row.append(InlineKeyboardButton("Resume PDF", url=pdf_url))
-        row.append(InlineKeyboardButton("Resume DOCX", url=docx_url))
-        keyboard = InlineKeyboardMarkup([row])
+        for label, url in (
+            ("Apply", apply_url),
+            ("Resume PDF", pdf_url),
+            ("Resume DOCX", docx_url),
+        ):
+            if _is_public_url(url):
+                row.append(InlineKeyboardButton(label, url=url))
+            elif url:
+                log.warning(
+                    "notification_button_dropped",
+                    job_id=job.job_id, label=label, url=url,
+                )
+        keyboard = InlineKeyboardMarkup([row]) if row else None
     except Exception as exc:
         log.warning("notification_keyboard_failed", job_id=job.job_id, error=str(exc))
         keyboard = None
 
-    asyncio.run(_send_match(text, keyboard))
+    try:
+        asyncio.run(_send_match(text, keyboard))
+    except Exception as exc:
+        # Last resort: the buttons are a convenience, the match is the point.
+        # Anything Telegram dislikes about the markup must not swallow the
+        # only signal this whole pipeline exists to produce.
+        if keyboard is None:
+            raise
+        log.warning(
+            "notification_buttons_rejected",
+            job_id=job.job_id, error=str(exc),
+        )
+        asyncio.run(_send_match(text, None))
+
     log.info("notification_sent", job_id=job.job_id, score=result.final_score)
 
 

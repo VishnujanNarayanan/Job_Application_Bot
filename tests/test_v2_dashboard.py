@@ -495,3 +495,37 @@ def test_applied_page_offers_undo_not_apply(client):
     assert 'data-status="pending"' in body, "Undo must be present"
     assert "js-apply" not in body, "a settled job must not show Apply"
     assert "job--settled" in body
+
+
+# ---------------------------------------------------------------------------
+# Notification delivery — Layer 8
+#
+# From the live run of 2026-08-08: a real match was found, its resume was
+# built, and the notification was lost because one button pointed at
+# localhost. The match is the only output that matters; nothing about link
+# formatting may swallow it.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("url", [
+    "http://localhost:8000/resume/x.pdf",
+    "http://127.0.0.1:8000/resume/x.pdf",
+    "http://0.0.0.0:8000/resume/x.pdf",
+    "http://laptop.local:8000/resume/x.pdf",
+    "",
+    "not-a-url",
+])
+def test_unreachable_urls_are_not_offered_as_buttons(url):
+    from src.notifications import _is_public_url
+
+    assert _is_public_url(url) is False
+
+
+@pytest.mark.parametrize("url", [
+    "https://box.tail1234.ts.net/resume/x.pdf",
+    "https://job-bot.s3.ap-south-1.amazonaws.com/pdf_cache/x.pdf?X-Amz-Signature=a",
+    "https://linkedin.com/jobs/123",
+])
+def test_reachable_urls_are_offered_as_buttons(url):
+    from src.notifications import _is_public_url
+
+    assert _is_public_url(url) is True
