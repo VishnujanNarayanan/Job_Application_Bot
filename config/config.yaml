@@ -411,6 +411,16 @@ endpoint:
   port: 8000
   # Template path is config-driven so any instance can swap the file.
   template_path: "resumes/templates/Templete.docx"
+  # Operator dashboard (Layer 6 browser surface).
+  dashboard:
+    # The skipped table is the biggest one and only its top is ever scanned.
+    skipped_limit: 200
+    github:
+      # Dispatch target for the "GitHub" run option. Repo and token come from
+      # GITHUB_REPO / GITHUB_TOKEN in .env — the token needs only
+      # `actions: write` on this repository.
+      workflow_file: "pipeline.yml"
+      ref: "main"
 
 # ---------------------------------------------------------------------------
 # Logging
