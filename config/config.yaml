@@ -430,6 +430,9 @@ endpoint:
       # GITHUB_REPO / GITHUB_TOKEN in .env — the token needs only
       # `actions: write` on this repository.
       workflow_file: "pipeline.yml"
+      # The branch the workflow runs from. GitHub also only lists
+      # workflow_dispatch workflows in the Actions UI (and the mobile app)
+      # for the DEFAULT branch, so this must stay in step with it.
       ref: "main"
 
 # ---------------------------------------------------------------------------
