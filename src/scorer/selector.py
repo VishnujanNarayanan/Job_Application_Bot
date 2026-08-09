@@ -112,6 +112,11 @@ class JDContext:
     role_category: str | None = None
     role_level: str | None = None
     posted_at: datetime | None = None
+    # Most portals (LinkedIn: 471 of 472) give no posting timestamp, so
+    # recency has to be inferred from when the job was SEEN and how far back
+    # that scrape looked. See `apply_decision.recency_score`.
+    scraped_at: datetime | None = None
+    scrape_window_hours: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +335,8 @@ def build_jd_context(
     parsed: JDParsed,
     *,
     posted_at: datetime | None = None,
+    scraped_at: datetime | None = None,
+    scrape_window_hours: float | None = None,
     embed_batch_fn=None,
 ) -> JDContext:
     """Embed a parsed JD into the query facets Layer 4 scores against.
@@ -357,4 +364,6 @@ def build_jd_context(
         role_category=parsed.role_category,
         role_level=parsed.role_level,
         posted_at=posted_at,
+        scraped_at=scraped_at,
+        scrape_window_hours=scrape_window_hours,
     )

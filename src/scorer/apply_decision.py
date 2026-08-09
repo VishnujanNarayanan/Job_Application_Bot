@@ -64,24 +64,85 @@ def seniority_score(role_level: str | None) -> float:
     return float(scores.get(role_level, scores.get(None, 0.80)))
 
 
-def recency_score(posted_at: datetime | None, now: datetime) -> float:
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _unknown_recency(cfg) -> float:
+    """Recency for a listing with NO timestamp of any kind.
+
+    Not ``default``. ``default`` means "measured, and older than every band" —
+    a verdict. This case has no measurement at all, and scoring an absence as
+    though it were the worst observation penalises a job for its portal's
+    metadata rather than for anything about the job. Absence of evidence is
+    not evidence of staleness.
+
+    So it scores neutral: the midpoint of the configured range, which is what
+    an average posting would earn. ``scoring.recency_score.unknown`` overrides
+    it; otherwise it is derived from the bands so that re-tuning them carries
+    the neutral point along instead of stranding a stale literal.
+    """
+    configured = cfg.get("unknown")
+    if configured is not None:
+        return float(configured)
+    scores = [float(b["score"]) for b in cfg.bands] + [float(cfg.default)]
+    return (min(scores) + max(scores)) / 2.0
+
+
+def recency_score(
+    posted_at: datetime | None,
+    now: datetime,
+    *,
+    scraped_at: datetime | None = None,
+    window_hours: float | None = None,
+) -> float:
     """Band the hours since posting into a recency score.
 
     Both the band edges and their scores come from
     ``scoring.recency_score.bands`` — they used to be hardcoded at 1/3/6/12
     hours here, which meant the bands could not be resized when the scrape
-    window changed. A listing older than every band (or with no timestamp at
-    all) gets ``default``.
+    window changed.
+
+    **Undated listings.** LinkedIn supplies ``date_posted`` on 0.2% of
+    listings (1 of 472, measured 2026-08-09) and it is currently the only
+    enabled source, so "no timestamp" is the common path rather than the
+    exception. Scoring those at ``default`` — the band meaning "older than
+    every band we have" — was flatly wrong: JobSpy is asked for postings
+    younger than ``scraper.hours_old``, so an undated listing is known to have
+    been inside that window when it was scraped. Every job scored on the live
+    run of 2026-08-09 reported recency 0.30 for this reason, and two of the
+    seven (BCG X 0.465, Ecolab 0.437) would have crossed the 0.50 threshold
+    without the penalty.
+
+    ``scraped_at`` is what makes the inference sound, and it is used as a
+    BOUND, not as a substitute posted_at: the listing appeared somewhere in
+    ``[scraped_at - window, scraped_at]``, so its expected age now is
+    ``(now - scraped_at) + window/2``. Taking the midpoint rather than either
+    edge keeps this honest in both directions — a live run scores an undated
+    job as roughly half a window old (0.60 on the configured bands) instead of
+    0.30, while a backfill of a six-week-old row still lands in ``default``,
+    because the elapsed term dominates. Substituting ``scraped_at`` outright
+    would have driven every live job to 1.00 and matched 20 of 20 on a sample
+    whose recorded verdict was 0 of 20 — saturation, not accuracy.
+
+    With no timestamp of any kind, nothing is inferred and the job scores
+    neutral (see :func:`_unknown_recency`) rather than being penalised for
+    metadata its portal never supplied.
     """
     cfg = settings.scoring.recency_score
-    if posted_at is None:
-        return float(cfg.default)
+    now = _as_utc(now)
 
-    if posted_at.tzinfo is None:
-        posted_at = posted_at.replace(tzinfo=timezone.utc)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    hours = (now - posted_at).total_seconds() / 3600.0
+    if posted_at is not None:
+        hours = (now - _as_utc(posted_at)).total_seconds() / 3600.0
+    elif scraped_at is not None:
+        window = (
+            float(window_hours)
+            if window_hours is not None
+            else float(settings.scraper.hours_old.peak)
+        )
+        hours = (now - _as_utc(scraped_at)).total_seconds() / 3600.0 + window / 2.0
+    else:
+        return _unknown_recency(cfg)
 
     # Ascending by edge, so a mis-ordered config still behaves sanely.
     for band in sorted(cfg.bands, key=lambda b: float(b["under_hours"])):
@@ -117,7 +178,12 @@ def evaluate(
     )
 
     sp_cfg = settings.scoring.success_prob
-    recency = recency_score(jd.posted_at, now)
+    recency = recency_score(
+        jd.posted_at,
+        now,
+        scraped_at=jd.scraped_at,
+        window_hours=jd.scrape_window_hours,
+    )
     success_prob = (
         sp_cfg.weight_seniority * seniority_score(jd.role_level)
         + sp_cfg.weight_recency * recency

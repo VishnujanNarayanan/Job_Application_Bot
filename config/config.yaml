@@ -368,8 +368,21 @@ scoring:
         score: 0.60
       - under_hours: 72
         score: 0.40
-    # Older than the last band, or no posting timestamp at all.
+    # Measured, and older than every band above.
+    #
+    # This no longer covers "no timestamp". Most portals give none — LinkedIn
+    # supplied date_posted on 1 of 472 listings (2026-08-09) and is currently
+    # the only enabled source — so treating a missing timestamp as "older than
+    # everything" was charging almost every job the maximum age penalty. An
+    # undated listing is now dated from `scraped_at` plus half the scrape
+    # window, which is sound because JobSpy only returns postings younger than
+    # `scraper.hours_old`.
     default: 0.30
+    # No timestamp of ANY kind — neither posted_at nor scraped_at. Nothing is
+    # inferred here; the job scores neutral rather than worst, because an
+    # absent measurement is not a stale posting. Remove this key to derive the
+    # midpoint from the bands instead.
+    unknown: 0.65
 
 # ---------------------------------------------------------------------------
 # Resume builder — Layer 5
@@ -468,7 +481,6 @@ llm:
   base_url: "${OLLAMA_BASE_URL}"
   api_key_env: "OLLAMA_API_KEY"
   model: "qwen2.5:7b-instruct"
-  api: "ollama"
   # One attempt: a local model is either reachable or it is not. On a GitHub
   # Actions runner this laptop is unreachable, and five backoffs per job spent
   # rediscovering that would dwarf the run.
@@ -479,7 +491,17 @@ llm:
   # Instructor strategy. TOOLS works on providers with function calling (Groq,
   # Cerebras, OpenAI); JSON_SCHEMA where native schema enforcement exists; JSON
   # is the lowest common denominator. Verify with llm_check after changing it.
-  instructor_mode: "JSON"   # unused on the native path
+  # JSON_SCHEMA, not JSON. Ollama 0.32.6's /v1 honours
+  # `response_format: {"type": "json_schema", ...}` — re-measured 2026-08-09,
+  # correcting an earlier note that said it was ignored — so generation is
+  # grammar-constrained AND Instructor states the schema in the prompt.
+  #
+  # That second half is what fixed extraction. Handed only a grammar in which
+  # required_skills was optional, qwen2.5:7b omitted it (plus nice_to_have and
+  # responsibilities) on 71% of real JDs, which zeroed the skill component of
+  # `fit` — 0.165 of the final score. Told in the prompt that the fields exist,
+  # the same model populated 5 of 5.
+  instructor_mode: "JSON_SCHEMA"
   request_timeout_seconds: 180
   max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
 

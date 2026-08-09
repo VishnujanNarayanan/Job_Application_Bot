@@ -56,6 +56,26 @@ class JDParsed(BaseModel):
         description="Key responsibilities — informs bullet scoring in Layer 4",
     )
 
+    @field_validator("role_level", mode="before")
+    @classmethod
+    def _null_level_means_unknown(cls, value):
+        """Read an explicit null role_level as the unknown-seniority default.
+
+        A JD that never states a level is ordinary, and the model says so with
+        null — but ``Literal`` rejects it, and a provider that validates tool
+        calls server-side throws the WHOLE call away for it. Observed on the
+        live run of 2026-08-09: Groq returned
+        ``[`/role_level`: expected string, but got null]`` and the retry cost a
+        full call against a token-per-day cap that the same run went on to
+        exhaust.
+
+        "mid" is not a guess dressed as data — it is the same value
+        ``scoring.success_prob.seniority_scores`` already assigns to the
+        ``null`` key (0.80), so the score is identical to treating it as
+        unknown. This only makes that agreement survive the type system.
+        """
+        return "mid" if value is None else value
+
     @field_validator(
         "required_skills", "nice_to_have", "responsibilities", mode="before"
     )
