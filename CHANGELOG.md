@@ -7,6 +7,8 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [v2.0.1] — 2026-08-09
+
 ### Fixed
 
 - Layer 3: the local model no longer omits `required_skills`, `nice_to_have` and

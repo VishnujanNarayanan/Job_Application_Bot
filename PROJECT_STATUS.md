@@ -158,5 +158,69 @@ Still open, all needing a live-database write or a decision:
 
 ---
 
-**Next up:** fix audit issues 1 and 2, then decide whether to re-run the
-backfill against the corrected schema (rewrites live verdicts — needs approval).
+## Resume here — session handoff (2026-08-09)
+
+### What changed this session
+
+A full data-flow audit (`AUDIT_2026-08-09.md`), then fixes for everything it
+found that could be fixed in code. All on `fv2`, 276 tests passing.
+
+The headline: the 2.3% backfill match rate was **not** recency, which was the
+working hypothesis going in. It was the local model omitting
+`required_skills`, `nice_to_have` and `responsibilities` from 71% of JDs,
+which zeroed 0.165 of the final score. Recency was a real but separate defect.
+Both are fixed; extraction went 71% empty → **0% empty** on real JDs.
+
+### The next decision (highest value)
+
+**Re-run the backfill under the fixed parser.** 171 jobs were judged with zero
+skills extracted, so their verdicts are meaningless. This rewrites live rows,
+which is why it was not done unattended.
+
+```bash
+.venv/bin/python -m src.cli.backfill --dry-run     # count only, changes nothing
+.venv/bin/python -m src.cli.backfill --limit 20    # work in bites
+```
+
+Before running it, know that Groq's 100k tokens/day cap was **exhausted on
+2026-08-09** and Gemini is spend-capped, so the run depends on ollama being
+up. Check first:
+
+```bash
+.venv/bin/python -m src.cli.llm_check ollama
+```
+
+### Also open, in rough priority order
+
+1. **Ollama from CI** (audit issue 11). The tailnet already serves it —
+   `http://asus-tuf-f16-vishnu.tail106cde.ts.net:11434` answered during the
+   audit. Needs a `tailscale/github-action` step, an `OLLAMA_BASE_URL` secret,
+   and a **decision on the ACL**: a tagged ephemeral OAuth client limited to
+   port 11434 on the laptop. Ollama has no auth, so whatever routes to it can
+   use the GPU. Not started — deliberately, pending that decision.
+2. **8 false-positive NEAR_DUPLICATEs** — cosine 0.83–0.93 on corrected
+   vectors, all different roles at the same company. They were suppressed
+   without ever being scored. Needs a DB write.
+3. **693 `not_applied` rows with NULL scores** — new rows now carry scores;
+   history does not. Backfilling them is only possible for LOW_SCORE rows,
+   whose final score survives as a string in `reason_detail`.
+4. **11 jobs in both `applied` and `not_applied`** — not root-caused. Leading
+   theory: one `job_id` arriving from two search terms in a single run, with
+   `existing_ids` computed once at batch start.
+5. **Indeed/Glassdoor re-enable** — LinkedIn-only is why the missing
+   `posted_at` hit 100% of traffic.
+
+### Things not to re-derive
+
+- Recency's 0.22 coefficient is correct arithmetic; it just wasn't the cause.
+  The control that settles it: the 08-08 live run had the same 0.30 recency
+  floor and still matched 13.8% vs the backfill's 2.8%.
+- `num_ctx` truncation is **refuted** — `prompt_eval_count` peaks at 2301
+  tokens against a 4096 default.
+- Ollama's `/v1` **does** honour `response_format: json_schema` (0.32.6). The
+  old comment saying otherwise was stale and is what motivated the bespoke
+  transport that has now been deleted.
+- Green tests did not catch any of this. Verify against real JDs via
+  `src.parser.parse()`, and check CI parity from a tracked-files-only checkout
+  with no `.env` — that is how the `${OLLAMA_BASE_URL}` CI breakage was found
+  before it turned CI red.
