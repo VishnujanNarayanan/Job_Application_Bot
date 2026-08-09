@@ -12,10 +12,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
-from src.state.models import AllJobs, CompanyCooldown
+from src.config import settings
+from src.state.models import AllJobs, Applied, CompanyCooldown
 
 
 def location_disallowed(location: str | None, disallowed_regions: Iterable[str]) -> bool:
@@ -48,12 +49,38 @@ def company_in_cooldown(
 
 
 def existing_job_ids(session: Session, job_ids: Iterable[str]) -> set[str]:
-    """Subset of ``job_ids`` already present in ``all_jobs`` (duplicate check)."""
+    """Subset of ``job_ids`` that should NOT be processed again.
+
+    Only jobs already **notified** qualify — a row in ``applied``. Everything
+    else is re-parsed and re-scored on every run.
+
+    That is deliberate now that inference is local and unmetered. Skipping on
+    mere presence in ``all_jobs`` cost 176 of 745 jobs (24%): every scraped job
+    is written there before any is parsed, so a run abandoned partway through
+    left its remainder sitting with no verdict, and the next run dismissed all
+    of them as duplicates — scraped, never scored, and never would be.
+
+    Re-scoring is also worth having on its own: scoring changes (whole-document
+    embeddings, unclipped descriptions) never reached anything already seen,
+    so a job judged by an older, worse scorer kept that judgement forever.
+
+    ``applied`` stays excluded because re-notifying is not free in the way
+    compute is — it costs the operator's attention, and the same job arriving
+    on Telegram every run is worse than useless. Set
+    ``scraper.rescore_notified`` to re-examine even those.
+    """
     ids = list(job_ids)
     if not ids:
         return set()
+
+    if bool(settings.scraper.get("rescore_notified", False)):
+        return set()
+
     rows = session.scalars(
-        select(AllJobs.job_id).where(AllJobs.job_id.in_(ids))
+        select(AllJobs.job_id).where(
+            AllJobs.job_id.in_(ids),
+            exists().where(Applied.job_id == AllJobs.job_id),
+        )
     ).all()
     return set(rows)
 
