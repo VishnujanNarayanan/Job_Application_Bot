@@ -7,6 +7,48 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Fixed
+
+- Layer 3: the local model no longer omits `required_skills`, `nice_to_have` and
+  `responsibilities` — it dropped them from 71% of real JDs, zeroing the skill
+  component of `fit` (0.165 of the final score)
+- Layer 3: a null `role_level` is read as unknown instead of throwing the whole
+  call away — Groq rejects the tool call server-side, wasting a full call
+  against a daily token cap
+- Layer 4: a listing with no `posted_at` is dated from `scraped_at` plus half
+  the scrape window, instead of scoring as older than every band. LinkedIn
+  supplies a posting date on 1 of 472 listings and is the only enabled source,
+  so nearly every job was paying the maximum age penalty
+- Layer 4: with no timestamp of any kind, recency scores neutral (`unknown`,
+  0.65) rather than worst — an absent measurement is not a stale posting
+- Layer 7: `not_applied` rows record `fit`/`success_prob`/`recency`/`final`;
+  all 693 existing rows have NULL scores because the result was discarded
+- Layer 7: company-cooldown and disallowed-location rejections are persisted
+  instead of dropped for not yet existing in `all_jobs` — neither reason had
+  ever been recorded, across 693 rows
+- Layer 3: a provider whose `base_url` still holds an unexpanded `${VAR}` fails
+  once per run with the missing variable named, instead of one httpx traceback
+  per job (25 in the 2026-08-09 Actions run)
+
+### Changed
+
+- Layer 3: Ollama goes through Instructor + `Mode.JSON_SCHEMA` on the shared
+  OpenAI transport; the bespoke `/api/chat` client is removed. Ollama 0.32.6's
+  `/v1` does honour `response_format: json_schema`, correcting the earlier note
+  that it was ignored — and Instructor also states the schema in the prompt,
+  which is what stops fields being skipped
+- Layer 3: the parse prompt asks for the three list fields explicitly and
+  demands exhaustive skill extraction; they previously had no instruction at
+  all, while every scalar field did
+- Config: `llm.instructor_mode` is `JSON_SCHEMA`; `llm.api` removed
+- Config: added `scoring.recency_score.unknown`
+
+### Added
+
+- `AUDIT_2026-08-09.md` — full data-flow audit with measurements
+- Tests: verdict recording (scores persisted, pre-filter rejections kept) and
+  recency inference from `scraped_at`
+
 ## [v2.0.0] — 2026-08-09
 
 ### Added

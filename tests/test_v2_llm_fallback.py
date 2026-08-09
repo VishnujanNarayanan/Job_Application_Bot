@@ -159,11 +159,12 @@ def test_clients_are_cached_per_provider():
         def __init__(self, **kwargs):
             built.append(kwargs["base_url"])
 
-    # Only providers on the OpenAI transport build an OpenAI client; the local
-    # one speaks Ollama's native API.
+    # Every provider shares the OpenAI transport now. The one thing that still
+    # disqualifies an entry is an unexpanded ${VAR} in its base_url — true for
+    # the local model on CI, which has no .env to supply OLLAMA_BASE_URL.
     hosted = [
         (which, cfg) for which, cfg in llm_client.provider_chain()
-        if str(cfg.get("api", "openai")) != "ollama"
+        if "${" not in str(cfg.base_url)
     ]
     keys = {str(cfg.api_key_env): f"k{i}" for i, (_, cfg) in enumerate(hosted)}
 

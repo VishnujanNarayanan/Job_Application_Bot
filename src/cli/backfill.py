@@ -130,8 +130,18 @@ def backfill(limit: int | None = None, dry_run: bool = False) -> dict[str, int]:
                 counts["scored"] += 1
                 continue
 
+            # No scrape_window_hours: the window this row was actually caught
+            # in was not recorded, so recency_score falls back to the
+            # configured peak. It barely matters here — these rows were
+            # scraped weeks ago, so the elapsed term dominates the half-window
+            # correction and they still score as the old postings they are.
             result = evaluate(
-                profile, build_jd_context(parsed, posted_at=job.posted_at)
+                profile,
+                build_jd_context(
+                    parsed,
+                    posted_at=job.posted_at,
+                    scraped_at=job.scraped_at,
+                ),
             )
             counts["scored"] += 1
 
@@ -143,9 +153,15 @@ def backfill(limit: int | None = None, dry_run: bool = False) -> dict[str, int]:
             )
 
             if not result.apply:
+                # Scores recorded, not just the reason: a backfill exists to
+                # answer "what did we miss and why", and a verdict with no
+                # numbers cannot answer the second half.
                 session.add(NotApplied(
                     job_id=job.job_id, reason_category=LOW_SCORE,
-                    reason_detail=str(result.final_score), not_applied_at=now,
+                    reason_detail=str(result.final_score),
+                    fit_score=result.fit, success_prob=result.success_prob,
+                    recency_score=result.recency, final_score=result.final_score,
+                    not_applied_at=now,
                 ))
                 session.flush()
                 continue
