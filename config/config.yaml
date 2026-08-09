@@ -494,6 +494,32 @@ llm:
   # Disabled entries are skipped entirely, so a provider can sit here ready to
   # switch on without affecting a single run.
   fallbacks:
+    # Local inference via Ollama — OFF until benchmarked against Groq.
+    #
+    # The one option with no daily ceiling. Groq's free tier allows 100,000
+    # tokens/day (~45 job parses at ~2,200 each), which a single 25-job run
+    # eats a chunk of; local inference has no cap at all, and no per-minute
+    # limit, so `llm.jd_text` clipping could be relaxed for it.
+    #
+    # The cost is reach: this only answers while the laptop is awake, so a
+    # GitHub Actions run can never use it. Keep a hosted provider in the chain
+    # behind it. Runs on Windows (the RTX 4050's 6 GB VRAM fits a 7-8B model
+    # at Q4); WSL reaches it on the default-route host, not localhost, and
+    # that address is assigned per boot — hence OLLAMA_BASE_URL in .env
+    # rather than a literal here.
+    - enabled: false
+      provider: "ollama"
+      base_url: "${OLLAMA_BASE_URL}"
+      api_key_env: "OLLAMA_API_KEY"   # unused by Ollama; any value satisfies the client
+      model: "qwen2.5:7b-instruct"
+      # JSON, not JSON_SCHEMA: measured 2026-08-09, JSON_SCHEMA changed nothing
+      # (same invalid-enum retries), because Ollama's OpenAI-compatible /v1
+      # shim ignores response_format. True constrained decoding needs Ollama's
+      # native /api/chat `format` field, which Instructor does not use through
+      # the OpenAI client.
+      instructor_mode: "JSON"
+      request_timeout_seconds: 180    # a cold model load is slow; generation is not
+
     # Cerebras — OFF, and it must stay off: verified 2026-08-08 that the API
     # requires payment despite issuing a working key. Listing models succeeds,
     # so only a real call reveals it:
