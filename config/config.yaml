@@ -146,15 +146,15 @@ scraper:
     - "market data engineer"
     - "quantitative researcher"
     - "quantitative analyst"
-  # A job is a duplicate once it has a VERDICT (a row in applied or
-  # not_applied), not merely once it appears in all_jobs. Every scraped job is
-  # written to all_jobs before any is parsed, so a run that aborts partway
-  # leaves its remainder there unjudged — and keying on presence alone marked
-  # those DUPLICATE forever, losing 176 of 745 jobs (24%).
+  # Re-parse and re-score every scraped job each run, skipping only ones
+  # already notified. Local inference is unmetered, so the only thing a skip
+  # saves is seconds — and skipping cost 176 of 745 jobs (24%) when runs that
+  # aborted partway left their remainder in all_jobs with no verdict, which
+  # the next run then dismissed as duplicates forever.
   #
-  # Already-judged jobs keep their judgement; the history is not re-scored.
-  # true re-examines everything ever seen, including jobs already notified,
-  # which means the same match can arrive on Telegram again.
+  # true here re-examines notified jobs too, which means the same match can
+  # arrive on Telegram again. Off by default: compute is cheap, attention is
+  # not.
   rescore_notified: false
 
   # Never apply to the same company twice within this many days.

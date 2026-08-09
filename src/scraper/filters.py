@@ -12,11 +12,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from sqlalchemy import exists, or_, select
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from src.config import settings
-from src.state.models import AllJobs, Applied, CompanyCooldown, NotApplied
+from src.state.models import AllJobs, Applied, CompanyCooldown
 
 
 def location_disallowed(location: str | None, disallowed_regions: Iterable[str]) -> bool:
@@ -49,24 +49,25 @@ def company_in_cooldown(
 
 
 def existing_job_ids(session: Session, job_ids: Iterable[str]) -> set[str]:
-    """Subset of ``job_ids`` already **evaluated** — the duplicate check.
+    """Subset of ``job_ids`` that should NOT be processed again.
 
-    "Evaluated" means the job reached a verdict: a row in ``applied`` or in
-    ``not_applied``. Merely appearing in ``all_jobs`` is not enough, and the
-    difference is not academic.
+    Only jobs already **notified** qualify — a row in ``applied``. Everything
+    else is re-parsed and re-scored on every run.
 
-    Every scraped job is written to ``all_jobs`` up front, before any of them
-    is parsed. So a run that stops partway — and several did on 2026-08-08,
-    abandoned by a spend cap — leaves its unparsed remainder there with no
-    verdict against it. Keying on presence alone then marked every one of them
-    DUPLICATE on the next run, permanently: scraped, never scored, and never
-    going to be. That had swallowed 176 of 745 jobs, 24% of everything
-    collected.
+    That is deliberate now that inference is local and unmetered. Skipping on
+    mere presence in ``all_jobs`` cost 176 of 745 jobs (24%): every scraped job
+    is written there before any is parsed, so a run abandoned partway through
+    left its remainder sitting with no verdict, and the next run dismissed all
+    of them as duplicates — scraped, never scored, and never would be.
 
-    Anchoring on the verdict costs an interrupted run a little rework instead
-    of the jobs themselves. Anything already judged keeps its judgement —
-    re-scoring the whole history is deliberately NOT done here; set
-    ``scraper.rescore_notified`` only if that is wanted.
+    Re-scoring is also worth having on its own: scoring changes (whole-document
+    embeddings, unclipped descriptions) never reached anything already seen,
+    so a job judged by an older, worse scorer kept that judgement forever.
+
+    ``applied`` stays excluded because re-notifying is not free in the way
+    compute is — it costs the operator's attention, and the same job arriving
+    on Telegram every run is worse than useless. Set
+    ``scraper.rescore_notified`` to re-examine even those.
     """
     ids = list(job_ids)
     if not ids:
@@ -78,10 +79,7 @@ def existing_job_ids(session: Session, job_ids: Iterable[str]) -> set[str]:
     rows = session.scalars(
         select(AllJobs.job_id).where(
             AllJobs.job_id.in_(ids),
-            or_(
-                exists().where(Applied.job_id == AllJobs.job_id),
-                exists().where(NotApplied.job_id == AllJobs.job_id),
-            ),
+            exists().where(Applied.job_id == AllJobs.job_id),
         )
     ).all()
     return set(rows)
