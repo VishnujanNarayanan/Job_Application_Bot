@@ -17,6 +17,13 @@ config/google_service_account.json
 master_profile.yaml
 master_profile.json
 master_resume_extract.yaml
+# Backups/variants of the profile carry the same personal data as the original
+# and this repo is public — master_profile_old.yaml (2,705 lines) was sitting
+# untracked and would have been swept into a "commit everything".
+master_profile_*.yaml
+# Generated resume material (bullets, skills pool) — personal content.
+bullet_extract*.yaml
+resume_extract*.yaml
 master_summaries.yaml
 master_summaries_pool.yaml
 answer_bank_seed.yaml
