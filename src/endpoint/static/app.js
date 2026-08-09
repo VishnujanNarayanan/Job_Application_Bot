@@ -344,6 +344,24 @@
     }
   );
 
+  // When a posting was found, to the hour: a job ad goes stale quickly, so
+  // "2 Aug" and "today 09:14" are different decisions.
+  Array.prototype.forEach.call(
+    document.querySelectorAll("[data-datetime]"),
+    function (el) {
+      var when = new Date(el.getAttribute("data-datetime"));
+      if (isNaN(when.getTime())) return;
+      var days = Math.floor((Date.now() - when.getTime()) / 86400000);
+      var time = when.toLocaleTimeString(undefined, {
+        hour: "2-digit", minute: "2-digit"
+      });
+      el.textContent = days < 1
+        ? "today " + time
+        : when.toLocaleDateString(undefined, { day: "numeric", month: "short" })
+          + " " + time;
+    }
+  );
+
   // A run started before this page loaded (a reload mid-run, or another tab)
   // should still be followed rather than looking idle.
   fetch("/api/run/status")

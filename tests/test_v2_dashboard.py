@@ -50,6 +50,7 @@ def _match_view(**overrides) -> dict:
         "pdf_url": "/resume/linkedin-123.pdf",
         "docx_url": "/resume/linkedin-123.docx",
         "built_at": _NOW.isoformat(),
+        "scraped_at": _NOW.isoformat(),
     }
     view.update(overrides)
     return view
@@ -467,11 +468,18 @@ def _order_by_sql(status: str) -> str:
     return str(stmt).lower()
 
 
-def test_matches_sort_by_score():
-    """Pending answers "what should I look at next", so the best fit leads."""
+def test_matches_sort_newest_first():
+    """A job ad is perishable.
+
+    Pending used to lead with the best fit, but a high score on a posting that
+    closed weeks ago is not a better use of attention than a fresh opening.
+    Score still breaks ties, and every card draws it to scale anyway.
+    """
     sql = _order_by_sql("pending")
     order = sql.split("order by", 1)[1]
-    assert "final_score desc" in order
+    assert order.index("built_at") < order.index("final_score"), (
+        "recency must outrank score"
+    )
     assert "user_status_at" not in order
 
 
@@ -529,3 +537,13 @@ def test_reachable_urls_are_offered_as_buttons(url):
     from src.notifications import _is_public_url
 
     assert _is_public_url(url) is True
+
+
+def test_a_card_shows_when_the_posting_was_found(client):
+    """How old an ad is decides whether applying is worth anything."""
+    p1, p2, p3, p4 = _patch_page(matches=[_match_view()])
+    with p1, p2, p3, p4:
+        body = client.get("/dashboard").text
+
+    assert "data-datetime=" in body
+    assert ">Found<" in body

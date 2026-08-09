@@ -294,10 +294,20 @@ def get_client(which: str = "primary"):
     if which in _CLIENTS:
         return _CLIENTS[which]
 
+    cfg = provider_config(which)
+
+    if str(cfg.get("api", "openai")) == "ollama":
+        native = _OllamaNativeClient(cfg)
+        _CLIENTS[which] = native
+        log.info(
+            "llm_client_built", which=which, provider=str(cfg.provider),
+            model=str(cfg.model), base_url=str(cfg.base_url), api="ollama",
+        )
+        return native
+
     import instructor
     from openai import OpenAI
 
-    cfg = provider_config(which)
     mode = getattr(instructor.Mode, str(cfg.instructor_mode))
     client = OpenAI(
         api_key=_api_key(cfg, which),
@@ -322,6 +332,80 @@ def reset_clients() -> None:
     _CLIENTS.clear()
 
 
+class _OllamaNativeClient:
+    """Ollama's own API behind Instructor's call shape.
+
+    Presents ``client.chat.completions.create(...)`` so every provider is
+    reached through the single seam :func:`get_client`. That is not cosmetic:
+    the whole test suite patches ``get_client``, and a transport that bypassed
+    it made real HTTP calls to a local model during unit tests — one of them
+    answered a test's one-character prompt in Chinese.
+    """
+
+    def __init__(self, cfg) -> None:
+        self._cfg = cfg
+        self.chat = self          # chat.completions.create resolves to self
+        self.completions = self
+
+    def create(self, *, model, messages, response_model, **_ignored):
+        return _complete_native_ollama(
+            self._cfg, response_model, messages, model=model
+        )
+
+
+def _complete_native_ollama(cfg, response_model: type[T], messages, model=None) -> T:
+    """One call through Ollama's own API, with generation CONSTRAINED.
+
+    Ollama compiles a JSON schema into a decoding grammar, so a value outside
+    an enum cannot be emitted at all. That is a stronger guarantee than
+    validate-then-reask: there is nothing to reask about.
+
+    It matters most on small models. qwen2.5:7b kept answering "hybrid" for
+    ``job_type`` — a location answer to an employment question — and every
+    rejection cost a full retry. Measured 2026-08-09 on the real JDParsed
+    schema:
+
+        OpenAI-compatible /v1 shim   9-22s, 0-1 reask retries per call
+        native /api/chat + format    ~6s,   5/5 valid, no retries
+
+    The /v1 shim is not an option here: it ignores ``response_format``, so
+    Instructor's JSON_SCHEMA mode changes nothing (also measured). Hence the
+    dedicated path.
+
+    Pydantic still validates at the boundary, so the schema remains the
+    contract — this parses a constrained response, it does not hand-parse a
+    free-form one.
+    """
+    import httpx
+
+    root = str(cfg.base_url).rstrip("/")
+    if root.endswith("/v1"):
+        root = root[: -len("/v1")].rstrip("/")
+
+    response = httpx.post(
+        f"{root}/api/chat",
+        timeout=float(cfg.get("request_timeout_seconds", 180)),
+        json={
+            "model": str(model or cfg.model),
+            "messages": messages,
+            "stream": False,
+            "format": response_model.model_json_schema(),
+        },
+    )
+    response.raise_for_status()
+    return response_model.model_validate_json(response.json()["message"]["content"])
+
+
+def _call_once(which: str, cfg, response_model: type[T], messages) -> T:
+    """One attempt, through the single client seam every test patches."""
+    return get_client(which).chat.completions.create(
+        model=str(cfg.model),
+        messages=messages,
+        response_model=response_model,
+        max_retries=0,   # Instructor's own reask loop stays off
+    )
+
+
 def _complete_with(
     which: str, response_model: type[T], messages: list[dict[str, str]]
 ) -> T:
@@ -330,19 +414,17 @@ def _complete_with(
     backoff = settings.llm.backoff
     delay = float(backoff.initial_seconds)
     max_delay = float(backoff.max_seconds)
-    attempts = int(backoff.max_attempts)
+    # A provider may cap its own attempts. A local model is either there or it
+    # is not: on a GitHub Actions runner the laptop is unreachable, and the
+    # generous retry budget meant for a throttled hosted API would spend five
+    # backoffs per job discovering that, before every job.
+    attempts = int(cfg.get("max_attempts", backoff.max_attempts))
 
-    client = get_client(which)
     last_error: Exception | None = None
 
     for attempt in range(1, attempts + 1):
         try:
-            return client.chat.completions.create(
-                model=str(cfg.model),
-                messages=messages,
-                response_model=response_model,
-                max_retries=0,   # Instructor's own reask loop stays off
-            )
+            return _call_once(which, cfg, response_model, messages)
         except Exception as exc:  # noqa: BLE001 - many wrapped types; classify by text
             last_error = exc
 
@@ -416,7 +498,13 @@ def _complete_with(
     raise exhausted from last_error
 
 
-def complete(response_model: type[T], prompt: str, *, system: str | None = None) -> T:
+def complete(
+    response_model: type[T],
+    prompt: str | None = None,
+    *,
+    system: str | None = None,
+    prompt_fn=None,
+) -> T:
     """Run one completion and return ``response_model``.
 
     Walks the configured provider chain in order, each with its own backoff
@@ -436,17 +524,28 @@ def complete(response_model: type[T], prompt: str, *, system: str | None = None)
     when EVERY provider failed and at least one was out of budget, since the
     next job would hit the same wall — src/main.py abandons the run on it.
     """
-    messages: list[dict[str, str]] = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+    def build(cfg) -> list[dict[str, str]]:
+        """The messages for one provider.
+
+        ``prompt_fn`` lets the prompt depend on WHICH provider is about to be
+        called, because how much job description to send is a property of the
+        provider: a local model has no token budget and should read the whole
+        ad, while a metered one further down the chain still needs it bounded.
+        Building once up front would send whichever size to both.
+        """
+        body = prompt_fn(cfg) if prompt_fn is not None else prompt
+        messages: list[dict[str, str]] = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": body})
+        return messages
 
     chain = provider_chain() if fallback_enabled() else [("primary", settings.llm)]
 
     # Nothing to fall back to: let the provider's own error through untouched,
     # rather than wrapping a single failure in chain language.
     if len(chain) == 1:
-        return _complete_with("primary", response_model, messages)
+        return _complete_with("primary", response_model, build(settings.llm))
 
     failures: list[tuple[object, Exception]] = []
     budget_failures = 0
@@ -462,7 +561,7 @@ def complete(response_model: type[T], prompt: str, *, system: str | None = None)
                 reason=str(previous_error)[:200],
             )
         try:
-            result = _complete_with(which, response_model, messages)
+            result = _complete_with(which, response_model, build(cfg))
         except LLMBudgetError as exc:
             budget_failures += 1
             failures.append((cfg, exc))

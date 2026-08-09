@@ -33,6 +33,11 @@ def _clean_clients():
     llm_client.reset_clients()
 
 
+# The provider carrying the full retry budget. The primary is a local model
+# with max_attempts=1 — reachable or not, never worth five backoffs.
+_HOSTED = "fallback:0"
+
+
 def _split(primary, fallback):
     """Patch get_client so each provider gets its own stub."""
     return patch.object(
@@ -65,16 +70,40 @@ def test_fallback_is_enabled_and_points_elsewhere():
 
 
 def test_chain_is_ordered_cheapest_first():
-    """Free providers must be exhausted before a metered one is touched.
+    """Cost order: uncapped local, then free hosted, then metered.
 
-    Groq is free; Gemini is metered and already hit a spend cap once.
-    Reordering these would mean paying for an outage the free account could
-    have absorbed.
+    Local inference has no cap at all; Groq is free but allows 100,000
+    tokens/day; Gemini is metered and already hit a spend cap once. Reordering
+    these would mean paying for work a free provider could have done.
     """
     providers = [str(cfg.provider) for _, cfg in llm_client.provider_chain()]
 
-    assert providers[0] == "groq", "the free provider must lead"
+    assert providers[0] == "ollama", "the uncapped local provider leads"
+    assert "groq" in providers, "a hosted provider must remain reachable remotely"
     assert providers[-1] == "gemini", "the metered provider must be last resort"
+
+
+def test_the_local_provider_gives_up_immediately_when_absent():
+    """A local model is either reachable or it is not.
+
+    Every GitHub Actions run reaches for a laptop that is not there. The retry
+    budget meant for a throttled hosted API would spend five backoffs per job
+    rediscovering that, before every job in the run.
+    """
+    primary = llm_client.provider_config("primary")
+
+    assert str(primary.provider) == "ollama"
+    assert int(primary.get("max_attempts", 99)) == 1
+
+
+def test_only_the_local_provider_reads_whole_descriptions():
+    """The clip exists to survive a hosted token budget; local has none."""
+    chain = dict(
+        (str(cfg.provider), cfg) for _, cfg in llm_client.provider_chain()
+    )
+
+    assert chain["ollama"].get("jd_text") is not None, "local reads everything"
+    assert chain["groq"].get("jd_text") is None, "hosted keeps the global clip"
 
 
 def test_cerebras_stays_disabled():
@@ -130,35 +159,40 @@ def test_clients_are_cached_per_provider():
         def __init__(self, **kwargs):
             built.append(kwargs["base_url"])
 
-    keys = {
-        str(cfg.api_key_env): f"k{i}"
-        for i, (_, cfg) in enumerate(llm_client.provider_chain())
-    }
+    # Only providers on the OpenAI transport build an OpenAI client; the local
+    # one speaks Ollama's native API.
+    hosted = [
+        (which, cfg) for which, cfg in llm_client.provider_chain()
+        if str(cfg.get("api", "openai")) != "ollama"
+    ]
+    keys = {str(cfg.api_key_env): f"k{i}" for i, (_, cfg) in enumerate(hosted)}
 
     with patch("openai.OpenAI", FakeOpenAI), \
          patch("instructor.from_openai", side_effect=lambda c, mode: c), \
          patch.dict("os.environ", keys):
-        clients = [llm_client.get_client("primary"), llm_client.get_client("primary")]
-        clients += [
-            llm_client.get_client(which)
-            for which, _ in llm_client.provider_chain()[1:]
-        ]
+        first_which = hosted[0][0]
+        clients = [llm_client.get_client(first_which), llm_client.get_client(first_which)]
+        clients += [llm_client.get_client(which) for which, _ in hosted[1:]]
 
-    expected = len(llm_client.provider_chain())
+    expected = len(hosted)
     assert clients[0] is clients[1], "primary should be cached, not rebuilt"
     assert len({id(c) for c in clients}) == expected, "one client per provider"
     assert len(set(built)) == expected, "each provider needs its own base_url"
 
 
 def test_missing_key_names_the_variable_and_the_provider():
-    """The commonest setup mistake should say exactly what to add."""
+    """The commonest setup mistake should say exactly what to add.
+
+    Asked of a hosted provider: the local one authenticates with nothing, so
+    it has no key to miss.
+    """
     with patch.dict("os.environ", {}, clear=True):
         with pytest.raises(LLMError) as excinfo:
-            llm_client.get_client("primary")
+            llm_client.get_client(_HOSTED)
 
     message = str(excinfo.value)
-    assert str(llm_client.provider_config("primary").api_key_env) in message
-    assert "primary" in message
+    assert str(llm_client.provider_config(_HOSTED).api_key_env) in message
+    assert _HOSTED in message
 
 
 # ---------------------------------------------------------------------------
@@ -201,36 +235,50 @@ def test_missing_primary_key_falls_back():
         assert llm_client.complete(Dummy, "p").value == "ok"
 
 
-def test_transient_error_does_not_engage_the_fallback():
-    """Rate limiting is the primary's own backoff to absorb."""
+def test_a_hosted_provider_absorbs_throttling_rather_than_escalating():
+    """Rate limiting is a hosted provider's own backoff to absorb.
+
+    The local primary is the deliberate exception (max_attempts=1): an absent
+    laptop will not become present, so it escalates at once instead.
+    """
     calls = {"n": 0}
 
     def flaky(**kwargs):
         calls["n"] += 1
         if calls["n"] < 3:
             raise RuntimeError("429 Too many requests per minute")
-        return Dummy(value="primary-recovered")
+        return Dummy(value="hosted-recovered")
 
-    primary = MagicMock()
-    primary.chat.completions.create.side_effect = flaky
-    fallback = MagicMock()
+    hosted = MagicMock()
+    hosted.chat.completions.create.side_effect = flaky
+    downstream = MagicMock()
 
-    with _split(primary, fallback), patch("time.sleep"):
-        assert llm_client.complete(Dummy, "p").value == "primary-recovered"
+    with patch.object(
+        llm_client, "get_client",
+        side_effect=lambda which="primary": hosted if which == _HOSTED else downstream,
+    ), patch("time.sleep"):
+        result = llm_client._complete_with(
+            _HOSTED, Dummy, [{"role": "user", "content": "p"}]
+        )
 
-    fallback.chat.completions.create.assert_not_called()
+    assert result.value == "hosted-recovered"
+    downstream.chat.completions.create.assert_not_called()
 
 
 def test_primary_exhausting_its_retries_falls_back():
-    """Give-up after the full backoff should still try the other provider."""
+    """Give-up should still try the next provider.
+
+    The primary is local and capped at one attempt, so "exhausting its
+    retries" now takes exactly one failure — which is the point.
+    """
     primary = _client(raises=RuntimeError("503 service unavailable"))
     fallback = _client(returns=Dummy(value="rescued"))
 
     with _split(primary, fallback), patch("time.sleep"):
         assert llm_client.complete(Dummy, "p").value == "rescued"
 
-    attempts = int(llm_client.settings.llm.backoff.max_attempts)
-    assert primary.chat.completions.create.call_count == attempts
+    expected = int(llm_client.provider_config("primary").get("max_attempts", 5))
+    assert primary.chat.completions.create.call_count == expected
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +397,10 @@ def test_groq_per_minute_limit_is_not_budget_exhaustion():
 
 
 def test_a_per_minute_limit_does_not_abandon_the_run():
-    """End to end: throttling must cost a retry, never the batch."""
+    """End to end: throttling must cost a retry, never the batch.
+
+    Driven against the hosted provider, which owns the retry budget.
+    """
     calls = {"n": 0}
 
     def throttled(**kwargs):
@@ -358,14 +409,20 @@ def test_a_per_minute_limit_does_not_abandon_the_run():
             raise RuntimeError(_GROQ_TPM)
         return Dummy(value="recovered")
 
-    primary = MagicMock()
-    primary.chat.completions.create.side_effect = throttled
-    fallback = MagicMock()
+    hosted = MagicMock()
+    hosted.chat.completions.create.side_effect = throttled
+    downstream = MagicMock()
 
-    with _split(primary, fallback), patch("time.sleep"):
-        assert llm_client.complete(Dummy, "p").value == "recovered"
+    with patch.object(
+        llm_client, "get_client",
+        side_effect=lambda which="primary": hosted if which == _HOSTED else downstream,
+    ), patch("time.sleep"):
+        result = llm_client._complete_with(
+            _HOSTED, Dummy, [{"role": "user", "content": "p"}]
+        )
 
-    fallback.chat.completions.create.assert_not_called(), (
+    assert result.value == "recovered"
+    downstream.chat.completions.create.assert_not_called(), (
         "a per-minute limit must not reach for another provider"
     )
 
@@ -478,7 +535,7 @@ def test_the_hint_is_actually_slept_on():
          patch("time.sleep", side_effect=waits.append):
         with pytest.raises(LLMError):
             llm_client._complete_with(
-                "primary", Dummy, [{"role": "user", "content": "p"}]
+                _HOSTED, Dummy, [{"role": "user", "content": "p"}]
             )
 
     assert waits and all(w == 7.5 for w in waits), (

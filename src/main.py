@@ -96,7 +96,7 @@ def _run(dry_run: bool, log) -> int:
         PARSE_FAILURE,
     )
     from src.scorer.apply_decision import evaluate
-    from src.scorer.embeddings import embed_batch
+    from src.scorer.embeddings import embed_documents
     from src.scorer.selector import build_jd_context
     from src.scraper import filters, jobspy_wrapper, rotation
     from src.state import master_profile
@@ -213,7 +213,11 @@ def _run(dry_run: bool, log) -> int:
         # --- Layer 2: embed JD texts in a single batch ---
         if passing:
             jd_texts = [j.jd_text or "" for j in passing]
-            embeddings = embed_batch(jd_texts)
+            # embed_documents, not embed_batch: the model's window holds only
+            # ~1,200 characters, and these ads average 4,400. A plain encode
+            # would compare openings — which are company boilerplate, and so
+            # the worst possible basis for telling two roles apart.
+            embeddings = embed_documents(jd_texts)
             for job, emb in zip(passing, embeddings):
                 job.jd_embedding = emb
             session.add_all(passing)

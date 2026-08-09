@@ -86,6 +86,7 @@ def _view(applied, job) -> dict:
         "pdf_url": f"/resume/{job.job_id}.pdf",
         "docx_url": f"/resume/{job.job_id}.docx",
         "built_at": applied.built_at.isoformat() if applied.built_at else None,
+        "scraped_at": job.scraped_at.isoformat() if job.scraped_at else None,
         "actioned_at": (
             applied.user_status_at.isoformat() if applied.user_status_at else None
         ),
@@ -95,8 +96,13 @@ def _view(applied, job) -> dict:
 def _match_views(session, status: str = "pending") -> list[dict]:
     """Matched jobs with the given operator status.
 
-    Pending sorts by score (what to look at next); applied sorts by when the
-    operator acted (a record, read newest first).
+    Both views read newest-first. Pending sorts by when the match was found,
+    not by score: a job ad is perishable, so the freshest opening is the one
+    still worth applying to, and a high score on a posting that closed weeks
+    ago is not a better use of attention. Score still breaks ties, and the
+    gauge on every card keeps it visible.
+
+    Applied sorts by when the operator acted — a record.
     """
     from sqlalchemy import select
 
@@ -113,7 +119,7 @@ def _match_views(session, status: str = "pending") -> list[dict]:
         )
     else:
         stmt = stmt.order_by(
-            Applied.final_score.desc().nullslast(), Applied.built_at.desc()
+            Applied.built_at.desc().nullslast(), Applied.final_score.desc()
         )
 
     return [_view(applied, job) for applied, job in session.execute(stmt)]

@@ -36,6 +36,14 @@
       {% endif %}
       {% if m.salary %}<div class="fact"><dt>CTC</dt><dd>{{ m.salary }}</dd></div>{% endif %}
       <div class="fact"><dt>Source</dt><dd>{{ m.source }}</dd></div>
+      {% if m.scraped_at %}
+      {# A posting is perishable, so how old it is decides whether applying is
+         worth anything. Localised by app.js from the ISO value. #}
+      <div class="fact">
+        <dt>Found</dt>
+        <dd data-datetime="{{ m.scraped_at }}" title="{{ m.scraped_at }}">—</dd>
+      </div>
+      {% endif %}
       <div class="fact"><dt>Fit</dt><dd>{{ "%.2f"|format(m.fit or 0) }}</dd></div>
       {% if settled and m.actioned_at %}
       <div class="fact"><dt>Applied</dt><dd class="ok" data-date="{{ m.actioned_at }}">—</dd></div>

@@ -33,8 +33,16 @@ CompleteFn = Callable[..., JDParsed]
 def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
     """Run Gemini Call 1a for ``job`` and return a grounded :class:`JDParsed`."""
     run = complete or _default_complete
-    prompt = jd_parse_prompt(job)
-    parsed: JDParsed = run(JDParsed, prompt, system=jd_parse_system())
+    # Built per provider rather than once: how much of the description to send
+    # depends on which provider answers. A local model has no token budget and
+    # reads the whole ad; a metered one further down the chain still gets it
+    # clipped. `prompt` stays for injected test doubles that take a string.
+    parsed: JDParsed = run(
+        JDParsed,
+        jd_parse_prompt(job),
+        system=jd_parse_system(),
+        prompt_fn=lambda cfg: jd_parse_prompt(job, provider_cfg=cfg),
+    )
 
     jd_text = job.jd_text or ""
     parsed.required_skills = grounded_skills(parsed.required_skills, jd_text)

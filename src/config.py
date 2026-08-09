@@ -18,6 +18,7 @@ filenames are DERIVED from ``operator.full_name`` here, never hardcoded.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,31 @@ def resolve_endpoint_base_url(config_url: str) -> str:
     return config_url.rstrip("/")
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "config.yaml"
+
+_ENV_REF = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+
+
+def _expand_env(value: Any) -> Any:
+    """Substitute ``${VAR}`` in config strings from the environment.
+
+    For settings that are machine-specific but not secret, and so belong in
+    neither the committed YAML nor a hardcoded literal — the local Ollama
+    endpoint is reached on WSL's default-route host, which is reassigned every
+    boot.
+
+    An unset variable is left as-is rather than blanked: a base_url of ""
+    fails somewhere far away, whereas a literal "${OLLAMA_BASE_URL}" names
+    exactly what is missing.
+    """
+    if isinstance(value, str):
+        return _ENV_REF.sub(
+            lambda m: os.environ.get(m.group(1), m.group(0)), value
+        )
+    if isinstance(value, dict):
+        return {k: _expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_expand_env(v) for v in value]
+    return value
 
 # Collapse any run of whitespace to a single underscore for filenames.
 _WHITESPACE = re.compile(r"\s+")
@@ -106,7 +132,7 @@ class Settings(Section):
     def __init__(self, path: Path = _CONFIG_PATH) -> None:
         with open(path) as f:
             data = yaml.safe_load(f) or {}
-        super().__init__(data)
+        super().__init__(_expand_env(data))
         self._validate()
 
     def _validate(self) -> None:

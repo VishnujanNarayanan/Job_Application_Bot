@@ -76,11 +76,29 @@ class JDParsed(BaseModel):
         max_length=200,
         description="Team / product the role sits on, if the JD names one",
     )
+    # These two are worded to hold each other apart. A 7B local model kept
+    # answering "hybrid" for job_type — a location answer to an employment
+    # question — and each rejection cost a full retry (9s+ locally), turning a
+    # 13s parse into 83s. Naming the other field in each description is what
+    # stopped it.
     job_type: Literal["fulltime", "contract", "internship", "parttime"] | None = (
-        Field(default=None, description="Employment type if stated in the JD")
+        Field(
+            default=None,
+            description=(
+                "CONTRACT type — how the person is employed. Exactly one of "
+                "fulltime, contract, internship, parttime. This is NOT about "
+                "where the work happens: remote/hybrid/onsite belong in "
+                "location_type. Null if the JD does not say."
+            ),
+        )
     )
     location_type: Literal["onsite", "remote", "hybrid"] | None = Field(
-        default=None, description="Work arrangement if stated in the JD"
+        default=None,
+        description=(
+            "WHERE the work happens. Exactly one of onsite, remote, hybrid. "
+            "This is NOT the employment type: fulltime/contract/internship/"
+            "parttime belong in job_type. Null if the JD does not say."
+        ),
     )
     apply_url: str | None = Field(
         default=None,

@@ -146,6 +146,17 @@ scraper:
     - "market data engineer"
     - "quantitative researcher"
     - "quantitative analyst"
+  # Re-parse and re-score every scraped job each run, skipping only ones
+  # already notified. Local inference is unmetered, so the only thing a skip
+  # saves is seconds — and skipping cost 176 of 745 jobs (24%) when runs that
+  # aborted partway left their remainder in all_jobs with no verdict, which
+  # the next run then dismissed as duplicates forever.
+  #
+  # true here re-examines notified jobs too, which means the same match can
+  # arrive on Telegram again. Off by default: compute is cheap, attention is
+  # not.
+  rescore_notified: false
+
   # Never apply to the same company twice within this many days.
   cooldown_days: 10
 
@@ -449,17 +460,35 @@ llm:
   # merely appears in a docs page or a list_models() call is not necessarily
   # callable (Gemini listed a retired model that 404'd on every request):
   #     python -m src.cli.llm_check --list
-  provider: "groq"
-  base_url: "https://api.groq.com/openai/v1"
-  api_key_env: "GROQ_API_KEY"
-  model: "llama-3.3-70b-versatile"
+  # Local inference leads. It has no daily cap (Groq allows 100,000 tokens/day,
+  # about 45 parses) and no per-minute limit, and it reads the WHOLE ad rather
+  # than a clipped one. It answers only while this machine is awake, so every
+  # remote run falls straight through to Groq — see max_attempts below.
+  provider: "ollama"
+  base_url: "${OLLAMA_BASE_URL}"
+  api_key_env: "OLLAMA_API_KEY"
+  model: "qwen2.5:7b-instruct"
+  api: "ollama"
+  # One attempt: a local model is either reachable or it is not. On a GitHub
+  # Actions runner this laptop is unreachable, and five backoffs per job spent
+  # rediscovering that would dwarf the run.
+  max_attempts: 1
+  jd_text:
+    head_chars: 100000
+    tail_chars: 0
   # Instructor strategy. TOOLS works on providers with function calling (Groq,
   # Cerebras, OpenAI); JSON_SCHEMA where native schema enforcement exists; JSON
   # is the lowest common denominator. Verify with llm_check after changing it.
-  instructor_mode: "TOOLS"
-  request_timeout_seconds: 60
+  instructor_mode: "JSON"   # unused on the native path
+  request_timeout_seconds: 180
   max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
 
+  # Shared default, used by any provider that does not override it. Kept
+  # separate from the primary provider's own `jd_text` block on purpose: the
+  # primary IS the top-level llm block, so reading the bound from there would
+  # hand a hosted fallback whatever the local model is configured for — which
+  # is "unlimited", and would spend Groq's daily budget in one run.
+  #
   # Bound how much of a job description reaches the model. BOTH ends are kept:
   # the head carries the role and its requirements, the tail carries pay and
   # application details.
@@ -476,7 +505,7 @@ llm:
   # setting exists to cap the OUTLIERS that spike the per-minute token limit,
   # not to shave every job — the big saving belongs to an embedding pre-filter
   # that skips the parse entirely, which costs no accuracy at all.
-  jd_text:
+  jd_text_default:
     head_chars: 3000
     tail_chars: 1500
 
@@ -494,6 +523,17 @@ llm:
   # Disabled entries are skipped entirely, so a provider can sit here ready to
   # switch on without affecting a single run.
   fallbacks:
+    # Groq — the hosted safety net, and the ONLY provider a remote run can
+    # reach. Verified live: llama-3.3-70b-versatile, TOOLS mode, 1.6s.
+    # Free tier: 1,000 requests/day and 100,000 tokens/day.
+    - enabled: true
+      provider: "groq"
+      base_url: "https://api.groq.com/openai/v1"
+      api_key_env: "GROQ_API_KEY"
+      model: "llama-3.3-70b-versatile"
+      instructor_mode: "TOOLS"
+      request_timeout_seconds: 60
+
     # Cerebras — OFF, and it must stay off: verified 2026-08-08 that the API
     # requires payment despite issuing a working key. Listing models succeeds,
     # so only a real call reveals it:
