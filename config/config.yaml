@@ -512,12 +512,24 @@ llm:
       base_url: "${OLLAMA_BASE_URL}"
       api_key_env: "OLLAMA_API_KEY"   # unused by Ollama; any value satisfies the client
       model: "qwen2.5:7b-instruct"
-      # JSON, not JSON_SCHEMA: measured 2026-08-09, JSON_SCHEMA changed nothing
-      # (same invalid-enum retries), because Ollama's OpenAI-compatible /v1
-      # shim ignores response_format. True constrained decoding needs Ollama's
-      # native /api/chat `format` field, which Instructor does not use through
-      # the OpenAI client.
-      instructor_mode: "JSON"
+      # Talk to Ollama's own API rather than its OpenAI-compatible shim, so
+      # generation is CONSTRAINED by the schema and an invalid enum cannot be
+      # produced. Measured 2026-08-09 on the real JDParsed schema:
+      #     /v1 shim (reask)      9-22s, 0-1 retries per call
+      #     native /api/chat      ~6s,   5/5 valid, no retries
+      # The shim ignores response_format, so Instructor's JSON_SCHEMA mode
+      # makes no difference there (also measured).
+      api: "ollama"
+      instructor_mode: "JSON"   # unused on the native path; kept for fallback
+      # No token budget locally, so send the WHOLE ad. The global clip exists
+      # only to survive a hosted per-minute/per-day limit, and it costs real
+      # accuracy: pay is first mentioned a median 77% of the way into a JD, and
+      # clipping measurably degraded years_required and role_level. This
+      # override applies to THIS provider only — a fallback to Groq still gets
+      # the bounded text.
+      jd_text:
+        head_chars: 100000
+        tail_chars: 0
       request_timeout_seconds: 180    # a cold model load is slow; generation is not
 
     # Cerebras — OFF, and it must stay off: verified 2026-08-08 that the API

@@ -16,7 +16,12 @@ from src.state.models import AllJobs
 _ELISION = "\n[... middle of the description omitted ...]\n"
 
 
-def clip_jd_text(text: str, head: int | None = None, tail: int | None = None) -> str:
+def clip_jd_text(
+    text: str,
+    head: int | None = None,
+    tail: int | None = None,
+    provider_cfg=None,
+) -> str:
     """Bound one JD's length, keeping BOTH ends.
 
     Head-only truncation was measured against 667 real listings and rejected:
@@ -32,7 +37,14 @@ def clip_jd_text(text: str, head: int | None = None, tail: int | None = None) ->
     years_required and role_level, which together drive success_prob — a
     worse trade than the tokens are worth.
     """
-    cfg = settings.llm.get("jd_text") or {}
+    # A provider may override the global bound. The limit exists to survive a
+    # hosted token budget; a local model has none, so it should read the whole
+    # ad — pay is first mentioned a median 77% of the way in. The override has
+    # to be per-provider because the chain can fall back from a local model to
+    # a metered one, and that one still needs the text bounded.
+    cfg = (provider_cfg.get("jd_text") if provider_cfg is not None else None) or (
+        settings.llm.get("jd_text") or {}
+    )
     head = int(cfg.get("head_chars", 3000)) if head is None else head
     tail = int(cfg.get("tail_chars", 1500)) if tail is None else tail
 
@@ -54,14 +66,19 @@ def jd_parse_system() -> str:
     return _PARSE_SYSTEM
 
 
-def jd_parse_prompt(job: AllJobs) -> str:
-    """Render the Call 1a user prompt for one scraped job."""
+def jd_parse_prompt(job: AllJobs, provider_cfg=None) -> str:
+    """Render the Call 1a user prompt for one scraped job.
+
+    ``provider_cfg`` lets the description bound follow whichever provider is
+    about to be called — a local model reads the whole ad, a metered one gets
+    it clipped.
+    """
     return (
         f"Job title: {job.role}\n"
         f"Company: {job.company}\n"
         f"Location (from listing): {job.location or 'unspecified'}\n\n"
         "Job description:\n"
-        f"{clip_jd_text(job.jd_text) or '(no description text was scraped)'}\n\n"
+        f"{clip_jd_text(job.jd_text, provider_cfg=provider_cfg) or '(no description text was scraped)'}\n\n"
         "Extract the structured fields. For role_category give a short slug "
         "classifying the role type (e.g. backend, data, ml, fullstack, devops, "
         "quant). For role_level pick junior, mid, senior, or lead. For "

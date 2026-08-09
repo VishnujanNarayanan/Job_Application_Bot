@@ -25,7 +25,7 @@ def _job(jd_text: str = "Build data pipelines with Python and SQL on AWS.") -> A
 
 
 def _stub_complete(parsed: JDParsed):
-    def _complete(response_model, prompt, *, system=None):  # noqa: ARG001
+    def _complete(response_model, prompt, *, system=None, prompt_fn=None):  # noqa: ARG001
         assert response_model is JDParsed
         return parsed
     return _complete
@@ -54,8 +54,10 @@ def test_parse_returns_schema_and_grounds_skills() -> None:
 def test_parse_passes_role_categories_into_prompt() -> None:
     seen = {}
 
-    def _complete(response_model, prompt, *, system=None):
-        seen["prompt"] = prompt
+    def _complete(response_model, prompt, *, system=None, prompt_fn=None):
+        # Mirrors the real client: the prompt is rendered per provider, so
+        # assert on what a provider would actually receive.
+        seen["prompt"] = prompt_fn(None) if prompt_fn else prompt
         seen["system"] = system
         return JDParsed(
             role_summary="x", role_category="data", role_level="mid",
@@ -240,3 +242,40 @@ def test_configured_bounds_keep_the_scoring_signals():
     cfg = settings.llm.jd_text
     assert int(cfg.head_chars) >= 2500, "the head carries role and requirements"
     assert int(cfg.tail_chars) >= 1000, "the tail carries pay and how to apply"
+
+
+def test_the_clip_follows_the_provider_that_will_answer():
+    """How much description to send is a property of the PROVIDER.
+
+    A local model has no token budget and should read the whole ad — pay is
+    first mentioned a median 77% of the way in. A metered provider further
+    down the same chain still needs it bounded, so building the prompt once
+    up front would send the wrong size to one of them.
+    """
+    from src.llm.client import provider_config
+    from src.llm.prompts import clip_jd_text
+
+    jd = "A" * 11_815   # the longest real listing in the database
+
+    bounded = clip_jd_text(jd)
+    unbounded = clip_jd_text(jd, provider_cfg=provider_config("ollama"))
+
+    assert len(bounded) < 6_000, "a metered provider must stay clipped"
+    assert unbounded == jd, "a local provider should see the whole description"
+
+
+def test_the_prompt_builder_is_handed_to_the_client_per_provider():
+    """parse() must pass a builder, not a finished string, or the override
+    above can never take effect."""
+    seen = {}
+
+    def _complete(response_model, prompt, *, system=None, prompt_fn=None):
+        seen["prompt_fn"] = prompt_fn
+        return JDParsed(
+            role_summary="x", role_category="data", role_level="mid",
+            years_required=1,
+        )
+
+    parse(_job(), complete=_complete)
+
+    assert callable(seen["prompt_fn"]), "the client needs a per-provider builder"
