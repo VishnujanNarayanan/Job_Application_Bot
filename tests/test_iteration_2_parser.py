@@ -239,7 +239,11 @@ def test_configured_bounds_keep_the_scoring_signals():
     """
     from src.config import settings
 
-    cfg = settings.llm.jd_text
+    # jd_text_default, not the primary's own jd_text: the primary IS the
+    # top-level llm block, so reading the bound from there would report
+    # whatever the local model is set to (unlimited) rather than the bound a
+    # hosted provider actually gets.
+    cfg = settings.llm.jd_text_default
     assert int(cfg.head_chars) >= 2500, "the head carries role and requirements"
     assert int(cfg.tail_chars) >= 1000, "the tail carries pay and how to apply"
 

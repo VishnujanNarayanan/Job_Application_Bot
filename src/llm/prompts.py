@@ -43,7 +43,7 @@ def clip_jd_text(
     # to be per-provider because the chain can fall back from a local model to
     # a metered one, and that one still needs the text bounded.
     cfg = (provider_cfg.get("jd_text") if provider_cfg is not None else None) or (
-        settings.llm.get("jd_text") or {}
+        settings.llm.get("jd_text_default") or {}
     )
     head = int(cfg.get("head_chars", 3000)) if head is None else head
     tail = int(cfg.get("tail_chars", 1500)) if tail is None else tail

@@ -294,10 +294,20 @@ def get_client(which: str = "primary"):
     if which in _CLIENTS:
         return _CLIENTS[which]
 
+    cfg = provider_config(which)
+
+    if str(cfg.get("api", "openai")) == "ollama":
+        native = _OllamaNativeClient(cfg)
+        _CLIENTS[which] = native
+        log.info(
+            "llm_client_built", which=which, provider=str(cfg.provider),
+            model=str(cfg.model), base_url=str(cfg.base_url), api="ollama",
+        )
+        return native
+
     import instructor
     from openai import OpenAI
 
-    cfg = provider_config(which)
     mode = getattr(instructor.Mode, str(cfg.instructor_mode))
     client = OpenAI(
         api_key=_api_key(cfg, which),
@@ -322,7 +332,28 @@ def reset_clients() -> None:
     _CLIENTS.clear()
 
 
-def _complete_native_ollama(cfg, response_model: type[T], messages) -> T:
+class _OllamaNativeClient:
+    """Ollama's own API behind Instructor's call shape.
+
+    Presents ``client.chat.completions.create(...)`` so every provider is
+    reached through the single seam :func:`get_client`. That is not cosmetic:
+    the whole test suite patches ``get_client``, and a transport that bypassed
+    it made real HTTP calls to a local model during unit tests — one of them
+    answered a test's one-character prompt in Chinese.
+    """
+
+    def __init__(self, cfg) -> None:
+        self._cfg = cfg
+        self.chat = self          # chat.completions.create resolves to self
+        self.completions = self
+
+    def create(self, *, model, messages, response_model, **_ignored):
+        return _complete_native_ollama(
+            self._cfg, response_model, messages, model=model
+        )
+
+
+def _complete_native_ollama(cfg, response_model: type[T], messages, model=None) -> T:
     """One call through Ollama's own API, with generation CONSTRAINED.
 
     Ollama compiles a JSON schema into a decoding grammar, so a value outside
@@ -355,7 +386,7 @@ def _complete_native_ollama(cfg, response_model: type[T], messages) -> T:
         f"{root}/api/chat",
         timeout=float(cfg.get("request_timeout_seconds", 180)),
         json={
-            "model": str(cfg.model),
+            "model": str(model or cfg.model),
             "messages": messages,
             "stream": False,
             "format": response_model.model_json_schema(),
@@ -366,10 +397,7 @@ def _complete_native_ollama(cfg, response_model: type[T], messages) -> T:
 
 
 def _call_once(which: str, cfg, response_model: type[T], messages) -> T:
-    """Dispatch one attempt to the transport this provider needs."""
-    if str(cfg.get("api", "openai")) == "ollama":
-        return _complete_native_ollama(cfg, response_model, messages)
-
+    """One attempt, through the single client seam every test patches."""
     return get_client(which).chat.completions.create(
         model=str(cfg.model),
         messages=messages,
@@ -386,7 +414,11 @@ def _complete_with(
     backoff = settings.llm.backoff
     delay = float(backoff.initial_seconds)
     max_delay = float(backoff.max_seconds)
-    attempts = int(backoff.max_attempts)
+    # A provider may cap its own attempts. A local model is either there or it
+    # is not: on a GitHub Actions runner the laptop is unreachable, and the
+    # generous retry budget meant for a throttled hosted API would spend five
+    # backoffs per job discovering that, before every job.
+    attempts = int(cfg.get("max_attempts", backoff.max_attempts))
 
     last_error: Exception | None = None
 

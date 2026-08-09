@@ -70,10 +70,17 @@ def test_rate_limit_wins_over_a_404_substring():
 # is covered separately at the bottom of this file.
 # ---------------------------------------------------------------------------
 
+# The attempt budget is a HOSTED provider's property. The primary is now a
+# local model configured with max_attempts=1 — it is either reachable or it is
+# not, and retrying a laptop that is asleep helps nobody. So these exercise
+# fallback:0 (Groq), which carries the full backoff budget.
+_HOSTED = "fallback:0"
+
+
 def _primary(response_model):
-    """Run the primary provider's attempt sequence for one prompt."""
+    """Run a hosted provider's attempt sequence for one prompt."""
     return llm_client._complete_with(
-        "primary", response_model, [{"role": "user", "content": "prompt"}]
+        _HOSTED, response_model, [{"role": "user", "content": "prompt"}]
     )
 
 
@@ -313,11 +320,12 @@ def test_whole_chain_failing_reports_every_provider():
             llm_client.complete(Dummy, "prompt")
 
 
-def test_transient_error_does_not_engage_the_fallback():
-    """Rate limiting is the primary's own backoff to handle.
+def test_a_hosted_provider_absorbs_throttling_itself():
+    """Rate limiting is a hosted provider's own backoff to handle.
 
-    Switching providers on a per-minute limit would send steady traffic to the
-    secondary for no reason.
+    Switching providers on a per-minute limit would send steady traffic down
+    the chain for no reason. (The local primary is the deliberate exception:
+    max_attempts=1, because an absent laptop will not become present.)
     """
     calls = {"n": 0}
 
@@ -327,18 +335,20 @@ def test_transient_error_does_not_engage_the_fallback():
             raise RuntimeError("429 Too many requests per minute")
         return Dummy(value="primary-recovered")
 
-    primary = MagicMock()
-    primary.chat.completions.create.side_effect = flaky
-    fallback = MagicMock()
+    hosted = MagicMock()
+    hosted.chat.completions.create.side_effect = flaky
+    downstream = MagicMock()
 
     with patch.object(
         llm_client, "get_client",
-        side_effect=lambda which="primary": primary if which == "primary" else fallback,
+        side_effect=lambda which="primary": hosted if which == _HOSTED else downstream,
     ), patch("time.sleep"):
-        result = llm_client.complete(Dummy, "prompt")
+        result = llm_client._complete_with(
+            _HOSTED, Dummy, [{"role": "user", "content": "prompt"}]
+        )
 
     assert result.value == "primary-recovered"
-    fallback.chat.completions.create.assert_not_called()
+    downstream.chat.completions.create.assert_not_called()
 
 
 def test_no_fallback_configured_propagates_the_primary_error():
@@ -362,18 +372,20 @@ def test_clients_are_cached_per_provider():
         def __init__(self, **kwargs):
             built.append(kwargs["base_url"])
 
-    keys = {
-        str(cfg.api_key_env): f"k{i}"
-        for i, (_, cfg) in enumerate(llm_client.provider_chain())
-    }
+    # Only providers reached over the OpenAI transport build an OpenAI client.
+    hosted = [
+        (which, cfg) for which, cfg in llm_client.provider_chain()
+        if str(cfg.get("api", "openai")) != "ollama"
+    ]
+    keys = {str(cfg.api_key_env): f"k{i}" for i, (_, cfg) in enumerate(hosted)}
 
     with patch("openai.OpenAI", FakeOpenAI), \
          patch("instructor.from_openai", side_effect=lambda c, mode: c), \
          patch.dict("os.environ", keys):
-        a = llm_client.get_client("primary")
-        b = llm_client.get_client("primary")
-        c = llm_client.get_client("fallback")
+        a = llm_client.get_client(hosted[0][0])
+        b = llm_client.get_client(hosted[0][0])
+        c = llm_client.get_client(hosted[1][0])
 
-    assert a is b, "primary should be cached"
-    assert a is not c, "fallback must be a separate client"
+    assert a is b, "a provider's client should be cached, not rebuilt"
+    assert a is not c, "each provider needs its own client"
     assert len(set(built)) == 2
