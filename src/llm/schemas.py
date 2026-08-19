@@ -12,8 +12,12 @@ and consumed by the endpoint assembler at render time.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Annotated, Literal
 
+import structlog
 from pydantic import (
     BaseModel,
     Field,
@@ -34,6 +38,24 @@ from pydantic import (
 # 30, not 20: real skills reach into the twenties ("AI orchestration
 # frameworks", "distributed data processing"), and a tighter bound truncates
 # legitimate names rather than only catching prose.
+# Collector for discarded skills, so a run can be audited afterwards. Off by
+# default (None) — the pipeline pays nothing; the eval CLI switches it on.
+log = structlog.get_logger(__name__)
+
+_REJECTIONS: ContextVar[list[dict] | None] = ContextVar("skill_rejections", default=None)
+
+
+@contextmanager
+def collect_skill_rejections() -> Iterator[list[dict]]:
+    """Collect every skill discarded inside the block, with the rule that did it."""
+    bucket: list[dict] = []
+    token = _REJECTIONS.set(bucket)
+    try:
+        yield bucket
+    finally:
+        _REJECTIONS.reset(token)
+
+
 _MAX_SKILL_CHARS = 30
 
 SkillTerm = Annotated[str, StringConstraints(max_length=_MAX_SKILL_CHARS)]
@@ -105,14 +127,51 @@ _GENERIC_TERM = frozenset({
 })
 
 
+# A bare qualifier in front of a name — "strong Python", "hands-on Docker".
+# Deliberately excludes "advanced": "Advanced Analytics" is a field, and
+# trimming it there would change what the term means rather than tidy it.
+_BARE_QUALIFIER = re.compile(
+    r"^(?:(?:strong|solid|good|proven|deep|basic|prior|extensive|excellent|"
+    r"demonstrated|hands[-\s]?on|working|practical)\s+)+",
+    re.IGNORECASE,
+)
+
+
 def _clean(text: str) -> str:
     """Strip the prose the model wraps around a technology name."""
     out = _SKILL_LEAD_IN.sub("", text.strip()).strip(" .;:")
+    out = _BARE_QUALIFIER.sub("", out).strip(" .;:")
     # Twice: "Experience with Docker practices" sheds a lead-in and a tail, and
     # "machine learning frameworks and tools" can shed two tails.
     for _ in range(2):
         out = _SKILL_TAIL.sub("", out).strip(" .;:")
     return out
+
+
+# Clause boundaries, used ONLY to rescue a bullet that mixes a qualification
+# with real skills: "Bachelor's degree in CS with strong Python and AWS" is a
+# degree clause and a skills clause joined by "with". Splitting here lets the
+# degree half be rejected while Python and AWS survive.
+#
+# Applied only to entries that already matched boilerplate. Splitting every
+# entry on " with " would turn "Experience with Docker" into "Experience" and
+# "Docker", and the orphaned "Experience" would become a skill.
+_CLAUSE_SPLIT = re.compile(
+    r";|\bwith\b|\bplus\b|\bas well as\b|\balong with\b", re.IGNORECASE
+)
+
+
+def _reject(text: str, rule: str) -> None:
+    """Record one discarded string and why.
+
+    Every rejection here is otherwise silent, and a silent rejection cannot be
+    audited: job ads vary, so the only honest way to know whether a rule is
+    costing real skills is to keep what it threw away and look.
+    """
+    log.debug("skill_rejected", text=text[:120], rule=rule)
+    bucket = _REJECTIONS.get()
+    if bucket is not None:
+        bucket.append({"text": text[:200], "rule": rule})
 
 
 def _as_terms(raw: str) -> list[str]:
@@ -124,22 +183,49 @@ def _as_terms(raw: str) -> list[str]:
     left intact matches nothing well.
     """
     text = raw.strip()
-    # Reject before splitting, not after — see _NOT_A_SKILL.
-    if not text or _NOT_A_SKILL.search(text):
-        return []
-    text = _clean(text)
     if not text:
         return []
-    terms = [
-        t for t in (_clean(p) for p in _SKILL_SPLIT.split(text))
-        if t and len(t) <= _MAX_SKILL_CHARS
-        and t.casefold() not in _GENERIC_TERM
-        and not _NOT_A_SKILL.search(t)
-    ]
+
+    # Reject before splitting, not after — see _NOT_A_SKILL. But a bullet that
+    # mixes a qualification with real skills is split on its clause boundary
+    # first, so only the qualification half is lost.
+    if _NOT_A_SKILL.search(text):
+        clauses = [c.strip() for c in _CLAUSE_SPLIT.split(text)]
+        kept = [c for c in clauses if c and not _NOT_A_SKILL.search(c)]
+        for clause in clauses:
+            if clause and _NOT_A_SKILL.search(clause):
+                _reject(clause, "boilerplate")
+        if not kept:
+            return []
+        return [t for clause in kept for t in _as_terms(clause)]
+
+    text = _clean(text)
+    if not text:
+        _reject(raw, "empty_after_cleaning")
+        return []
+
+    terms = []
+    for part in _SKILL_SPLIT.split(text):
+        term = _clean(part)
+        if not term:
+            continue
+        if _NOT_A_SKILL.search(term):
+            _reject(term, "boilerplate")
+        elif term.casefold() in _GENERIC_TERM:
+            _reject(term, "generic_qualifier")
+        elif len(term) > _MAX_SKILL_CHARS:
+            _reject(term, "over_length")
+        else:
+            terms.append(term)
     # A single term that survives splitting intact is the common case; falling
     # back to the whole string keeps a hyphenated or comma-free name that the
     # splitter had nothing to do with.
-    return terms or ([text] if len(text) <= _MAX_SKILL_CHARS else [])
+    if terms:
+        return terms
+    if len(text) <= _MAX_SKILL_CHARS:
+        return [text]
+    _reject(text, "over_length")
+    return []
 
 
 class JDParsed(BaseModel):
