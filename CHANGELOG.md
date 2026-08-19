@@ -67,6 +67,12 @@ and this project loosely tracks iterations rather than semver.
 
 ### Added
 
+- Layer 3: a pool skill the JD names outright is added to `required_skills`
+  whatever the model returned. The model under-reports — on one ad it returned
+  "experience working with LLMs" and dropped the "(e.g., GPT-3/4, Claude,
+  Mistral)" that followed, on another it extracted Java and missed Python from
+  a Python job. Only exact word-boundary matches are added, so this can never
+  introduce something the ad does not say
 - Layer 3: `parse_eval` table and `python -m src.cli.parse_eval` record the
   prompt as sent and the object as returned for every parse, so a parser change
   can be compared over the same listings instead of judged from a handful of

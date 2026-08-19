@@ -47,7 +47,13 @@ def test_parse_returns_schema_and_grounds_skills() -> None:
     )
     parsed = parse(_job(), complete=_stub_complete(raw))
     assert isinstance(parsed, JDParsed)
-    assert parsed.required_skills == ["Python", "SQL"]   # Rust dropped
+    # Rust is dropped by grounding: it is not in the JD text.
+    assert "Rust" not in parsed.required_skills
+    assert "Python" in parsed.required_skills
+    assert "SQL" in parsed.required_skills
+    # AWS is in the JD and in the operator's pool, so the pool backstop adds it
+    # to required_skills even though the model only listed it as nice-to-have.
+    assert "AWS" in parsed.required_skills
     assert parsed.nice_to_have == ["AWS"]                # Kubernetes dropped
 
 
