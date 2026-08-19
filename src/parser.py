@@ -17,7 +17,6 @@ structured fields onto the row. ``parse`` accepts an injectable
 
 from __future__ import annotations
 
-import re
 
 from collections.abc import Callable
 from functools import lru_cache
@@ -47,8 +46,8 @@ def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
     )
 
     jd_text = job.jd_text or ""
-    parsed.required_skills = term_shaped(grounded_skills(parsed.required_skills, jd_text))
-    parsed.nice_to_have = term_shaped(grounded_skills(parsed.nice_to_have, jd_text))
+    parsed.required_skills = grounded_skills(parsed.required_skills, jd_text)
+    parsed.nice_to_have = grounded_skills(parsed.nice_to_have, jd_text)
     return parsed
 
 
@@ -56,38 +55,6 @@ def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
 # bound but is not a skill: "Bachelor's degree" (17 chars), "Equal Opportunity
 # Employer" (26), "3+ years experience" (19). Matching on the phrase is enough
 # — a real skill never contains these words.
-_NOT_A_SKILL = re.compile(
-    r"\b(bachelor|master|b\.?tech|m\.?tech|phd|degree|diploma|"
-    r"years?\s+of\s+experience|yrs?\s+experience|years?\s+experience|"
-    r"equivalent\s+(practical\s+)?experience|equal\s+opportunity|"
-    r"related\s+field|similar\s+field)\b",
-    re.IGNORECASE,
-)
-
-
-def term_shaped(skills: list[str]) -> list[str]:
-    """Drop entries that cleared the length bound but still are not skills.
-
-    Length is no longer policed here — `JDParsed.SkillTerm` caps a skill at 30
-    characters in the JSON schema, which Ollama compiles into a decoding
-    grammar, so prose cannot reach this function in the first place. An earlier
-    version of this filter did enforce a word count, and it was actively
-    harmful: on a JD where the model had returned whole bullet lines, it
-    deleted every entry that at least CONTAINED the technology names and kept
-    the one piece of pure boilerplate. Fixing the schema removed the need.
-
-    What survives here is the short-but-meaningless residue the grammar cannot
-    catch, because it is a length bound and these are within it.
-    """
-    kept: list[str] = []
-    for skill in skills:
-        text = (skill or "").strip()
-        if not text or _NOT_A_SKILL.search(text):
-            continue
-        kept.append(text)
-    return kept
-
-
 def apply_to_row(job: AllJobs, parsed: JDParsed) -> None:
     """Copy parsed fields onto the AllJobs row in-place (no I/O).
 
