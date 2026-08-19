@@ -526,15 +526,23 @@ llm:
   # `fit` — 0.165 of the final score. Told in the prompt that the fields exist,
   # the same model populated 5 of 5.
   instructor_mode: "JSON_SCHEMA"
-  # Unset — the model's own default. Reverted from 0 on 2026-08-19 after
-  # measuring what it cost: on an ad listing "fine-tuning (LoRA, QLoRA, SFT,
-  # DPO)" and "inference optimization (quantization, ONNX, efficient serving)",
-  # temperature 0 found 0 of those 8 technologies while the default found 7.
-  # At 0 the model writes the category and stops; it summarises where the task
-  # needs it to enumerate. The earlier claim that 0 was faster AND better came
-  # from one ad on a simplified schema and did not survive contact with eight.
-  # Re-tune with: python -m src.cli.temp_sweep
-  # temperature: <unset>
+  # 0.6, chosen by sweeping recall against a hand-checked answer key rather
+  # than by how tidy the output looks (python -m src.cli.temp_sweep).
+  # Over 30 technologies read off two real ads, 3 runs each:
+  #
+  #     0     67%      0.4   76%      0.6   87%      default  77%
+  #     0.2   67%      0.5   87%
+  #
+  # Both extremes lose. At 0 the model writes the category and stops — it
+  # found none of "(LoRA, QLoRA, SFT, DPO)" while higher settings found them —
+  # and the earlier claim that 0 was faster AND better came from a single ad on
+  # a simplified schema. The model's own default is noisier without being more
+  # complete. 0.6 was also the fastest of the three.
+  #
+  # Recall is the right target, not tidiness: Layer 4 scores each pool skill
+  # against the BEST single JD skill, so a spurious skill never matches and
+  # costs nothing, while a missing one silently costs a match.
+  temperature: 0.6
   # 180, not 600. A generous ceiling was meant to accommodate a slow local
   # model, but it converts an occasional hang into a stalled run: on
   # 2026-08-19 one 7.5k-char ad hung Ollama for the full 600s, then fell
