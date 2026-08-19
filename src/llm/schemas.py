@@ -180,6 +180,14 @@ def _reject(text: str, rule: str) -> None:
         bucket.append({"text": text[:200], "rule": rule})
 
 
+_PAREN = re.compile(r"\(([^()]*)\)")
+
+
+def _split_terms(text: str) -> list[str]:
+    """Split one parenthesis-free string into its terms."""
+    return [t for t in (_clean(p) for p in _SKILL_SPLIT.split(text)) if t]
+
+
 def _as_terms(raw: str) -> list[str]:
     """Reduce one returned string to the short terms it actually names.
 
@@ -187,6 +195,15 @@ def _as_terms(raw: str) -> list[str]:
     and ECS/EKS" fits the length bound comfortably but is still two skills, and
     each surviving term becomes its own embedding query vector, so a conjunction
     left intact matches nothing well.
+
+    A parenthesis is a list of its own, not a separator. Splitting straight
+    through one truncated the contents mid-bracket — "Inference Optimization
+    (quantization, ONNX, efficient serving)" lost ONNX and DeepSpeed to entries
+    like "distributed training frameworks (DeepSpeed". The head and the
+    bracketed contents are therefore split separately and BOTH kept, which is
+    what the ad means: "NLU (Natural Language Understanding)" is one concept
+    under two names, and "Docker Certified Associate (DCA)" likewise — keeping
+    both also brings each within the length bound.
     """
     text = raw.strip()
     if not text:
@@ -205,33 +222,34 @@ def _as_terms(raw: str) -> list[str]:
             return []
         return [t for clause in kept for t in _as_terms(clause)]
 
-    text = _clean(text)
-    if not text:
-        _reject(raw, "empty_after_cleaning")
-        return []
+    # Pull the bracketed lists out before splitting, so their commas are not
+    # mistaken for separators in the surrounding text.
+    inner = _PAREN.findall(text)
+    head = _clean(_PAREN.sub(" ", text))
 
-    terms = []
-    for part in _SKILL_SPLIT.split(text):
-        term = _clean(part)
-        if not term:
-            continue
+    candidates: list[str] = []
+    if head:
+        candidates.extend(_split_terms(head))
+    for group in inner:
+        candidates.extend(_split_terms(group))
+    if not candidates and head:
+        candidates = [head]
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    for term in candidates:
         if _NOT_A_SKILL.search(term):
             _reject(term, "boilerplate")
         elif term.casefold() in _GENERIC_TERM:
             _reject(term, "generic_qualifier")
         elif len(term) > _MAX_SKILL_CHARS:
             _reject(term, "over_length")
-        else:
+        elif term.casefold() not in seen:
+            seen.add(term.casefold())
             terms.append(term)
-    # A single term that survives splitting intact is the common case; falling
-    # back to the whole string keeps a hyphenated or comma-free name that the
-    # splitter had nothing to do with.
-    if terms:
-        return terms
-    if len(text) <= _MAX_SKILL_CHARS:
-        return [text]
-    _reject(text, "over_length")
-    return []
+    if not terms and not candidates:
+        _reject(raw, "empty_after_cleaning")
+    return terms
 
 
 class JDParsed(BaseModel):
