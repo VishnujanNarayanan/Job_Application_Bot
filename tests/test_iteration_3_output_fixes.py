@@ -1,7 +1,7 @@
 """Layer 3/6/8 output-quality fixes found by auditing a real run (2026-08-19)."""
 
 from src.notifications import _usable_apply_url
-from src.parser import term_shaped
+from src.llm.schemas import _as_terms
 from src.scraper.filters import job_type_disallowed
 
 
@@ -43,32 +43,45 @@ class TestUsableApplyUrl:
         assert _usable_apply_url(None) == ""
 
 
-class TestTermShaped:
-    """Length is enforced by the JSON schema; this catches the short residue."""
+class TestBoilerplateRejection:
+    """Requirement boilerplate is rejected before it can be split into
+    plausible-looking fragments."""
 
-    def test_keeps_real_skills_including_multiword_names(self):
-        skills = ["Python", "AWS", "Google Cloud Platform", "vector databases"]
-        assert term_shaped(skills) == skills
+    def test_degree_line_yields_nothing(self):
+        # Splitting this first would leave "Engineering", "Data Science", "AI"
+        # looking like skills the ad asked for. It didn't.
+        assert _as_terms(
+            "Bachelor's or Master's degree in Computer Science, Engineering, "
+            "Data Science, AI, or a related field"
+        ) == []
 
-    def test_drops_degree_requirements(self):
-        assert term_shaped(["Bachelor's degree"]) == []
-        assert term_shaped(["B.Tech in a related field"]) == []
+    def test_years_of_experience_yields_nothing(self):
+        assert _as_terms("3+ years of experience building ML solutions") == []
 
-    def test_drops_years_of_experience_clauses(self):
-        assert term_shaped(["3+ years experience"]) == []
-        assert term_shaped(["5 years of experience"]) == []
+    def test_legal_boilerplate_yields_nothing(self):
+        assert _as_terms("Equal Opportunity Employer") == []
 
-    def test_drops_legal_boilerplate(self):
-        # Short enough to clear the 30-char schema bound, still not a skill.
-        assert term_shaped(["Equal Opportunity Employer"]) == []
+    def test_real_skills_containing_degree_words_survive(self):
+        """The reject-before-split runs on the whole bullet, so a false
+        positive costs every technology in it — these must not match."""
+        assert _as_terms("Master Data Management") == ["Master Data Management"]
+        assert "Snowflake" in _as_terms(
+            "Experience with Master Data Management and Snowflake"
+        )
+        assert _as_terms("master-slave replication") == ["master-slave replication"]
+        assert _as_terms("Degree of parallelism tuning") == ["Degree of parallelism tuning"]
 
-    def test_drops_blank_entries(self):
-        assert term_shaped(["", "   "]) == []
+    def test_degree_phrasings_are_all_rejected(self):
+        assert _as_terms("Masters of Business Administration") == []
+        assert _as_terms("Bachelor of Science in Computer Science") == []
+        assert _as_terms("B.Tech in CS") == []
+        assert _as_terms("PhD preferred") == []
 
-    def test_no_longer_drops_on_length_alone(self):
-        # The old word-count cut deleted entries that contained the tech names
-        # and kept boilerplate. The schema bound replaced it.
-        assert term_shaped(["AI orchestration frameworks"]) == ["AI orchestration frameworks"]
+    def test_bare_qualifier_is_dropped(self):
+        # From "or similar frameworks", once the noun is split away.
+        assert "similar" not in _as_terms(
+            "Experience building APIs using FastAPI or similar frameworks"
+        )
 
 
 class TestSkillTermBound:
@@ -116,6 +129,30 @@ class TestSkillTermBound:
     def test_duplicates_are_collapsed(self):
         parsed = self._parsed(["Python", "python", "Experience with Python"])
         assert parsed.required_skills == ["Python"]
+
+    def test_programming_skills_lead_in_is_stripped(self):
+        # "Strong programming skills in Python" is 35 chars: without stripping
+        # the lead-in it exceeds the bound and Python is lost from an ML ad.
+        assert self._parsed(
+            ["Strong programming skills in Python and SQL"]
+        ).required_skills == ["Python", "SQL"]
+
+    def test_generic_tail_is_stripped_to_the_bare_term(self):
+        parsed = self._parsed(
+            ["Experience with Docker, CI/CD pipelines, AWS services, RAG architectures"]
+        )
+        assert "CI/CD" in parsed.required_skills
+        assert "AWS" in parsed.required_skills
+        assert "RAG" in parsed.required_skills
+
+    def test_nice_to_have_drops_what_required_already_says(self):
+        from src.llm.schemas import JDParsed
+
+        parsed = JDParsed(
+            role_summary="x", role_category="ml", role_level="mid", years_required=2,
+            required_skills=["Python", "Docker"], nice_to_have=["Docker", "Kafka"],
+        )
+        assert parsed.nice_to_have == ["Kafka"]
 
     def test_every_surviving_skill_is_within_the_bound(self):
         parsed = self._parsed(

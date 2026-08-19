@@ -30,6 +30,17 @@ and this project loosely tracks iterations rather than semver.
   "Experience with Docker, Kubernetes, CI/CD pipelines, and MLOps practices"
   becomes four skills. On a JD where the model returned 11 whole bullet lines
   and none of the 18 technologies named, the technologies are recovered
+- Layer 3: skill lead-ins and generic tails are stripped, so "Strong
+  programming skills in Python" yields `Python` (it previously exceeded the
+  length bound and was dropped, losing Python from an ML ad) and "CI/CD
+  pipelines" / "AWS services" / "RAG architectures" yield the bare terms
+- Layer 3: requirement boilerplate is rejected before splitting, so a degree
+  line no longer becomes the fake skills "Engineering", "Data Science", "AI".
+  The degree words require context — a bare "master" or "degree" would reject
+  "Master Data Management" and "degree of parallelism", and because the test
+  precedes splitting it would take every technology in that bullet with it
+- Layer 3: `nice_to_have` drops what `required_skills` already names — on one
+  JD all 11 nice-to-haves were duplicates, doubling those JD query vectors
 - Layer 3: the LLM is sampled at `temperature: 0` where the provider supports
   it — extraction has one right answer, and dropping from the model default
   cut a parse from 7.0s to 2.6s while finding one more technology
