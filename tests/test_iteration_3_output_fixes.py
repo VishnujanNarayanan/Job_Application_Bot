@@ -72,25 +72,57 @@ class TestTermShaped:
 
 
 class TestSkillTermBound:
-    """The bound the model physically cannot exceed."""
+    """The bound is advertised in the schema and made true by a validator.
 
-    def test_schema_carries_max_length(self):
+    Ollama does NOT enforce `maxLength` in its decoding grammar (measured
+    2026-08-19: the full schema returned over-long strings and the parse died),
+    so the bound cannot be relied on as a hard constraint — the validator has
+    to hold it up.
+    """
+
+    def _parsed(self, skills):
+        from src.llm.schemas import JDParsed
+
+        return JDParsed(
+            role_summary="x", role_category="ml", role_level="mid",
+            years_required=2, required_skills=skills,
+        )
+
+    def test_schema_advertises_max_length(self):
         from src.llm.schemas import JDParsed
 
         items = JDParsed.model_json_schema()["properties"]["required_skills"]["items"]
         assert items["maxLength"] == 30
 
-    def test_over_length_skill_is_rejected(self):
-        import pytest
-        from pydantic import ValidationError
+    def test_over_length_blob_is_split_not_rejected(self):
+        # Dropping this entry would throw away four real technologies.
+        parsed = self._parsed(
+            ["Experience with Docker, Kubernetes, CI/CD pipelines, and MLOps practices"]
+        )
+        assert "Docker" in parsed.required_skills
+        assert "Kubernetes" in parsed.required_skills
+        assert "MLOps" in parsed.required_skills
 
-        from src.llm.schemas import JDParsed
+    def test_lead_in_is_stripped(self):
+        assert self._parsed(["Experience with Docker"]).required_skills == ["Docker"]
+        assert self._parsed(["Familiarity with CI/CD"]).required_skills == ["CI/CD"]
 
-        with pytest.raises(ValidationError):
-            JDParsed(
-                role_summary="x", role_category="ml", role_level="mid", years_required=2,
-                required_skills=["Experience with Docker, Kubernetes, CI/CD and MLOps practices"],
-            )
+    def test_slash_terms_survive_splitting(self):
+        # CI/CD and ECS/EKS are single technologies, not two each.
+        parsed = self._parsed(["Experience with CI/CD and ECS/EKS"])
+        assert "CI/CD" in parsed.required_skills
+        assert "ECS/EKS" in parsed.required_skills
+
+    def test_duplicates_are_collapsed(self):
+        parsed = self._parsed(["Python", "python", "Experience with Python"])
+        assert parsed.required_skills == ["Python"]
+
+    def test_every_surviving_skill_is_within_the_bound(self):
+        parsed = self._parsed(
+            ["Experience with AWS services such as SageMaker, S3, Lambda, RDS and DynamoDB"]
+        )
+        assert parsed.required_skills, "must not empty the list"
+        assert all(len(s) <= 30 for s in parsed.required_skills)
 
 
 class TestSampling:

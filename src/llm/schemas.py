@@ -11,6 +11,7 @@ and consumed by the endpoint assembler at render time.
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, StringConstraints, field_validator
@@ -30,6 +31,46 @@ from pydantic import BaseModel, Field, StringConstraints, field_validator
 _MAX_SKILL_CHARS = 30
 
 SkillTerm = Annotated[str, StringConstraints(max_length=_MAX_SKILL_CHARS)]
+
+# Lead-ins the model wraps around a technology name. Stripped before the length
+# test so "Experience with Docker" is recognised as "Docker" rather than
+# discarded for length.
+_SKILL_LEAD_IN = re.compile(
+    r"^(?:(?:strong|solid|good|proven|deep|basic|prior|hands[- ]?on|extensive)\s+)*"
+    r"(?:experience\s+(?:with|in|building|using)|familiarity\s+with|knowledge\s+of|"
+    r"exposure\s+to|proficiency\s+(?:with|in)|working\s+knowledge\s+of|"
+    r"understanding\s+of|expertise\s+in)\s+",
+    re.IGNORECASE,
+)
+_SKILL_TAIL = re.compile(r"\s+(?:experience|proficiency|skills?|expertise|practices?)$",
+                         re.IGNORECASE)
+# Split an over-long entry into the terms it names. NOT on "/" — that would
+# break CI/CD, ECS/EKS and TCP/IP, which are single technologies.
+_SKILL_SPLIT = re.compile(r",|\band\b|\bor\b|\bsuch as\b|\bincluding\b", re.IGNORECASE)
+
+
+def _clean(text: str) -> str:
+    """Strip the prose the model wraps around a technology name."""
+    return _SKILL_TAIL.sub("", _SKILL_LEAD_IN.sub("", text.strip()).strip(" .;:")).strip()
+
+
+def _as_terms(raw: str) -> list[str]:
+    """Reduce one returned string to the short terms it actually names.
+
+    Splitting is unconditional rather than only for over-long entries: "CI/CD
+    and ECS/EKS" fits the length bound comfortably but is still two skills, and
+    each surviving term becomes its own embedding query vector, so a conjunction
+    left intact matches nothing well.
+    """
+    text = _clean(raw)
+    if not text:
+        return []
+    terms = [t for t in (_clean(p) for p in _SKILL_SPLIT.split(text))
+             if t and len(t) <= _MAX_SKILL_CHARS]
+    # A single term that survives splitting intact is the common case; falling
+    # back to the whole string keeps a hyphenated or comma-free name that the
+    # splitter had nothing to do with.
+    return terms or ([text] if len(text) <= _MAX_SKILL_CHARS else [])
 
 
 class JDParsed(BaseModel):
@@ -92,9 +133,40 @@ class JDParsed(BaseModel):
         """
         return "mid" if value is None else value
 
-    @field_validator(
-        "required_skills", "nice_to_have", "responsibilities", mode="before"
-    )
+    @field_validator("required_skills", "nice_to_have", mode="before")
+    @classmethod
+    def _terms_only(cls, value):
+        """Make the length bound true instead of fatal.
+
+        `SkillTerm` caps a skill at 30 characters, and Instructor states that
+        cap in the prompt — but measured 2026-08-19, Ollama does NOT enforce
+        `maxLength` in its decoding grammar: on the full schema the model
+        returned over-long strings and the whole parse died with a validation
+        error. The bound is therefore a hint the model may ignore, and this
+        runs first (`mode="before"`) to make it hold.
+
+        Over-long entries are SPLIT, never dropped. A blob like "Experience
+        with Docker, Kubernetes, CI/CD pipelines, and MLOps practices" names
+        four real technologies; discarding it for length throws all four away,
+        which is exactly the failure an earlier length filter caused.
+        """
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            return value
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            for term in _as_terms(item):
+                key = term.casefold()
+                if key not in seen:
+                    seen.add(key)
+                    out.append(term)
+        return out
+
+    @field_validator("responsibilities", mode="before")
     @classmethod
     def _null_list_means_empty(cls, value):
         """Accept an explicit null for a list field and read it as "none".

@@ -25,10 +25,11 @@ and this project loosely tracks iterations rather than semver.
   contended with WSL — 92-250s per parse, and it froze the machine. The 3B
   fits VRAM whole: 6.6s per parse, no spill. Trade-off is a rougher read of
   `years_required`, which feeds 30% of the final score
-- Layer 3: a skill is capped at 30 characters in the JSON schema, so the
-  decoding grammar makes prose unrepresentable in a skill slot. On a JD where
-  the model had returned 11 whole bullet lines and none of the 18 technologies
-  named, the bound yields 26 entries, none over four words, 17 of 18 found
+- Layer 3: a skill is capped at 30 characters in the JSON schema and an
+  over-long entry is split into the terms it names rather than rejected —
+  "Experience with Docker, Kubernetes, CI/CD pipelines, and MLOps practices"
+  becomes four skills. On a JD where the model returned 11 whole bullet lines
+  and none of the 18 technologies named, the technologies are recovered
 - Layer 3: the LLM is sampled at `temperature: 0` where the provider supports
   it — extraction has one right answer, and dropping from the model default
   cut a parse from 7.0s to 2.6s while finding one more technology
