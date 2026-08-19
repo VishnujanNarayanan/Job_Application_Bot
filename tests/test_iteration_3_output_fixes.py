@@ -108,12 +108,28 @@ class TestSkillTermBound:
         assert items["maxLength"] == _MAX_SKILL_CHARS
 
     def test_bound_clears_real_certifications(self):
-        """The bound was 30 and cut through real skills. Recorded rejections
-        showed genuine prose starts in the mid-forties, so these must survive."""
-        for name in ("Docker Certified Associate (DCA)",
-                     "Kubernetes Application Developer",
-                     "NLU (Natural Language Understanding)"):
-            assert _as_terms(name) == [name], name
+        """The bound was 30 and cut through real skills. A bracketed short form
+        is kept alongside the long one, which also brings both inside the
+        bound — "Docker Certified Associate (DCA)" is 32 chars as one string."""
+        assert _as_terms("Kubernetes Application Developer") == [
+            "Kubernetes Application Developer"
+        ]
+        assert _as_terms("Docker Certified Associate (DCA)") == [
+            "Docker Certified Associate", "DCA"
+        ]
+        assert _as_terms("NLU (Natural Language Understanding)") == [
+            "NLU", "Natural Language Understanding"
+        ]
+
+    def test_parenthesised_lists_are_split_separately(self):
+        """A parenthesis is a list, not a separator. Splitting through one
+        truncated its contents mid-bracket and lost the technologies."""
+        assert _as_terms(
+            "Hands-on model fine-tuning experience (LoRA, QLoRA, SFT, DPO)"
+        ) == ["model fine-tuning", "LoRA", "QLoRA", "SFT", "DPO"]
+        assert _as_terms(
+            "Experience with distributed training frameworks (DeepSpeed, FSDP)"
+        ) == ["distributed training", "DeepSpeed", "FSDP"]
 
     def test_bound_still_rejects_prose(self):
         assert _as_terms("Experience integrating with third-party APIs and services") == []

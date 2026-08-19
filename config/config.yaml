@@ -526,10 +526,15 @@ llm:
   # `fit` — 0.165 of the final score. Told in the prompt that the fields exist,
   # the same model populated 5 of 5.
   instructor_mode: "JSON_SCHEMA"
-  # 0, not the model default (~0.7 for qwen2.5). Extraction has one right
-  # answer; sampling creatively for it is pure downside. Measured 2026-08-19:
-  # 7.0s -> 2.6s on the same JD, and one more technology extracted.
-  temperature: 0
+  # Unset — the model's own default. Reverted from 0 on 2026-08-19 after
+  # measuring what it cost: on an ad listing "fine-tuning (LoRA, QLoRA, SFT,
+  # DPO)" and "inference optimization (quantization, ONNX, efficient serving)",
+  # temperature 0 found 0 of those 8 technologies while the default found 7.
+  # At 0 the model writes the category and stops; it summarises where the task
+  # needs it to enumerate. The earlier claim that 0 was faster AND better came
+  # from one ad on a simplified schema and did not survive contact with eight.
+  # Re-tune with: python -m src.cli.temp_sweep
+  # temperature: <unset>
   # 180, not 600. A generous ceiling was meant to accommodate a slow local
   # model, but it converts an occasional hang into a stalled run: on
   # 2026-08-19 one 7.5k-char ad hung Ollama for the full 600s, then fell
