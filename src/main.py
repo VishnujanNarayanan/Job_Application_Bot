@@ -91,6 +91,7 @@ def _run(dry_run: bool, log) -> int:
         COMPANY_COOLDOWN,
         DUPLICATE,
         HARD_FILTER_LAYER_3,
+        JOB_TYPE_DISALLOWED,
         LOCATION_DISALLOWED,
         LOW_SCORE,
         PARSE_FAILURE,
@@ -267,6 +268,14 @@ def _run(dry_run: bool, log) -> int:
                 continue
 
             apply_to_row(job, parsed)
+
+            # Layer 3 hard filter: employment type on the structured field.
+            # Checked here rather than at scrape time because JobSpy leaves the
+            # listing's own job_type blank far more often than the JD does.
+            if filters.job_type_disallowed(parsed.job_type, cfg.filters.get("job_type")):
+                not_applied_queue.append((job, JOB_TYPE_DISALLOWED, str(parsed.job_type), None))
+                skipped_count += 1
+                continue
 
             # Layer 3 hard filter: years ceiling on structured field
             if filters.exceeds_years_ceiling(parsed.years_required, int(cfg.filters.years_ceiling)):

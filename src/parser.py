@@ -17,6 +17,7 @@ structured fields onto the row. ``parse`` accepts an injectable
 
 from __future__ import annotations
 
+
 from collections.abc import Callable
 from functools import lru_cache
 
@@ -50,6 +51,10 @@ def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
     return parsed
 
 
+# Requirement boilerplate that is short enough to clear the schema's length
+# bound but is not a skill: "Bachelor's degree" (17 chars), "Equal Opportunity
+# Employer" (26), "3+ years experience" (19). Matching on the phrase is enough
+# — a real skill never contains these words.
 def apply_to_row(job: AllJobs, parsed: JDParsed) -> None:
     """Copy parsed fields onto the AllJobs row in-place (no I/O).
 
