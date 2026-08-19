@@ -7,6 +7,36 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Fixed
+
+- Layer 3: the Groq fallback calls `openai/gpt-oss-120b` — `llama-3.3-70b-versatile`
+  was retired and 404'd every request, so with the local model unreachable and
+  Gemini over its spend cap, every job failed to parse and the run produced
+  nothing
+- Layer 3: a schema mistake by the local model is reasked (`llm.validation_reask`)
+  instead of falling straight through to a hosted provider — `max_attempts: 1`
+  treated "answered with an invalid field" the same as "laptop unreachable",
+  and re-sending an identical prompt does not fix a validation error anyway
+- Layer 3: the local provider's request timeout is 600s, up from 180s — a
+  partially GPU-offloaded 7B takes 90-250s per parse, so a reask on top of one
+  exceeded the ceiling and abandoned a working model as if it were down
+- Layer 3: the local model is `qwen2.5:3b-instruct`, replacing the 7B, which
+  overflowed a 6 GB GPU by ~1 GB and ran the remainder on a CPU already
+  contended with WSL — 92-250s per parse, and it froze the machine. The 3B
+  fits VRAM whole: 6.6s per parse, no spill. Trade-off is a rougher read of
+  `years_required`, which feeds 30% of the final score
+- Layer 3: a skill is capped at 30 characters in the JSON schema, so the
+  decoding grammar makes prose unrepresentable in a skill slot. On a JD where
+  the model had returned 11 whole bullet lines and none of the 18 technologies
+  named, the bound yields 26 entries, none over four words, 17 of 18 found
+- Layer 3: the LLM is sampled at `temperature: 0` where the provider supports
+  it — extraction has one right answer, and dropping from the model default
+  cut a parse from 7.0s to 2.6s while finding one more technology
+- Layer 3: the skill filter no longer drops entries on length, which deleted
+  the blobs that at least contained the technology names while keeping the
+  boilerplate; the schema bound replaced it, and the filter now only rejects
+  short non-skills (degrees, years-of-experience, "Equal Opportunity Employer")
+
 ## [v2.0.1] — 2026-08-09
 
 ### Fixed

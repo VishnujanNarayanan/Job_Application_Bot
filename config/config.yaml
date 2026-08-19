@@ -167,7 +167,18 @@ selection:
   experience:
     weight_alias: 0.30    # best title alias cosine score contribution
     weight_bullets: 0.70  # top-3 bullet avg cosine score contribution
-    threshold: 0.45
+    # CALIBRATED, not chosen. 0.45 was set as if a good cosine ran near 1.0.
+    # Measured over 60 real JDs on 2026-08-19, the BEST-matching experience
+    # this profile can produce scored 0.416 and the 3rd-place one peaked at
+    # 0.395 — so nothing ever cleared 0.45, and 84 of 85 stored selections
+    # were the force-include minimum of exactly 2. The threshold was inert.
+    #
+    # all-MiniLM-L6-v2 cosine between a JD facet and a resume bullet lives in
+    # roughly 0.2-0.45; the bar has to sit inside that band to mean anything.
+    # 0.332 is the 75th percentile of the 3rd-place score, so a third
+    # experience appears on about the top quarter of jobs and stays a signal
+    # of genuine fit rather than padding every resume to 3.
+    threshold: 0.332
     max_shown: 3
     min_shown: 2
     bullets_per_experience: 3   # exactly 3 bullets shown per experience
@@ -178,7 +189,10 @@ selection:
   project:
     weight_name: 0.20     # project name cosine score contribution
     weight_bullets: 0.80  # topN bullet avg contribution (N = bullets shown)
-    threshold: 0.50
+    # Same calibration as experience above, same measurement run: the 3rd-place
+    # project peaked at 0.383 against a 0.50 bar, so the projects section was
+    # always exactly 2. 0.344 is the 75th percentile of the 3rd-place score.
+    threshold: 0.344
     max_shown: 3
     min_shown: 2
     bullet_threshold: 0.40  # individual bullet floor; 2 force-included if fewer pass
@@ -480,11 +494,21 @@ llm:
   provider: "ollama"
   base_url: "${OLLAMA_BASE_URL}"
   api_key_env: "OLLAMA_API_KEY"
-  model: "qwen2.5:7b-instruct"
+  # 3b, not 7b. The 7B is 5.12 GB against a 6141 MiB RTX 4050 that already
+  # holds the desktop: only 4.19 GB fit, so ~18% of its layers ran on the CPU.
+  # That cost 92-250s per parse AND froze the laptop on 2026-08-19, because the
+  # spilled layers fight WSL (which takes half of system RAM by default) for
+  # what is left. The 3B fits VRAM whole, so nothing spills.
+  model: "qwen2.5:3b-instruct"
   # One attempt: a local model is either reachable or it is not. On a GitHub
   # Actions runner this laptop is unreachable, and five backoffs per job spent
   # rediscovering that would dwarf the run.
   max_attempts: 1
+  # Reask budget for schema mistakes, which `max_attempts` cannot fix — it
+  # re-sends the same prompt, where a reask tells the model what it got wrong.
+  # qwen2.5:7b answers `job_type: hybrid` (a location_type value) often enough
+  # to matter, and one corrective reask is local, free and ~30s.
+  validation_reask: 2
   jd_text:
     head_chars: 100000
     tail_chars: 0
@@ -502,7 +526,16 @@ llm:
   # `fit` — 0.165 of the final score. Told in the prompt that the fields exist,
   # the same model populated 5 of 5.
   instructor_mode: "JSON_SCHEMA"
-  request_timeout_seconds: 180
+  # 0, not the model default (~0.7 for qwen2.5). Extraction has one right
+  # answer; sampling creatively for it is pure downside. Measured 2026-08-19:
+  # 7.0s -> 2.6s on the same JD, and one more technology extracted.
+  temperature: 0
+  # 180s was not enough once `validation_reask` was added. qwen2.5:7b only
+  # partially fits this GPU (4.19 of 5.12 GB in VRAM, the rest on CPU), so one
+  # parse measured 92-250s on 2026-08-19 — a corrective reask on top of that
+  # blew the ceiling and the run abandoned a WORKING local model as if it were
+  # unreachable. The timeout guards against a hung server, not a slow one.
+  request_timeout_seconds: 600
   max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
 
   # Shared default, used by any provider that does not override it. Kept
@@ -546,13 +579,20 @@ llm:
   # switch on without affecting a single run.
   fallbacks:
     # Groq — the hosted safety net, and the ONLY provider a remote run can
-    # reach. Verified live: llama-3.3-70b-versatile, TOOLS mode, 1.6s.
-    # Free tier: 1,000 requests/day and 100,000 tokens/day.
+    # reach. Free tier: 1,000 requests/day and 100,000 tokens/day.
+    #
+    # llama-3.3-70b-versatile was retired and 404'd every request on
+    # 2026-08-19, taking a whole run down exactly as the retired Gemini model
+    # did on 2026-08-08. Re-measured the live catalogue that day; of what the
+    # key can actually call, gpt-oss-120b was the strongest that parses a JD
+    # correctly (4/4 skills, years and level right) in TOOLS mode, 1.9s.
+    # gpt-oss-20b also passes at 1.0s if this one is ever retired too;
+    # qwen3.6-27b needs JSON_SCHEMA — it 400s in TOOLS mode.
     - enabled: true
       provider: "groq"
       base_url: "https://api.groq.com/openai/v1"
       api_key_env: "GROQ_API_KEY"
-      model: "llama-3.3-70b-versatile"
+      model: "openai/gpt-oss-120b"
       instructor_mode: "TOOLS"
       request_timeout_seconds: 60
 

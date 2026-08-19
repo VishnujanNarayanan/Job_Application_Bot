@@ -11,9 +11,25 @@ and consumed by the endpoint assembler at render time.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator
+
+# Bound on one extracted skill, enforced by the JSON schema rather than asked
+# for in the prompt. Ollama compiles the schema into a decoding grammar, so a
+# sentence is *unrepresentable* in a skill slot — the model cannot disobey it
+# the way it ignored "never whole sentences".
+#
+# Measured 2026-08-19 on a JD where the unbounded schema returned 11 whole
+# bullet lines and none of the 18 technologies the ad names: with the bound,
+# 26 entries, none over four words, 17 of the 18 found.
+#
+# 30, not 20: real skills reach into the twenties ("AI orchestration
+# frameworks", "distributed data processing"), and a tighter bound truncates
+# legitimate names rather than only catching prose.
+_MAX_SKILL_CHARS = 30
+
+SkillTerm = Annotated[str, StringConstraints(max_length=_MAX_SKILL_CHARS)]
 
 
 class JDParsed(BaseModel):
@@ -45,10 +61,10 @@ class JDParsed(BaseModel):
     years_required: int = Field(
         ..., ge=0, le=30, description="Years of experience demanded by the JD"
     )
-    required_skills: list[str] = Field(
+    required_skills: list[SkillTerm] = Field(
         default_factory=list, description="Must-have skills extracted from JD"
     )
-    nice_to_have: list[str] = Field(
+    nice_to_have: list[SkillTerm] = Field(
         default_factory=list, description="Nice-to-have skills extracted from JD"
     )
     responsibilities: list[str] = Field(
