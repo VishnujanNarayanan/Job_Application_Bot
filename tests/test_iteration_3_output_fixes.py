@@ -102,10 +102,21 @@ class TestSkillTermBound:
         )
 
     def test_schema_advertises_max_length(self):
-        from src.llm.schemas import JDParsed
+        from src.llm.schemas import _MAX_SKILL_CHARS, JDParsed
 
         items = JDParsed.model_json_schema()["properties"]["required_skills"]["items"]
-        assert items["maxLength"] == 30
+        assert items["maxLength"] == _MAX_SKILL_CHARS
+
+    def test_bound_clears_real_certifications(self):
+        """The bound was 30 and cut through real skills. Recorded rejections
+        showed genuine prose starts in the mid-forties, so these must survive."""
+        for name in ("Docker Certified Associate (DCA)",
+                     "Kubernetes Application Developer",
+                     "NLU (Natural Language Understanding)"):
+            assert _as_terms(name) == [name], name
+
+    def test_bound_still_rejects_prose(self):
+        assert _as_terms("Experience integrating with third-party APIs and services") == []
 
     def test_over_length_blob_is_split_not_rejected(self):
         # Dropping this entry would throw away four real technologies.
@@ -159,7 +170,9 @@ class TestSkillTermBound:
             ["Experience with AWS services such as SageMaker, S3, Lambda, RDS and DynamoDB"]
         )
         assert parsed.required_skills, "must not empty the list"
-        assert all(len(s) <= 30 for s in parsed.required_skills)
+        from src.llm.schemas import _MAX_SKILL_CHARS
+
+        assert all(len(s) <= _MAX_SKILL_CHARS for s in parsed.required_skills)
 
 
 class TestSampling:

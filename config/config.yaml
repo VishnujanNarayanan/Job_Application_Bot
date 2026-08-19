@@ -530,12 +530,13 @@ llm:
   # answer; sampling creatively for it is pure downside. Measured 2026-08-19:
   # 7.0s -> 2.6s on the same JD, and one more technology extracted.
   temperature: 0
-  # 180s was not enough once `validation_reask` was added. qwen2.5:7b only
-  # partially fits this GPU (4.19 of 5.12 GB in VRAM, the rest on CPU), so one
-  # parse measured 92-250s on 2026-08-19 — a corrective reask on top of that
-  # blew the ceiling and the run abandoned a WORKING local model as if it were
-  # unreachable. The timeout guards against a hung server, not a slow one.
-  request_timeout_seconds: 600
+  # 180, not 600. A generous ceiling was meant to accommodate a slow local
+  # model, but it converts an occasional hang into a stalled run: on
+  # 2026-08-19 one 7.5k-char ad hung Ollama for the full 600s, then fell
+  # through the chain, and that single job took 630s. A parse that has not
+  # finished in 180s is not slow, it is stuck — and the chain has a hosted
+  # fallback precisely so giving up early is cheap.
+  request_timeout_seconds: 180
   max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
 
   # Shared default, used by any provider that does not override it. Kept
