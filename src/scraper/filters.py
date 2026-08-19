@@ -34,6 +34,24 @@ def exceeds_years_ceiling(years_required: int | None, ceiling: int) -> bool:
     return years_required > ceiling
 
 
+def job_type_disallowed(job_type: str | None, wanted: str | None) -> bool:
+    """True if the JD's employment type is not the one the operator wants.
+
+    `filters.job_type` sat in config.yaml unread since the config was written:
+    "Fulltime only" is a stated operator rule, but nothing enforced it, and by
+    2026-08-19 the database held 14 contract, 9 internship and 2 part-time
+    listings that had been scored and notified like any other job.
+
+    An unknown type passes. The parser leaves `job_type` null on roughly a
+    quarter of ads — usually because the ad never says — and rejecting those
+    would discard far more real full-time jobs than the handful of contracts
+    it would catch.
+    """
+    if not wanted or job_type is None:
+        return False
+    return str(job_type).strip().casefold() != str(wanted).strip().casefold()
+
+
 def company_in_cooldown(
     last_notified_at: datetime | None,
     now: datetime,

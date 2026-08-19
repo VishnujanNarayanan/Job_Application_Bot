@@ -20,6 +20,7 @@ EMPTY_JD = "EMPTY_JD"
 
 # Layer 3 — rejected after Gemini parse
 HARD_FILTER_LAYER_3 = "HARD_FILTER_LAYER_3"
+JOB_TYPE_DISALLOWED = "JOB_TYPE_DISALLOWED"
 PARSE_FAILURE = "PARSE_FAILURE"
 
 # Layer 4 / 5 — scoring + build outcomes
