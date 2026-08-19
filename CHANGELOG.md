@@ -7,6 +7,8 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [v2.0.2] — 2026-08-19
+
 ### Fixed
 
 - Layer 3: the Groq fallback calls `openai/gpt-oss-120b` — `llama-3.3-70b-versatile`
@@ -17,19 +19,15 @@ and this project loosely tracks iterations rather than semver.
   instead of falling straight through to a hosted provider — `max_attempts: 1`
   treated "answered with an invalid field" the same as "laptop unreachable",
   and re-sending an identical prompt does not fix a validation error anyway
-- Layer 3: the local provider's request timeout is 600s, up from 180s — a
-  partially GPU-offloaded 7B takes 90-250s per parse, so a reask on top of one
-  exceeded the ceiling and abandoned a working model as if it were down
 - Layer 3: the local model is `qwen2.5:3b-instruct`, replacing the 7B, which
   overflowed a 6 GB GPU by ~1 GB and ran the remainder on a CPU already
   contended with WSL — 92-250s per parse, and it froze the machine. The 3B
   fits VRAM whole: 6.6s per parse, no spill. Trade-off is a rougher read of
   `years_required`, which feeds 30% of the final score
-- Layer 3: a skill is capped at 30 characters in the JSON schema and an
-  over-long entry is split into the terms it names rather than rejected —
-  "Experience with Docker, Kubernetes, CI/CD pipelines, and MLOps practices"
-  becomes four skills. On a JD where the model returned 11 whole bullet lines
-  and none of the 18 technologies named, the technologies are recovered
+- Layer 3: an over-long skill is split into the terms it names rather than
+  rejected — "Experience with Docker, Kubernetes, CI/CD pipelines, and MLOps
+  practices" becomes four skills. On a JD where the model returned 11 whole
+  bullet lines and none of the 18 technologies named, all 18 are recovered
 - Layer 3: skill lead-ins and generic tails are stripped, so "Strong
   programming skills in Python" yields `Python` (it previously exceeded the
   length bound and was dropped, losing Python from an ML ad) and "CI/CD
@@ -41,10 +39,10 @@ and this project loosely tracks iterations rather than semver.
   precedes splitting it would take every technology in that bullet with it
 - Layer 3: `nice_to_have` drops what `required_skills` already names — on one
   JD all 11 nice-to-haves were duplicates, doubling those JD query vectors
-- Layer 3: the skill length bound is 40 characters, raised from 30 after the
-  recorded rejections showed 30 cutting through real skills — "Docker
-  Certified Associate (DCA)" and "Kubernetes Application Developer" are
-  certifications, and genuine prose does not start until the mid-forties
+- Layer 3: a skill is bounded at 40 characters, a figure taken from the
+  recorded rejections rather than guessed — at 30 the bound cut through real
+  certifications ("Docker Certified Associate", "Kubernetes Application
+  Developer") and genuine prose does not start until the mid-forties
 - Layer 3: the local provider gives up after 180s rather than 600s. One 7.5k
   ad hung Ollama for the full ceiling and, with the fallbacks behind it, cost a
   single job 630 seconds; a parse that has not finished in 180s is stuck, and
