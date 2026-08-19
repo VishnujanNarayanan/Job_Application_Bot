@@ -205,3 +205,51 @@ class TestSampling:
         from src.llm.client import _sampling
 
         assert _sampling(Section({})) == {}
+
+
+class TestPoolBackstop:
+    """A pool skill the JD names outright is required, whatever the model said.
+
+    `fit` is 55% of the final score and each pool skill is matched against its
+    BEST JD skill, so a JD skill the model invented costs nothing while one it
+    missed drags the corresponding pool skill down.
+    """
+
+    JD = ("Write production code in Python, with knowledge of C++ or Java. "
+          "Use LangChain and FastAPI. Node.js is used. Deploy with Docker.")
+
+    def test_adds_pool_skills_the_model_missed(self):
+        from src.parser import with_pool_skills
+
+        got = with_pool_skills(["experience working with LLMs"], self.JD)
+        assert "Python" in got
+        assert "FastAPI" in got
+
+    def test_keeps_what_the_model_returned(self):
+        from src.parser import with_pool_skills
+
+        got = with_pool_skills(["experience working with LLMs"], self.JD)
+        assert got[0] == "experience working with LLMs"
+
+    def test_never_adds_what_the_jd_does_not_say(self):
+        from src.parser import with_pool_skills
+
+        got = with_pool_skills([], "We need someone thoughtful and organised.")
+        assert got == []
+
+    def test_does_not_re_add_what_is_already_there(self):
+        """Case-insensitive: the backstop must not append a second "Python"."""
+        from src.parser import with_pool_skills
+
+        got = with_pool_skills(["python"], self.JD)
+        assert sum(1 for s in got if s.casefold() == "python") == 1
+
+    def test_dot_does_not_block_a_term_ending_a_sentence(self):
+        from src.parser import with_pool_skills
+
+        assert "FastAPI" in with_pool_skills([], "The stack is FastAPI.")
+
+    def test_empty_jd_changes_nothing(self):
+        from src.parser import with_pool_skills
+
+        assert with_pool_skills(["Python"], "") == ["Python"]

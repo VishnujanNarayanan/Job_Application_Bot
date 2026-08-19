@@ -17,9 +17,13 @@ structured fields onto the row. ``parse`` accepts an injectable
 
 from __future__ import annotations
 
+import re
+
 
 from collections.abc import Callable
 from functools import lru_cache
+
+import structlog
 
 from src.config import settings
 from src.llm.client import complete as _default_complete
@@ -48,6 +52,7 @@ def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
     jd_text = job.jd_text or ""
     parsed.required_skills = grounded_skills(parsed.required_skills, jd_text)
     parsed.nice_to_have = grounded_skills(parsed.nice_to_have, jd_text)
+    parsed.required_skills = with_pool_skills(parsed.required_skills, jd_text)
     return parsed
 
 
@@ -55,6 +60,71 @@ def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
 # bound but is not a skill: "Bachelor's degree" (17 chars), "Equal Opportunity
 # Employer" (26), "3+ years experience" (19). Matching on the phrase is enough
 # — a real skill never contains these words.
+log = structlog.get_logger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _pool_terms() -> tuple[str, ...]:
+    """The operator's skills_pool, longest first.
+
+    Read from master_profile.json — the parsed cache Layer 7 maintains — so
+    this uses the same source the scorer does rather than re-reading the YAML.
+    """
+    import json
+
+    from src.state.master_profile import _JSON_PATH as path
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.warning("pool_skills_unavailable", path=str(path), error=str(exc))
+        return ()
+    pool = [str(s).strip() for s in (data.get("skills_pool") or []) if str(s).strip()]
+    return tuple(sorted(pool, key=len, reverse=True))
+
+
+def with_pool_skills(skills: list[str], jd_text: str) -> list[str]:
+    """Add pool skills the JD names outright but the model failed to return.
+
+    The model is the only thing extracting skills, and it under-reports. On one
+    real ad it returned "experience working with LLMs" and silently dropped the
+    "(e.g., GPT-3/4, Claude, Mistral)" that followed; on another it extracted
+    Java and missed Python from a Python job. Measured 2026-08-19 across four
+    ads: Python, MLOps, NLP, BERT, GPT, Mistral, TinyML, LangChain, LangGraph,
+    RAG and Scikit were all present in the text and absent from the output.
+
+    That asymmetry is expensive. `fit` is 55% of the final score and each pool
+    skill is scored against its BEST matching JD skill, so a JD skill the model
+    invented costs nothing (it simply never matches) while one it missed drags
+    the corresponding pool skill down — the operator looks less qualified than
+    the ad says they need.
+
+    The operator's pool is a known, closed list, so its members do not need to
+    be inferred: if the JD names one literally, it is a required skill. Only
+    exact substring matches on a word boundary are added — no lemmatising, no
+    fuzzy matching — so this can only ever add something the ad actually says.
+    """
+    if not jd_text:
+        return skills
+    haystack = jd_text.casefold()
+    present = {s.casefold() for s in skills}
+    added: list[str] = []
+    for term in _pool_terms():
+        key = term.casefold()
+        if key in present:
+            continue
+        # Word-boundary match so "R" does not fire on every word containing r
+        # and "Go" does not fire inside "Google". A dot only blocks the match
+        # when a word follows it, so "Node.js" is not matched by "Node" while
+        # a term ending a sentence ("...and FastAPI.") still matches.
+        if re.search(rf"(?<![\w+#.]){re.escape(key)}(?![\w+#]|\.\w)", haystack):
+            added.append(term)
+            present.add(key)
+    if added:
+        log.info("pool_skills_recovered", count=len(added), skills=added[:12])
+    return skills + added
+
+
 def apply_to_row(job: AllJobs, parsed: JDParsed) -> None:
     """Copy parsed fields onto the AllJobs row in-place (no I/O).
 
