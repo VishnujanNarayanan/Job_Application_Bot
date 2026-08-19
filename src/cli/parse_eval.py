@@ -27,7 +27,7 @@ import time
 from collections import defaultdict
 
 import structlog
-from pydantic import Field
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from src.llm.client import provider_config
@@ -55,19 +55,26 @@ def _max_skill_chars() -> int | None:
     return items.get("maxLength")
 
 
-class _UnboundedJDParsed(JDParsed):
-    """`JDParsed` before the skill-length bound, for measuring against it.
+class _RawJDParsed(BaseModel):
+    """The pre-fix contract: strings in, nothing cleaned.
 
-    Kept here rather than in `schemas.py` so nothing in the pipeline can reach
-    for it by accident: its only purpose is to reproduce the old behaviour on
-    the same listings, so the bound's effect is measured rather than asserted.
+    Deliberately NOT a subclass of `JDParsed`. Subclassing and re-declaring the
+    fields looked like it disabled the bound, but Pydantic keeps inherited
+    field validators — so the first "baseline" still ran the splitting and
+    rejection it was supposed to measure against, and the comparison was
+    meaningless. Only a standalone model actually reproduces the old behaviour.
     """
 
+    role_summary: str = ""
+    role_category: str = ""
+    role_level: str = "mid"
+    years_required: int = 0
     required_skills: list[str] = Field(default_factory=list)
     nice_to_have: list[str] = Field(default_factory=list)
+    responsibilities: list[str] = Field(default_factory=list)
 
 
-def _parse_unbounded(job: AllJobs, cfg) -> JDParsed:
+def _parse_unbounded(job: AllJobs, cfg):
     """One parse with the pre-fix schema and the provider's default sampling."""
     from src.llm.client import get_client
 
@@ -77,13 +84,20 @@ def _parse_unbounded(job: AllJobs, cfg) -> JDParsed:
             {"role": "system", "content": jd_parse_system()},
             {"role": "user", "content": jd_parse_prompt(job, provider_cfg=cfg)},
         ],
-        response_model=_UnboundedJDParsed,
+        response_model=_RawJDParsed,
         max_retries=0,
     )
 
 
 def run_variant(variant: str, limit: int, *, baseline: bool = False) -> None:
-    """Parse the newest ``limit`` listings and record each attempt."""
+    """Parse the newest ``limit`` listings and record each attempt.
+
+    One session per row, deliberately. Holding a single transaction across the
+    loop meant it stayed open for the duration of every LLM call, and on
+    2026-08-19 a 630-second parse tripped Neon's idle-in-transaction timeout
+    and killed the run four listings in. A parse is slow and a write is fast;
+    they do not belong in the same transaction.
+    """
     cfg = provider_config("primary")
     temperature = None if baseline else cfg.get("temperature")
     bound = None if baseline else _max_skill_chars()
@@ -95,30 +109,35 @@ def run_variant(variant: str, limit: int, *, baseline: bool = False) -> None:
             .order_by(AllJobs.scraped_at.desc())
             .limit(limit)
         ).all()
+        # Detach: the parse happens outside any transaction.
+        listings = [(j.job_id, j.company, j.role, j.location, j.site, j.jd_text) for j in jobs]
 
-        print(f"variant={variant}  provider={cfg.provider}  model={cfg.model}  "
-              f"temperature={temperature}  max_skill_chars={bound}")
-        print(f"{'job':34} {'jd':>6} {'time':>7} {'skills':>7} {'dropped':>8} {'longest':>8}")
-        print("-" * 80)
+    print(f"variant={variant}  provider={cfg.provider}  model={cfg.model}  "
+          f"temperature={temperature}  max_skill_chars={bound}")
+    print(f"{'job':34} {'jd':>6} {'time':>7} {'skills':>7} {'dropped':>8} {'longest':>8}")
+    print("-" * 80)
 
-        for job in jobs:
-            prompt = jd_parse_prompt(job, provider_cfg=cfg)
-            started = time.time()
-            parsed: JDParsed | None = None
-            error: str | None = None
-            with collect_skill_rejections() as rejections:
-                try:
-                    parsed = _parse_unbounded(job, cfg) if baseline else parse(job)
-                except Exception as exc:  # noqa: BLE001 - recorded, not handled
-                    error = f"{type(exc).__name__}: {exc}"
-            elapsed_ms = int((time.time() - started) * 1000)
+    for job_id, company, role, location, site, jd_text in listings:
+        job = AllJobs(job_id=job_id, company=company, role=role, site=site,
+                      location=location, jd_text=jd_text)
+        prompt = jd_parse_prompt(job, provider_cfg=cfg)
+        started = time.time()
+        parsed = None
+        error: str | None = None
+        with collect_skill_rejections() as rejections:
+            try:
+                parsed = _parse_unbounded(job, cfg) if baseline else parse(job)
+            except Exception as exc:  # noqa: BLE001 - recorded, not handled
+                error = f"{type(exc).__name__}: {exc}"
+        elapsed_ms = int((time.time() - started) * 1000)
 
-            skills = list(parsed.required_skills) + list(parsed.nice_to_have) if parsed else []
-            longest = max((len(s) for s in skills), default=0)
+        skills = list(parsed.required_skills) + list(parsed.nice_to_have) if parsed else []
+        longest = max((len(s) for s in skills), default=0)
 
+        with session_scope() as session:
             session.add(
                 ParseEval(
-                    job_id=job.job_id,
+                    job_id=job_id,
                     variant=variant,
                     provider=str(cfg.provider),
                     model=str(cfg.model),
@@ -126,21 +145,20 @@ def run_variant(variant: str, limit: int, *, baseline: bool = False) -> None:
                     max_skill_chars=bound,
                     prompt_sent=prompt,
                     prompt_chars=len(prompt),
-                    jd_chars=len(job.jd_text or ""),
+                    jd_chars=len(jd_text or ""),
                     output_json=parsed.model_dump() if parsed else None,
                     rejections=list(rejections) or None,
                     error=error,
                     latency_ms=elapsed_ms,
                 )
             )
-            session.flush()
 
-            label = f"{job.company[:16]} {job.role[:16]}"
-            print(f"{label:34} {len(job.jd_text or ''):>6} "
-                  f"{elapsed_ms/1000:>6.1f}s {len(skills):>7} {len(rejections):>8} {longest:>8}"
-                  + ("  ERROR" if error else ""))
-            if error:
-                print(f"    {error[:100]}")
+        label = f"{company[:16]} {role[:16]}"
+        print(f"{label:34} {len(jd_text or ''):>6} "
+              f"{elapsed_ms/1000:>6.1f}s {len(skills):>7} {len(rejections):>8} {longest:>8}"
+              + ("  ERROR" if error else ""))
+        if error:
+            print(f"    {error[:110]}")
 
 
 def compare(variants: list[str]) -> None:

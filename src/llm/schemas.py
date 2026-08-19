@@ -26,22 +26,10 @@ from pydantic import (
     model_validator,
 )
 
-# Bound on one extracted skill, enforced by the JSON schema rather than asked
-# for in the prompt. Ollama compiles the schema into a decoding grammar, so a
-# sentence is *unrepresentable* in a skill slot — the model cannot disobey it
-# the way it ignored "never whole sentences".
-#
-# Measured 2026-08-19 on a JD where the unbounded schema returned 11 whole
-# bullet lines and none of the 18 technologies the ad names: with the bound,
-# 26 entries, none over four words, 17 of the 18 found.
-#
-# 30, not 20: real skills reach into the twenties ("AI orchestration
-# frameworks", "distributed data processing"), and a tighter bound truncates
-# legitimate names rather than only catching prose.
-# Collector for discarded skills, so a run can be audited afterwards. Off by
-# default (None) — the pipeline pays nothing; the eval CLI switches it on.
 log = structlog.get_logger(__name__)
 
+# Collector for discarded skills, so a run can be audited afterwards. Off by
+# default (None) — the pipeline pays nothing; the eval CLI switches it on.
 _REJECTIONS: ContextVar[list[dict] | None] = ContextVar("skill_rejections", default=None)
 
 
@@ -56,7 +44,25 @@ def collect_skill_rejections() -> Iterator[list[dict]]:
         _REJECTIONS.reset(token)
 
 
-_MAX_SKILL_CHARS = 30
+# Bound on one extracted skill. Advertised in the JSON schema (Instructor
+# states it in the prompt) and made true by `_terms_only` below — Ollama does
+# NOT enforce `maxLength` in its decoding grammar, measured 2026-08-19.
+#
+# 40, raised from an initial 30 that was picked off one sample. Recording what
+# the bound discarded, over 8 real ads, showed 30 was cutting through real
+# skills rather than prose:
+#
+#   31  machine learning (ML) lifecycle
+#   32  Docker Certified Associate (DCA)          <- a real certification
+#   32  Kubernetes Application Developer          <- a real certification
+#   36  NLU (Natural Language Understanding)
+#   ---- 40 ----
+#   44  Experience integrating with third-party APIs   <- prose
+#   49  confidence calibration for autonomous decisioning
+#
+# The genuine prose starts in the mid-forties, so the cut belongs there. Raise
+# it again if `parse_eval.rejections` shows real skills still being lost.
+_MAX_SKILL_CHARS = 40
 
 SkillTerm = Annotated[str, StringConstraints(max_length=_MAX_SKILL_CHARS)]
 

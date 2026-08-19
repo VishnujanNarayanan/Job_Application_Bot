@@ -41,6 +41,14 @@ and this project loosely tracks iterations rather than semver.
   precedes splitting it would take every technology in that bullet with it
 - Layer 3: `nice_to_have` drops what `required_skills` already names — on one
   JD all 11 nice-to-haves were duplicates, doubling those JD query vectors
+- Layer 3: the skill length bound is 40 characters, raised from 30 after the
+  recorded rejections showed 30 cutting through real skills — "Docker
+  Certified Associate (DCA)" and "Kubernetes Application Developer" are
+  certifications, and genuine prose does not start until the mid-forties
+- Layer 3: the local provider gives up after 180s rather than 600s. One 7.5k
+  ad hung Ollama for the full ceiling and, with the fallbacks behind it, cost a
+  single job 630 seconds; a parse that has not finished in 180s is stuck, and
+  the chain has a hosted fallback so giving up early is cheap
 - Layer 3: the LLM is sampled at `temperature: 0` where the provider supports
   it — extraction has one right answer, and dropping from the model default
   cut a parse from 7.0s to 2.6s while finding one more technology
