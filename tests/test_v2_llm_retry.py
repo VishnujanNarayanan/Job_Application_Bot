@@ -372,10 +372,14 @@ def test_clients_are_cached_per_provider():
         def __init__(self, **kwargs):
             built.append(kwargs["base_url"])
 
-    # Only providers reached over the OpenAI transport build an OpenAI client.
+    # Every provider now shares the OpenAI transport, so the old
+    # `api != "ollama"` filter here selected nothing. What must still be
+    # excluded is any provider whose base_url never got its ${VAR} expanded:
+    # .env supplies OLLAMA_BASE_URL locally but CI has no .env, so on a runner
+    # that entry is unusable and get_client rejects it by design.
     hosted = [
         (which, cfg) for which, cfg in llm_client.provider_chain()
-        if str(cfg.get("api", "openai")) != "ollama"
+        if "${" not in str(cfg.base_url)
     ]
     keys = {str(cfg.api_key_env): f"k{i}" for i, (_, cfg) in enumerate(hosted)}
 

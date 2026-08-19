@@ -7,6 +7,126 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [v2.0.2] — 2026-08-19
+
+### Fixed
+
+- Layer 3: the Groq fallback calls `openai/gpt-oss-120b` — `llama-3.3-70b-versatile`
+  was retired and 404'd every request, so with the local model unreachable and
+  Gemini over its spend cap, every job failed to parse and the run produced
+  nothing
+- Layer 3: a schema mistake by the local model is reasked (`llm.validation_reask`)
+  instead of falling straight through to a hosted provider — `max_attempts: 1`
+  treated "answered with an invalid field" the same as "laptop unreachable",
+  and re-sending an identical prompt does not fix a validation error anyway
+- Layer 3: the local model is `qwen2.5:3b-instruct`, replacing the 7B, which
+  overflowed a 6 GB GPU by ~1 GB and ran the remainder on a CPU already
+  contended with WSL — 92-250s per parse, and it froze the machine. The 3B
+  fits VRAM whole: 6.6s per parse, no spill. Trade-off is a rougher read of
+  `years_required`, which feeds 30% of the final score
+- Layer 3: an over-long skill is split into the terms it names rather than
+  rejected — "Experience with Docker, Kubernetes, CI/CD pipelines, and MLOps
+  practices" becomes four skills. On a JD where the model returned 11 whole
+  bullet lines and none of the 18 technologies named, all 18 are recovered
+- Layer 3: skill lead-ins and generic tails are stripped, so "Strong
+  programming skills in Python" yields `Python` (it previously exceeded the
+  length bound and was dropped, losing Python from an ML ad) and "CI/CD
+  pipelines" / "AWS services" / "RAG architectures" yield the bare terms
+- Layer 3: requirement boilerplate is rejected before splitting, so a degree
+  line no longer becomes the fake skills "Engineering", "Data Science", "AI".
+  The degree words require context — a bare "master" or "degree" would reject
+  "Master Data Management" and "degree of parallelism", and because the test
+  precedes splitting it would take every technology in that bullet with it
+- Layer 3: `nice_to_have` drops what `required_skills` already names — on one
+  JD all 11 nice-to-haves were duplicates, doubling those JD query vectors
+- Layer 3: a skill is bounded at 40 characters, a figure taken from the
+  recorded rejections rather than guessed — at 30 the bound cut through real
+  certifications ("Docker Certified Associate", "Kubernetes Application
+  Developer") and genuine prose does not start until the mid-forties
+- Layer 3: the local provider gives up after 180s rather than 600s. One 7.5k
+  ad hung Ollama for the full ceiling and, with the fallbacks behind it, cost a
+  single job 630 seconds; a parse that has not finished in 180s is stuck, and
+  the chain has a hosted fallback so giving up early is cheap
+- Layer 3: the LLM is sampled at `temperature: 0.6`, chosen by sweeping recall
+  against a hand-checked answer key (`python -m src.cli.temp_sweep`) rather
+  than by how tidy the output looked. Over 30 technologies from two real ads:
+  0 → 67%, 0.4 → 76%, the model default → 77%, 0.6 → 87%. Both extremes lose —
+  at 0 the model writes the category and drops the "(LoRA, QLoRA, SFT, DPO)"
+  the ad spelled out
+- Layer 3: a parenthesis is split as its own list instead of being cut through,
+  so "(DeepSpeed, FSDP)" no longer truncates to "…frameworks (DeepSpeed"; the
+  head and the bracketed contents are both kept, which also brings long
+  certification names inside the length bound
+- Layer 3: the skill filter no longer drops entries on length, which deleted
+  the blobs that at least contained the technology names while keeping the
+  boilerplate; the schema bound replaced it, and the filter now only rejects
+  short non-skills (degrees, years-of-experience, "Equal Opportunity Employer")
+
+
+### Added
+
+- Layer 3: `skill_vocabulary` — a technology vocabulary learned from the corpus
+  of already-parsed ads, scanned against every JD so a technology outside the
+  operator's pool is not lost when the model omits it. Recurrence is the
+  filter: a term must have been extracted from 5+ distinct listings, since a
+  hallucination does not recur across unrelated ads. Over 767 jobs that keeps
+  237 terms and discards 4,340 one-off strings. Build with
+  `python -m src.cli.vocabulary --rebuild`
+- Layer 3: a pool skill the JD names outright is added to `required_skills`
+  whatever the model returned. The model under-reports — on one ad it returned
+  "experience working with LLMs" and dropped the "(e.g., GPT-3/4, Claude,
+  Mistral)" that followed, on another it extracted Java and missed Python from
+  a Python job. Only exact word-boundary matches are added, so this can never
+  introduce something the ad does not say
+- Layer 3: `parse_eval` table and `python -m src.cli.parse_eval` record the
+  prompt as sent and the object as returned for every parse, so a parser change
+  can be compared over the same listings instead of judged from a handful of
+  parses read off the terminal
+
+## [v2.0.1] — 2026-08-09
+
+### Fixed
+
+- Layer 3: the local model no longer omits `required_skills`, `nice_to_have` and
+  `responsibilities` — it dropped them from 71% of real JDs, zeroing the skill
+  component of `fit` (0.165 of the final score)
+- Layer 3: a null `role_level` is read as unknown instead of throwing the whole
+  call away — Groq rejects the tool call server-side, wasting a full call
+  against a daily token cap
+- Layer 4: a listing with no `posted_at` is dated from `scraped_at` plus half
+  the scrape window, instead of scoring as older than every band. LinkedIn
+  supplies a posting date on 1 of 472 listings and is the only enabled source,
+  so nearly every job was paying the maximum age penalty
+- Layer 4: with no timestamp of any kind, recency scores neutral (`unknown`,
+  0.65) rather than worst — an absent measurement is not a stale posting
+- Layer 7: `not_applied` rows record `fit`/`success_prob`/`recency`/`final`;
+  all 693 existing rows have NULL scores because the result was discarded
+- Layer 7: company-cooldown and disallowed-location rejections are persisted
+  instead of dropped for not yet existing in `all_jobs` — neither reason had
+  ever been recorded, across 693 rows
+- Layer 3: a provider whose `base_url` still holds an unexpanded `${VAR}` fails
+  once per run with the missing variable named, instead of one httpx traceback
+  per job (25 in the 2026-08-09 Actions run)
+
+### Changed
+
+- Layer 3: Ollama goes through Instructor + `Mode.JSON_SCHEMA` on the shared
+  OpenAI transport; the bespoke `/api/chat` client is removed. Ollama 0.32.6's
+  `/v1` does honour `response_format: json_schema`, correcting the earlier note
+  that it was ignored — and Instructor also states the schema in the prompt,
+  which is what stops fields being skipped
+- Layer 3: the parse prompt asks for the three list fields explicitly and
+  demands exhaustive skill extraction; they previously had no instruction at
+  all, while every scalar field did
+- Config: `llm.instructor_mode` is `JSON_SCHEMA`; `llm.api` removed
+- Config: added `scoring.recency_score.unknown`
+
+### Added
+
+- `AUDIT_2026-08-09.md` — full data-flow audit with measurements
+- Tests: verdict recording (scores persisted, pre-filter rejections kept) and
+  recency inference from `scraped_at`
+
 ## [v2.0.0] — 2026-08-09
 
 ### Added

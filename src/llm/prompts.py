@@ -53,11 +53,20 @@ def clip_jd_text(
     # `text[-0:]` is the WHOLE string, not the empty one — guard tail == 0.
     return text[:head] + _ELISION + (text[-tail:] if tail else "")
 
+# "When a field is not stated, return null (or an empty list)" used to end this
+# instruction. On a 7B model under constrained decoding that read as blanket
+# permission: measured 2026-08-09, qwen2.5:7b OMITTED required_skills,
+# nice_to_have and responsibilities from the JSON entirely on 71% of real JDs
+# (17/24), independent of description length. The escape hatch is still here —
+# a JD that names no skills must be able to say so — but it is now scoped to
+# "genuinely names nothing" rather than offered as the easy default.
 _PARSE_SYSTEM = (
     "You extract structured data from a job description. Use ONLY information "
     "present in the description — never infer, embellish, or invent skills, "
-    "salaries, or URLs. When a field is not stated, return null (or an empty "
-    "list). Skills must be copied as they appear in the text."
+    "salaries, or URLs. Skills must be copied as they appear in the text. "
+    "Return EVERY field of the schema: use null for a scalar the description "
+    "does not state, and an empty list only when the description genuinely "
+    "names nothing for that list."
 )
 
 
@@ -85,7 +94,29 @@ def jd_parse_prompt(job: AllJobs, provider_cfg=None) -> str:
         "years_required give the minimum years demanded (0 if none stated). "
         "Salary only if explicitly stated; convert annual figures to LPA "
         "(lakhs per annum). apply_url only if a literal URL appears in the "
-        "description."
+        "description.\n\n"
+        # These three had NO instruction here at all, while every scalar did —
+        # and they are the ones that feed scoring (required_skills and
+        # nice_to_have become the JD skill vectors; responsibilities is half of
+        # the bullet-matching vector). A 7B model handed an optional schema slot
+        # and no instruction simply skipped them. Naming them explicitly, and
+        # saying what SHAPE they take, is half the fix; the wire-schema
+        # constraint in the Ollama path is the other half.
+        # Exhaustive on purpose. Each extracted skill becomes its own query
+        # vector, and a pool skill is scored against the BEST individual JD
+        # skill — so an extra skill can only ever add a chance to match, never
+        # dilute an existing one. Under-extraction silently costs matches;
+        # over-extraction costs nothing, and `grounded_skills` drops anything
+        # not actually in the text.
+        "For required_skills, list EVERY must-have technology, tool, language, "
+        "framework, platform, database, cloud service, methodology or technique "
+        "named anywhere in the description — be exhaustive rather than "
+        "selective, and do not stop at the first few or summarise. Copy each "
+        "verbatim as a SHORT term (e.g. \"Python\", \"AWS\", \"Kubernetes\") — "
+        "never whole sentences. For nice_to_have do the same, just as "
+        "exhaustively, for items the description marks as preferred, desirable, "
+        "a bonus, or a plus. For responsibilities list every distinct duty as a "
+        "short phrase. Do not omit these three lists."
     )
 
 

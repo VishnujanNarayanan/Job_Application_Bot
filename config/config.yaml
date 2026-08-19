@@ -167,7 +167,18 @@ selection:
   experience:
     weight_alias: 0.30    # best title alias cosine score contribution
     weight_bullets: 0.70  # top-3 bullet avg cosine score contribution
-    threshold: 0.45
+    # CALIBRATED, not chosen. 0.45 was set as if a good cosine ran near 1.0.
+    # Measured over 60 real JDs on 2026-08-19, the BEST-matching experience
+    # this profile can produce scored 0.416 and the 3rd-place one peaked at
+    # 0.395 — so nothing ever cleared 0.45, and 84 of 85 stored selections
+    # were the force-include minimum of exactly 2. The threshold was inert.
+    #
+    # all-MiniLM-L6-v2 cosine between a JD facet and a resume bullet lives in
+    # roughly 0.2-0.45; the bar has to sit inside that band to mean anything.
+    # 0.332 is the 75th percentile of the 3rd-place score, so a third
+    # experience appears on about the top quarter of jobs and stays a signal
+    # of genuine fit rather than padding every resume to 3.
+    threshold: 0.332
     max_shown: 3
     min_shown: 2
     bullets_per_experience: 3   # exactly 3 bullets shown per experience
@@ -178,7 +189,10 @@ selection:
   project:
     weight_name: 0.20     # project name cosine score contribution
     weight_bullets: 0.80  # topN bullet avg contribution (N = bullets shown)
-    threshold: 0.50
+    # Same calibration as experience above, same measurement run: the 3rd-place
+    # project peaked at 0.383 against a 0.50 bar, so the projects section was
+    # always exactly 2. 0.344 is the 75th percentile of the 3rd-place score.
+    threshold: 0.344
     max_shown: 3
     min_shown: 2
     bullet_threshold: 0.40  # individual bullet floor; 2 force-included if fewer pass
@@ -326,6 +340,14 @@ scoring:
     success_prob: 0.30
     recency: 0.10
     project: 0.05
+  # How many DISTINCT job ads a term must appear in before it joins the
+  # technology vocabulary that Layer 3 scans each JD against. Recurrence is
+  # what separates a technology from a hallucination: an invented skill does
+  # not turn up in five unrelated listings. Measured over 767 parsed jobs,
+  # 5 keeps 228 terms (Python 276 ads, LangChain 25, FastAPI 18) and discards
+  # the 4,349 one-off strings.
+  vocabulary_min_jobs: 5
+
   # Jobs below this threshold are not applied to (reason: LOW_SCORE).
   apply_threshold: 0.50
 
@@ -368,8 +390,21 @@ scoring:
         score: 0.60
       - under_hours: 72
         score: 0.40
-    # Older than the last band, or no posting timestamp at all.
+    # Measured, and older than every band above.
+    #
+    # This no longer covers "no timestamp". Most portals give none — LinkedIn
+    # supplied date_posted on 1 of 472 listings (2026-08-09) and is currently
+    # the only enabled source — so treating a missing timestamp as "older than
+    # everything" was charging almost every job the maximum age penalty. An
+    # undated listing is now dated from `scraped_at` plus half the scrape
+    # window, which is sound because JobSpy only returns postings younger than
+    # `scraper.hours_old`.
     default: 0.30
+    # No timestamp of ANY kind — neither posted_at nor scraped_at. Nothing is
+    # inferred here; the job scores neutral rather than worst, because an
+    # absent measurement is not a stale posting. Remove this key to derive the
+    # midpoint from the bands instead.
+    unknown: 0.65
 
 # ---------------------------------------------------------------------------
 # Resume builder — Layer 5
@@ -467,19 +502,61 @@ llm:
   provider: "ollama"
   base_url: "${OLLAMA_BASE_URL}"
   api_key_env: "OLLAMA_API_KEY"
-  model: "qwen2.5:7b-instruct"
-  api: "ollama"
+  # 3b, not 7b. The 7B is 5.12 GB against a 6141 MiB RTX 4050 that already
+  # holds the desktop: only 4.19 GB fit, so ~18% of its layers ran on the CPU.
+  # That cost 92-250s per parse AND froze the laptop on 2026-08-19, because the
+  # spilled layers fight WSL (which takes half of system RAM by default) for
+  # what is left. The 3B fits VRAM whole, so nothing spills.
+  model: "qwen2.5:3b-instruct"
   # One attempt: a local model is either reachable or it is not. On a GitHub
   # Actions runner this laptop is unreachable, and five backoffs per job spent
   # rediscovering that would dwarf the run.
   max_attempts: 1
+  # Reask budget for schema mistakes, which `max_attempts` cannot fix — it
+  # re-sends the same prompt, where a reask tells the model what it got wrong.
+  # qwen2.5:7b answers `job_type: hybrid` (a location_type value) often enough
+  # to matter, and one corrective reask is local, free and ~30s.
+  validation_reask: 2
   jd_text:
     head_chars: 100000
     tail_chars: 0
   # Instructor strategy. TOOLS works on providers with function calling (Groq,
   # Cerebras, OpenAI); JSON_SCHEMA where native schema enforcement exists; JSON
   # is the lowest common denominator. Verify with llm_check after changing it.
-  instructor_mode: "JSON"   # unused on the native path
+  # JSON_SCHEMA, not JSON. Ollama 0.32.6's /v1 honours
+  # `response_format: {"type": "json_schema", ...}` — re-measured 2026-08-09,
+  # correcting an earlier note that said it was ignored — so generation is
+  # grammar-constrained AND Instructor states the schema in the prompt.
+  #
+  # That second half is what fixed extraction. Handed only a grammar in which
+  # required_skills was optional, qwen2.5:7b omitted it (plus nice_to_have and
+  # responsibilities) on 71% of real JDs, which zeroed the skill component of
+  # `fit` — 0.165 of the final score. Told in the prompt that the fields exist,
+  # the same model populated 5 of 5.
+  instructor_mode: "JSON_SCHEMA"
+  # 0.6, chosen by sweeping recall against a hand-checked answer key rather
+  # than by how tidy the output looks (python -m src.cli.temp_sweep).
+  # Over 30 technologies read off two real ads, 3 runs each:
+  #
+  #     0     67%      0.4   76%      0.6   87%      default  77%
+  #     0.2   67%      0.5   87%
+  #
+  # Both extremes lose. At 0 the model writes the category and stops — it
+  # found none of "(LoRA, QLoRA, SFT, DPO)" while higher settings found them —
+  # and the earlier claim that 0 was faster AND better came from a single ad on
+  # a simplified schema. The model's own default is noisier without being more
+  # complete. 0.6 was also the fastest of the three.
+  #
+  # Recall is the right target, not tidiness: Layer 4 scores each pool skill
+  # against the BEST single JD skill, so a spurious skill never matches and
+  # costs nothing, while a missing one silently costs a match.
+  temperature: 0.6
+  # 180, not 600. A generous ceiling was meant to accommodate a slow local
+  # model, but it converts an occasional hang into a stalled run: on
+  # 2026-08-19 one 7.5k-char ad hung Ollama for the full 600s, then fell
+  # through the chain, and that single job took 630s. A parse that has not
+  # finished in 180s is not slow, it is stuck — and the chain has a hosted
+  # fallback precisely so giving up early is cheap.
   request_timeout_seconds: 180
   max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
 
@@ -524,13 +601,20 @@ llm:
   # switch on without affecting a single run.
   fallbacks:
     # Groq — the hosted safety net, and the ONLY provider a remote run can
-    # reach. Verified live: llama-3.3-70b-versatile, TOOLS mode, 1.6s.
-    # Free tier: 1,000 requests/day and 100,000 tokens/day.
+    # reach. Free tier: 1,000 requests/day and 100,000 tokens/day.
+    #
+    # llama-3.3-70b-versatile was retired and 404'd every request on
+    # 2026-08-19, taking a whole run down exactly as the retired Gemini model
+    # did on 2026-08-08. Re-measured the live catalogue that day; of what the
+    # key can actually call, gpt-oss-120b was the strongest that parses a JD
+    # correctly (4/4 skills, years and level right) in TOOLS mode, 1.9s.
+    # gpt-oss-20b also passes at 1.0s if this one is ever retired too;
+    # qwen3.6-27b needs JSON_SCHEMA — it 400s in TOOLS mode.
     - enabled: true
       provider: "groq"
       base_url: "https://api.groq.com/openai/v1"
       api_key_env: "GROQ_API_KEY"
-      model: "llama-3.3-70b-versatile"
+      model: "openai/gpt-oss-120b"
       instructor_mode: "TOOLS"
       request_timeout_seconds: 60
 

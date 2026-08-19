@@ -33,7 +33,8 @@ from functools import lru_cache
 from typing import TypeVar
 
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
 
 from src.config import Section, settings
 
@@ -44,6 +45,17 @@ T = TypeVar("T", bound=BaseModel)
 
 class LLMError(RuntimeError):
     """Raised when a call fails after exhausting retries."""
+
+
+class LLMConfigError(LLMError):
+    """A provider is misconfigured — it cannot serve ANY call this run.
+
+    Separate from a failed call because it is a property of the process, not
+    of the request: an unset ``${OLLAMA_BASE_URL}`` is exactly as broken on job
+    25 as on job 1. The chain remembers it (see ``_DEAD_PROVIDERS``) and skips
+    the provider for the rest of the run instead of rediscovering it per job —
+    the 2026-08-09 Actions run logged the same traceback 25 times.
+    """
 
 
 class LLMBudgetError(LLMError):
@@ -284,6 +296,14 @@ def _api_key(cfg, which: str) -> str:
 # and the fallback can both be live in one run.
 _CLIENTS: dict[str, object] = {}
 
+# `${VAR}` left intact by src.config._expand_env — i.e. the variable is unset.
+_UNEXPANDED_ENV = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+
+# Providers found structurally unusable this run: {which: reason}. Populated by
+# LLMConfigError and never retried, so a misconfigured provider costs one log
+# line per run instead of one per job.
+_DEAD_PROVIDERS: dict[str, str] = {}
+
 
 def get_client(which: str = "primary"):
     """Build and cache the Instructor-wrapped chat client for one provider.
@@ -296,22 +316,27 @@ def get_client(which: str = "primary"):
 
     cfg = provider_config(which)
 
-    if str(cfg.get("api", "openai")) == "ollama":
-        native = _OllamaNativeClient(cfg)
-        _CLIENTS[which] = native
-        log.info(
-            "llm_client_built", which=which, provider=str(cfg.provider),
-            model=str(cfg.model), base_url=str(cfg.base_url), api="ollama",
-        )
-        return native
-
     import instructor
     from openai import OpenAI
+
+    base_url = str(cfg.base_url)
+    # A `${VAR}` that survived expansion means the variable is unset. Catch it
+    # here, where the provider and the missing name can both be named, instead
+    # of letting httpx raise "Request URL is missing an 'http://' protocol"
+    # once per job. On the GitHub Actions run of 2026-08-09 that produced 25
+    # identical tracebacks and sent every parse to Groq, which then exhausted
+    # its daily token budget mid-run.
+    if _UNEXPANDED_ENV.search(base_url):
+        missing = ", ".join(_UNEXPANDED_ENV.findall(base_url))
+        raise LLMConfigError(
+            f"{cfg.provider}: base_url still contains {base_url!r} — "
+            f"environment variable(s) not set: {missing}"
+        )
 
     mode = getattr(instructor.Mode, str(cfg.instructor_mode))
     client = OpenAI(
         api_key=_api_key(cfg, which),
-        base_url=str(cfg.base_url),
+        base_url=base_url,
         timeout=float(cfg.get("request_timeout_seconds", 60)),
         max_retries=0,   # retries and backoff are handled below, not by the SDK
     )
@@ -330,70 +355,67 @@ def get_client(which: str = "primary"):
 def reset_clients() -> None:
     """Drop cached clients (tests, and after a config change)."""
     _CLIENTS.clear()
+    _DEAD_PROVIDERS.clear()
 
 
-class _OllamaNativeClient:
-    """Ollama's own API behind Instructor's call shape.
+# The bespoke Ollama transport that used to live here is gone. It existed
+# because /v1 was measured as ignoring `response_format`, so Instructor's
+# JSON_SCHEMA mode "changed nothing" — that is no longer true (and may have
+# been an artefact of an older Ollama). Re-measured 2026-08-09 against Ollama
+# 0.32.6: /v1 honours `response_format: {"type": "json_schema", ...}`,
+# respecting both `required` and `minItems`, so every provider now shares one
+# OpenAI-compatible transport and Instructor owns validation.
+#
+# Dropping it also fixed the extraction bug. The native path sent the raw
+# schema and nothing else, and a 7B model omitted required_skills,
+# nice_to_have and responsibilities on 71% of real JDs because the schema made
+# them optional. Instructor's JSON_SCHEMA mode also states the schema in the
+# prompt, so the model is told the fields exist rather than left to infer it
+# from a grammar: 5/5 populated on the same JDs.
 
-    Presents ``client.chat.completions.create(...)`` so every provider is
-    reached through the single seam :func:`get_client`. That is not cosmetic:
-    the whole test suite patches ``get_client``, and a transport that bypassed
-    it made real HTTP calls to a local model during unit tests — one of them
-    answered a test's one-character prompt in Chinese.
+
+def _reask_policy(cfg):
+    """Instructor's reask budget for THIS provider — validation errors only.
+
+    Instructor's reask re-sends the request with the validation error appended,
+    so the model is told what it got wrong. That is the only retry that helps a
+    schema mistake: `max_attempts` above re-sends the identical prompt, which a
+    model that just answered wrongly will usually answer wrongly again.
+
+    Measured 2026-08-19: qwen2.5:7b put `hybrid` (a location_type value) into
+    `job_type`, and with `max_attempts: 1` the run abandoned a healthy local
+    model on its first slip and fell through to a hosted provider.
+
+    Scoped to ValidationError on purpose. Handing Instructor a plain integer
+    would also retry connection failures, and the local provider's whole reason
+    for `max_attempts: 1` is that an unreachable laptop must fail FAST — three
+    reasks against a 180s timeout would cost nine minutes per job.
     """
-
-    def __init__(self, cfg) -> None:
-        self._cfg = cfg
-        self.chat = self          # chat.completions.create resolves to self
-        self.completions = self
-
-    def create(self, *, model, messages, response_model, **_ignored):
-        return _complete_native_ollama(
-            self._cfg, response_model, messages, model=model
-        )
-
-
-def _complete_native_ollama(cfg, response_model: type[T], messages, model=None) -> T:
-    """One call through Ollama's own API, with generation CONSTRAINED.
-
-    Ollama compiles a JSON schema into a decoding grammar, so a value outside
-    an enum cannot be emitted at all. That is a stronger guarantee than
-    validate-then-reask: there is nothing to reask about.
-
-    It matters most on small models. qwen2.5:7b kept answering "hybrid" for
-    ``job_type`` — a location answer to an employment question — and every
-    rejection cost a full retry. Measured 2026-08-09 on the real JDParsed
-    schema:
-
-        OpenAI-compatible /v1 shim   9-22s, 0-1 reask retries per call
-        native /api/chat + format    ~6s,   5/5 valid, no retries
-
-    The /v1 shim is not an option here: it ignores ``response_format``, so
-    Instructor's JSON_SCHEMA mode changes nothing (also measured). Hence the
-    dedicated path.
-
-    Pydantic still validates at the boundary, so the schema remains the
-    contract — this parses a constrained response, it does not hand-parse a
-    free-form one.
-    """
-    import httpx
-
-    root = str(cfg.base_url).rstrip("/")
-    if root.endswith("/v1"):
-        root = root[: -len("/v1")].rstrip("/")
-
-    response = httpx.post(
-        f"{root}/api/chat",
-        timeout=float(cfg.get("request_timeout_seconds", 180)),
-        json={
-            "model": str(model or cfg.model),
-            "messages": messages,
-            "stream": False,
-            "format": response_model.model_json_schema(),
-        },
+    reasks = int(cfg.get("validation_reask", 0) or 0)
+    if reasks <= 0:
+        return 0
+    return Retrying(
+        stop=stop_after_attempt(reasks + 1),
+        retry=retry_if_exception_type(ValidationError),
+        reraise=True,
     )
-    response.raise_for_status()
-    return response_model.model_validate_json(response.json()["message"]["content"])
+
+
+def _sampling(cfg) -> dict:
+    """Per-provider sampling knobs, omitted entirely when unset.
+
+    Parsing a job ad has one right answer, so the default creative sampling
+    temperature is wrong for it. Measured 2026-08-19 on qwen2.5:3b: dropping
+    to 0 cut a parse from 7.0s to 2.6s AND found one more technology — it is
+    not a speed/accuracy trade, it is better on both axes.
+
+    Omitted-when-unset on purpose. `temperature` is not universally accepted
+    (Anthropic's own 4.7+ models reject it outright), so a provider that
+    cannot take it simply leaves the key out of its config block rather than
+    needing a code change here.
+    """
+    temperature = cfg.get("temperature")
+    return {} if temperature is None else {"temperature": float(temperature)}
 
 
 def _call_once(which: str, cfg, response_model: type[T], messages) -> T:
@@ -402,7 +424,8 @@ def _call_once(which: str, cfg, response_model: type[T], messages) -> T:
         model=str(cfg.model),
         messages=messages,
         response_model=response_model,
-        max_retries=0,   # Instructor's own reask loop stays off
+        max_retries=_reask_policy(cfg),
+        **_sampling(cfg),
     )
 
 
@@ -410,6 +433,12 @@ def _complete_with(
     which: str, response_model: type[T], messages: list[dict[str, str]]
 ) -> T:
     """Run one provider's attempt sequence. Raises on give-up."""
+    # Already proved unusable this run — don't rebuild the client, don't call,
+    # don't log another traceback. Just hand the chain the reason so it moves
+    # to the next provider immediately.
+    if which in _DEAD_PROVIDERS:
+        raise LLMConfigError(_DEAD_PROVIDERS[which])
+
     cfg = provider_config(which)
     backoff = settings.llm.backoff
     delay = float(backoff.initial_seconds)
@@ -425,6 +454,18 @@ def _complete_with(
     for attempt in range(1, attempts + 1):
         try:
             return _call_once(which, cfg, response_model, messages)
+        except LLMConfigError as exc:
+            # Misconfiguration, not a failed request. Retrying cannot fix it
+            # and neither can the next job, so record it once and retire the
+            # provider for the run.
+            _DEAD_PROVIDERS[which] = str(exc)
+            log.error(
+                "llm_provider_unusable",
+                which=which,
+                provider=str(cfg.provider),
+                error=str(exc),
+            )
+            raise
         except Exception as exc:  # noqa: BLE001 - many wrapped types; classify by text
             last_error = exc
 

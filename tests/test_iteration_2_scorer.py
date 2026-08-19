@@ -202,7 +202,46 @@ def test_recency_score_bands() -> None:
     assert recency_score(now - timedelta(hours=23), now) == 0.60
     assert recency_score(now - timedelta(hours=30), now) == 0.40
     assert recency_score(now - timedelta(days=5), now) == 0.30   # past every band
-    assert recency_score(None, now) == 0.30                      # unknown age
+
+
+def test_an_undated_listing_is_dated_from_when_it_was_scraped() -> None:
+    """No posted_at is the norm, not the exception — infer, don't punish.
+
+    LinkedIn gave a posting date on 1 of 472 listings and is currently the only
+    enabled source. Scoring those at `default` (0.30, "older than every band")
+    charged almost every job the maximum age penalty for its portal's missing
+    metadata: every job on the live run of 2026-08-09 reported recency 0.30,
+    and two would otherwise have crossed the threshold.
+
+    The scrape window makes the inference sound — JobSpy only returns postings
+    younger than `hours_old` — so an undated listing is treated as half a
+    window old at the moment it was seen.
+    """
+    now = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+
+    # Scraped just now through a 24h window → effective age 12h → the <24 band.
+    assert recency_score(None, now, scraped_at=now, window_hours=24) == 0.60
+    # A narrower window puts the same listing in the freshest band.
+    assert recency_score(None, now, scraped_at=now, window_hours=6) == 1.00
+
+    # Elapsed time still dominates: a row scraped six weeks ago is old, which
+    # is why backfilling stale listings must NOT resurrect them as fresh.
+    old = now - timedelta(days=42)
+    assert recency_score(None, now, scraped_at=old, window_hours=24) == 0.30
+
+
+def test_no_timestamp_at_all_scores_neutral_not_worst() -> None:
+    """Absence of evidence is not evidence of staleness.
+
+    With neither posted_at nor scraped_at there is nothing to infer, so the
+    job must not inherit `default` — that is the score for a listing MEASURED
+    to be older than every band, a verdict this job never earned.
+    """
+    now = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
+    unknown = recency_score(None, now)
+    assert unknown == 0.65
+    assert unknown > 0.30, "an unmeasured job must not be scored as the oldest"
+    assert unknown < 1.00, "nor as the freshest — it is neutral, not a bonus"
 
 
 def test_recency_discriminates_across_the_scrape_window() -> None:
