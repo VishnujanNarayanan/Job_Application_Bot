@@ -285,3 +285,72 @@ class RenderCache(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (Index("idx_render_cache_expiry", "expires_at"),)
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 evaluation — what the model was given and what it gave back.
+# Not pipeline state: nothing in a run reads this back. It exists so a change
+# to the parser can be compared over the same listings instead of judged from
+# a handful of parses read off the terminal.
+# ---------------------------------------------------------------------------
+
+
+class ParseEval(Base):
+    __tablename__ = "parse_eval"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    # Deliberately not a ForeignKey — an eval may cover a listing that was
+    # never persisted, and deleting job rows must not erase measurements.
+    job_id: Mapped[str] = mapped_column(Text, nullable=False)
+    variant: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    temperature: Mapped[float | None] = mapped_column(Float)
+    max_skill_chars: Mapped[int | None] = mapped_column(Integer)
+    # The prompt as sent, not the raw ad: clipping is per-provider and the
+    # instruction block changes as it is tuned, so re-deriving it later would
+    # compare against a prompt that no longer exists.
+    prompt_sent: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_chars: Mapped[int] = mapped_column(Integer, nullable=False)
+    jd_chars: Mapped[int] = mapped_column(Integer, nullable=False)
+    output_json: Mapped[Any | None] = mapped_column(JSONB)
+    # Every skill this parse discarded, with the rule that did it. Job ads vary
+    # enough that no rejection rule can be assumed safe; keeping the discards
+    # is what makes one auditable over a corpus.
+    rejections: Mapped[Any | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_parse_eval_variant_job", "variant", "job_id"),
+        Index("ix_parse_eval_created_at", "created_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 vocabulary — technology terms learned from the corpus of parsed JDs.
+# The model under-reports; the operator's own pool covers what affects the
+# match score, and this covers the rest (gap skills for Familiar With).
+# ---------------------------------------------------------------------------
+
+
+class SkillVocabulary(Base):
+    __tablename__ = "skill_vocabulary"
+
+    term_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    term: Mapped[str] = mapped_column(Text, nullable=False)
+    # Distinct jobs the term was extracted from — the signal separating a real
+    # technology from a hallucination, which does not recur across unrelated ads.
+    job_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Retire a bad entry by hand without deleting it, so a rebuild honours it.
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=sa_text("true")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (Index("ix_skill_vocabulary_active", "is_active", "job_count"),)

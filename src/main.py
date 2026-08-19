@@ -91,6 +91,7 @@ def _run(dry_run: bool, log) -> int:
         COMPANY_COOLDOWN,
         DUPLICATE,
         HARD_FILTER_LAYER_3,
+        JOB_TYPE_DISALLOWED,
         LOCATION_DISALLOWED,
         LOW_SCORE,
         PARSE_FAILURE,
@@ -187,11 +188,19 @@ def _run(dry_run: bool, log) -> int:
         cooldown_days = int(cfg.scraper.cooldown_days)
 
         passing: list[AllJobs] = []
-        not_applied_queue: list[tuple[AllJobs, str, str | None]] = []
+        # (job, reason, detail, scores) — `scores` is the SelectionResult when
+        # the job got far enough to be scored, so the rejection is recorded
+        # WITH the numbers that caused it. Every not_applied row written before
+        # today had NULL fit/success_prob/recency/final, which made the
+        # rejected population — the population you need to answer "why did
+        # nothing match?" — impossible to audit.
+        not_applied_queue: list[
+            tuple[AllJobs, str, str | None, SelectionResult | None]
+        ] = []
 
         for job in raw_jobs:
             if job.job_id in existing_ids:
-                not_applied_queue.append((job, DUPLICATE, None))
+                not_applied_queue.append((job, DUPLICATE, None, None))
                 continue
             if not (job.jd_text or "").strip():
                 # No description body (e.g. throttled LinkedIn fetch). Drop
@@ -202,11 +211,11 @@ def _run(dry_run: bool, log) -> int:
                 log.info("empty_jd_skipped", job_id=job.job_id, site=job.site)
                 continue
             if filters.location_disallowed(job.location, disallowed):
-                not_applied_queue.append((job, LOCATION_DISALLOWED, job.location))
+                not_applied_queue.append((job, LOCATION_DISALLOWED, job.location, None))
                 continue
             last_notified = filters.company_last_notified(session, job.company)
             if filters.company_in_cooldown(last_notified, now, cooldown_days):
-                not_applied_queue.append((job, COMPANY_COOLDOWN, job.company))
+                not_applied_queue.append((job, COMPANY_COOLDOWN, job.company, None))
                 continue
             passing.append(job)
 
@@ -254,20 +263,35 @@ def _run(dry_run: bool, log) -> int:
                     job_id=job.job_id,
                     error=str(exc),
                 )
-                not_applied_queue.append((job, PARSE_FAILURE, str(exc)))
+                not_applied_queue.append((job, PARSE_FAILURE, str(exc), None))
                 skipped_count += 1
                 continue
 
             apply_to_row(job, parsed)
 
+            # Layer 3 hard filter: employment type on the structured field.
+            # Checked here rather than at scrape time because JobSpy leaves the
+            # listing's own job_type blank far more often than the JD does.
+            if filters.job_type_disallowed(parsed.job_type, cfg.filters.get("job_type")):
+                not_applied_queue.append((job, JOB_TYPE_DISALLOWED, str(parsed.job_type), None))
+                skipped_count += 1
+                continue
+
             # Layer 3 hard filter: years ceiling on structured field
             if filters.exceeds_years_ceiling(parsed.years_required, int(cfg.filters.years_ceiling)):
-                not_applied_queue.append((job, HARD_FILTER_LAYER_3, str(parsed.years_required)))
+                not_applied_queue.append((job, HARD_FILTER_LAYER_3, str(parsed.years_required), None))
                 skipped_count += 1
                 continue
 
             # --- Layer 4: scoring ---
-            jd_context = build_jd_context(parsed, posted_at=job.posted_at)
+            # scraped_at + the window this run used let recency be inferred for
+            # the listings that carry no posting date (almost all of them).
+            jd_context = build_jd_context(
+                parsed,
+                posted_at=job.posted_at,
+                scraped_at=job.scraped_at,
+                scrape_window_hours=hours_old,
+            )
             result = evaluate(profile, jd_context)
 
             # Log every score, matched or not, with the components that made
@@ -294,7 +318,7 @@ def _run(dry_run: bool, log) -> int:
             )
 
             if not result.apply:
-                not_applied_queue.append((job, LOW_SCORE, str(result.final_score)))
+                not_applied_queue.append((job, LOW_SCORE, str(result.final_score), result))
                 skipped_count += 1
                 continue
 
@@ -315,7 +339,7 @@ def _run(dry_run: bool, log) -> int:
 
             if selection is None:
                 log.error(BUILD_FAILURE, job_id=job.job_id, reason="selection_returned_none")
-                not_applied_queue.append((job, BUILD_FAILURE, None))
+                not_applied_queue.append((job, BUILD_FAILURE, None, result))
                 skipped_count += 1
                 continue
 
@@ -464,21 +488,62 @@ def _compute_gap_skills(required: list[str], pool: list[str]) -> list[str]:
 
 
 def _write_not_applied(session, queue: list, now: datetime, *, dry_run: bool = False) -> None:
-    """Persist not_applied rows, but only for jobs already in all_jobs.
+    """Persist a verdict for every rejected job, with the scores behind it.
 
     `not_applied.job_id` is a NOT NULL FK to all_jobs.job_id. Post-parse
     rejections went through `dedup.resolve_batch` so they exist; pre-filter
-    rejections (DUPLICATE/LOCATION/COOLDOWN) may not — writing those would
-    violate the FK and abort the whole commit, so we skip absent rows.
+    rejections (DUPLICATE/LOCATION/COOLDOWN) are rejected BEFORE the batch
+    insert, so they did not.
+
+    This used to skip those absent rows to protect the commit, and the effect
+    was that two whole rejection reasons never reached the database at all:
+    across 693 rows there was not one COMPANY_COOLDOWN and not one
+    LOCATION_DISALLOWED, despite 51 companies sitting in cooldown. The filters
+    were invisible — there was no way to ask what the 10-day rule cost. So the
+    missing all_jobs rows are now INSERTED first (`_ensure_all_jobs_rows`)
+    instead of the verdict being dropped.
+
+    Scores are recorded too. Every row written before today had NULL
+    fit/success_prob/recency/final because the SelectionResult was discarded
+    here, leaving the rejected population unauditable; the only reason a later
+    audit could reconstruct anything was that LOW_SCORE happens to stringify
+    the final score into reason_detail.
 
     The Layer 9 index is no longer appended here: the CSVs are derived from
     these rows by `analytics.export_index` after the commit (see `_run`).
     """
+    from src.state.models import NotApplied
+
+    if not queue:
+        return
+    _ensure_all_jobs_rows(session, [job for job, _r, _d, _s in queue])
+
+    for job, reason, detail, scores in queue:
+        session.merge(NotApplied(
+            job_id=job.job_id,
+            reason_category=reason,
+            reason_detail=detail,
+            fit_score=scores.fit if scores else None,
+            success_prob=scores.success_prob if scores else None,
+            recency_score=scores.recency if scores else None,
+            final_score=scores.final_score if scores else None,
+            not_applied_at=now,
+        ))
+
+
+def _ensure_all_jobs_rows(session, jobs: list) -> None:
+    """Insert any of ``jobs`` that all_jobs has not seen, so a verdict can FK.
+
+    INSERT-only, never merge: these instances come straight off the scraper
+    and carry nulls for every parsed column, so merging one onto an existing
+    row would blank its jd_embedding, required_skills and role_* fields. A job
+    already present keeps whatever the pipeline previously learned about it.
+    """
     from sqlalchemy import select
 
-    from src.state.models import AllJobs, NotApplied
+    from src.state.models import AllJobs
 
-    job_ids = [job.job_id for job, _reason, _detail in queue]
+    job_ids = [job.job_id for job in jobs]
     if not job_ids:
         return
     present = set(
@@ -486,15 +551,13 @@ def _write_not_applied(session, queue: list, now: datetime, *, dry_run: bool = F
             select(AllJobs.job_id).where(AllJobs.job_id.in_(job_ids))
         ).scalars()
     )
-    for job, reason, detail in queue:
-        if job.job_id not in present:
+    seen: set[str] = set()
+    for job in jobs:
+        if job.job_id in present or job.job_id in seen:
             continue
-        session.merge(NotApplied(
-            job_id=job.job_id,
-            reason_category=reason,
-            reason_detail=detail,
-            not_applied_at=now,
-        ))
+        seen.add(job.job_id)
+        session.add(job)
+    session.flush()
 
 
 if __name__ == "__main__":
