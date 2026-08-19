@@ -89,8 +89,25 @@ def match_display_fields(
         "display_title": title_alias or job.role,
         "salary_str": salary_str,
         "loc_str": loc_str,
-        "apply_url": parsed.apply_url or job.job_url or "",
+        "apply_url": _usable_apply_url(parsed.apply_url) or job.job_url or "",
     }
+
+
+def _usable_apply_url(candidate: str | None) -> str:
+    """The model's apply_url, but only when it is really a link.
+
+    `parsed.apply_url` WINS over `job.job_url` — the JD's own application link
+    beats a portal listing page — so a bad value does not merely add noise, it
+    replaces the one URL known to work. Measured 2026-08-19: a JD ending in
+    "send it to hiring@example.com" yielded `" hiring@example.com"`, which would
+    have become the Apply button's target.
+
+    Anything that is not http(s) is discarded rather than repaired. A mailto:
+    would be defensible, but the Apply button promises a page to open, and the
+    listing URL beside it always is one.
+    """
+    url = (candidate or "").strip()
+    return url if url.lower().startswith(("http://", "https://")) else ""
 
 
 def send_match_notification(

@@ -33,7 +33,8 @@ from functools import lru_cache
 from typing import TypeVar
 
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
+from tenacity import Retrying, retry_if_exception_type, stop_after_attempt
 
 from src.config import Section, settings
 
@@ -373,13 +374,58 @@ def reset_clients() -> None:
 # from a grammar: 5/5 populated on the same JDs.
 
 
+def _reask_policy(cfg):
+    """Instructor's reask budget for THIS provider — validation errors only.
+
+    Instructor's reask re-sends the request with the validation error appended,
+    so the model is told what it got wrong. That is the only retry that helps a
+    schema mistake: `max_attempts` above re-sends the identical prompt, which a
+    model that just answered wrongly will usually answer wrongly again.
+
+    Measured 2026-08-19: qwen2.5:7b put `hybrid` (a location_type value) into
+    `job_type`, and with `max_attempts: 1` the run abandoned a healthy local
+    model on its first slip and fell through to a hosted provider.
+
+    Scoped to ValidationError on purpose. Handing Instructor a plain integer
+    would also retry connection failures, and the local provider's whole reason
+    for `max_attempts: 1` is that an unreachable laptop must fail FAST — three
+    reasks against a 180s timeout would cost nine minutes per job.
+    """
+    reasks = int(cfg.get("validation_reask", 0) or 0)
+    if reasks <= 0:
+        return 0
+    return Retrying(
+        stop=stop_after_attempt(reasks + 1),
+        retry=retry_if_exception_type(ValidationError),
+        reraise=True,
+    )
+
+
+def _sampling(cfg) -> dict:
+    """Per-provider sampling knobs, omitted entirely when unset.
+
+    Parsing a job ad has one right answer, so the default creative sampling
+    temperature is wrong for it. Measured 2026-08-19 on qwen2.5:3b: dropping
+    to 0 cut a parse from 7.0s to 2.6s AND found one more technology — it is
+    not a speed/accuracy trade, it is better on both axes.
+
+    Omitted-when-unset on purpose. `temperature` is not universally accepted
+    (Anthropic's own 4.7+ models reject it outright), so a provider that
+    cannot take it simply leaves the key out of its config block rather than
+    needing a code change here.
+    """
+    temperature = cfg.get("temperature")
+    return {} if temperature is None else {"temperature": float(temperature)}
+
+
 def _call_once(which: str, cfg, response_model: type[T], messages) -> T:
     """One attempt, through the single client seam every test patches."""
     return get_client(which).chat.completions.create(
         model=str(cfg.model),
         messages=messages,
         response_model=response_model,
-        max_retries=0,   # Instructor's own reask loop stays off
+        max_retries=_reask_policy(cfg),
+        **_sampling(cfg),
     )
 
 
