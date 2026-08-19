@@ -49,9 +49,16 @@ and this project loosely tracks iterations rather than semver.
   ad hung Ollama for the full ceiling and, with the fallbacks behind it, cost a
   single job 630 seconds; a parse that has not finished in 180s is stuck, and
   the chain has a hosted fallback so giving up early is cheap
-- Layer 3: the LLM is sampled at `temperature: 0` where the provider supports
-  it — extraction has one right answer, and dropping from the model default
-  cut a parse from 7.0s to 2.6s while finding one more technology
+- Layer 3: the LLM is sampled at `temperature: 0.6`, chosen by sweeping recall
+  against a hand-checked answer key (`python -m src.cli.temp_sweep`) rather
+  than by how tidy the output looked. Over 30 technologies from two real ads:
+  0 → 67%, 0.4 → 76%, the model default → 77%, 0.6 → 87%. Both extremes lose —
+  at 0 the model writes the category and drops the "(LoRA, QLoRA, SFT, DPO)"
+  the ad spelled out
+- Layer 3: a parenthesis is split as its own list instead of being cut through,
+  so "(DeepSpeed, FSDP)" no longer truncates to "…frameworks (DeepSpeed"; the
+  head and the bracketed contents are both kept, which also brings long
+  certification names inside the length bound
 - Layer 3: the skill filter no longer drops entries on length, which deleted
   the blobs that at least contained the technology names while keeping the
   boilerplate; the schema bound replaced it, and the filter now only rejects
