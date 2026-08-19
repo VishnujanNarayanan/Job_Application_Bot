@@ -51,10 +51,31 @@ def test_parse_returns_schema_and_grounds_skills() -> None:
     assert "Rust" not in parsed.required_skills
     assert "Python" in parsed.required_skills
     assert "SQL" in parsed.required_skills
-    # AWS is in the JD and in the operator's pool, so the pool backstop adds it
-    # to required_skills even though the model only listed it as nice-to-have.
-    assert "AWS" in parsed.required_skills
     assert parsed.nice_to_have == ["AWS"]                # Kubernetes dropped
+
+
+def test_parse_recovers_pool_skills_the_model_omitted(monkeypatch) -> None:
+    """A pool skill the JD names is required, whatever the model returned.
+
+    The pool is patched rather than read from master_profile.json: that file is
+    gitignored and absent on CI, so a test reading it passes locally and fails
+    there — which is exactly what happened.
+    """
+    import src.parser as parser_module
+
+    monkeypatch.setattr(parser_module, "_pool_terms", lambda: ("Python", "AWS", "SQL"))
+    raw = JDParsed(
+        role_summary="Build pipelines.",
+        role_category="data",
+        role_level="junior",
+        years_required=2,
+        required_skills=["Python"],
+        nice_to_have=["AWS"],
+    )
+    parsed = parse(_job(), complete=_stub_complete(raw))
+    # AWS is in the JD and in the pool, so it becomes a required skill even
+    # though the model only offered it as nice-to-have.
+    assert "AWS" in parsed.required_skills
 
 
 def test_parse_passes_role_categories_into_prompt() -> None:

@@ -217,42 +217,45 @@ class TestPoolBackstop:
 
     JD = ("Write production code in Python, with knowledge of C++ or Java. "
           "Use LangChain and FastAPI. Node.js is used. Deploy with Docker.")
+    # Explicit, so the test does not depend on the operator's gitignored
+    # master_profile.json — absent on CI, which is how this was caught.
+    POOL = ("Python", "C++", "FastAPI", "Node.js", "Docker", "React")
 
     def test_adds_pool_skills_the_model_missed(self):
         from src.parser import with_pool_skills
 
-        got = with_pool_skills(["experience working with LLMs"], self.JD)
+        got = with_pool_skills(["experience working with LLMs"], self.JD, self.POOL)
         assert "Python" in got
         assert "FastAPI" in got
 
     def test_keeps_what_the_model_returned(self):
         from src.parser import with_pool_skills
 
-        got = with_pool_skills(["experience working with LLMs"], self.JD)
+        got = with_pool_skills(["experience working with LLMs"], self.JD, self.POOL)
         assert got[0] == "experience working with LLMs"
 
     def test_never_adds_what_the_jd_does_not_say(self):
         from src.parser import with_pool_skills
 
-        got = with_pool_skills([], "We need someone thoughtful and organised.")
+        got = with_pool_skills([], "We need someone thoughtful and organised.", self.POOL)
         assert got == []
 
     def test_does_not_re_add_what_is_already_there(self):
         """Case-insensitive: the backstop must not append a second "Python"."""
         from src.parser import with_pool_skills
 
-        got = with_pool_skills(["python"], self.JD)
+        got = with_pool_skills(["python"], self.JD, self.POOL)
         assert sum(1 for s in got if s.casefold() == "python") == 1
 
     def test_dot_does_not_block_a_term_ending_a_sentence(self):
         from src.parser import with_pool_skills
 
-        assert "FastAPI" in with_pool_skills([], "The stack is FastAPI.")
+        assert "FastAPI" in with_pool_skills([], "The stack is FastAPI.", self.POOL)
 
     def test_empty_jd_changes_nothing(self):
         from src.parser import with_pool_skills
 
-        assert with_pool_skills(["Python"], "") == ["Python"]
+        assert with_pool_skills(["Python"], "", self.POOL) == ["Python"]
 
 
 class TestVocabularyScan:

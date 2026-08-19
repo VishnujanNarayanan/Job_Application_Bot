@@ -85,7 +85,9 @@ def _pool_terms() -> tuple[str, ...]:
     return tuple(sorted(pool, key=len, reverse=True))
 
 
-def with_pool_skills(skills: list[str], jd_text: str) -> list[str]:
+def with_pool_skills(
+    skills: list[str], jd_text: str, pool: tuple[str, ...] | None = None
+) -> list[str]:
     """Add pool skills the JD names outright but the model failed to return.
 
     The model is the only thing extracting skills, and it under-reports. On one
@@ -106,12 +108,15 @@ def with_pool_skills(skills: list[str], jd_text: str) -> list[str]:
     exact substring matches on a word boundary are added — no lemmatising, no
     fuzzy matching — so this can only ever add something the ad actually says.
     """
-    if not jd_text:
+    terms = _pool_terms() if pool is None else tuple(
+        sorted(pool, key=len, reverse=True)
+    )
+    if not jd_text or not terms:
         return skills
     haystack = jd_text.casefold()
     present = {s.casefold() for s in skills}
     added: list[str] = []
-    for term in _pool_terms():
+    for term in terms:
         key = term.casefold()
         if key in present:
             continue
