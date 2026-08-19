@@ -20,7 +20,6 @@ here so the rows can be told apart.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import statistics
 import sys
@@ -28,9 +27,9 @@ import time
 from collections import defaultdict
 
 import structlog
+from pydantic import Field
 from sqlalchemy import select
 
-from src.config import settings
 from src.llm.client import provider_config
 from src.llm.prompts import jd_parse_prompt, jd_parse_system
 from src.llm.schemas import JDParsed
@@ -56,11 +55,38 @@ def _max_skill_chars() -> int | None:
     return items.get("maxLength")
 
 
-def run_variant(variant: str, limit: int) -> None:
+class _UnboundedJDParsed(JDParsed):
+    """`JDParsed` before the skill-length bound, for measuring against it.
+
+    Kept here rather than in `schemas.py` so nothing in the pipeline can reach
+    for it by accident: its only purpose is to reproduce the old behaviour on
+    the same listings, so the bound's effect is measured rather than asserted.
+    """
+
+    required_skills: list[str] = Field(default_factory=list)
+    nice_to_have: list[str] = Field(default_factory=list)
+
+
+def _parse_unbounded(job: AllJobs, cfg) -> JDParsed:
+    """One parse with the pre-fix schema and the provider's default sampling."""
+    from src.llm.client import get_client
+
+    return get_client("primary").chat.completions.create(
+        model=str(cfg.model),
+        messages=[
+            {"role": "system", "content": jd_parse_system()},
+            {"role": "user", "content": jd_parse_prompt(job, provider_cfg=cfg)},
+        ],
+        response_model=_UnboundedJDParsed,
+        max_retries=0,
+    )
+
+
+def run_variant(variant: str, limit: int, *, baseline: bool = False) -> None:
     """Parse the newest ``limit`` listings and record each attempt."""
     cfg = provider_config("primary")
-    temperature = cfg.get("temperature")
-    bound = _max_skill_chars()
+    temperature = None if baseline else cfg.get("temperature")
+    bound = None if baseline else _max_skill_chars()
 
     with session_scope() as session:
         jobs = session.scalars(
@@ -81,7 +107,7 @@ def run_variant(variant: str, limit: int) -> None:
             parsed: JDParsed | None = None
             error: str | None = None
             try:
-                parsed = parse(job)
+                parsed = _parse_unbounded(job, cfg) if baseline else parse(job)
             except Exception as exc:  # noqa: BLE001 - recorded, not handled
                 error = f"{type(exc).__name__}: {exc}"
             elapsed_ms = int((time.time() - started) * 1000)
@@ -167,6 +193,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Record and compare Layer 3 parses.")
     ap.add_argument("--variant", help="label for the configuration under test")
     ap.add_argument("--limit", type=int, default=8, help="listings to parse")
+    ap.add_argument("--baseline", action="store_true",
+                    help="run the pre-fix schema and default sampling, to measure against")
     ap.add_argument("--compare", nargs="+", metavar="VARIANT",
                     help="summarise recorded variants instead of running")
     args = ap.parse_args(argv)
@@ -176,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.variant:
         ap.error("--variant is required unless --compare is used")
-    run_variant(args.variant, args.limit)
+    run_variant(args.variant, args.limit, baseline=args.baseline)
     return 0
 
 
