@@ -37,6 +37,14 @@ and this project loosely tracks iterations rather than semver.
   boilerplate; the schema bound replaced it, and the filter now only rejects
   short non-skills (degrees, years-of-experience, "Equal Opportunity Employer")
 
+
+### Added
+
+- Layer 3: `parse_eval` table and `python -m src.cli.parse_eval` record the
+  prompt as sent and the object as returned for every parse, so a parser change
+  can be compared over the same listings instead of judged from a handful of
+  parses read off the terminal
+
 ## [v2.0.1] — 2026-08-09
 
 ### Fixed
