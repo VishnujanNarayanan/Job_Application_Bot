@@ -328,3 +328,29 @@ class ParseEval(Base):
         Index("ix_parse_eval_variant_job", "variant", "job_id"),
         Index("ix_parse_eval_created_at", "created_at"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 vocabulary — technology terms learned from the corpus of parsed JDs.
+# The model under-reports; the operator's own pool covers what affects the
+# match score, and this covers the rest (gap skills for Familiar With).
+# ---------------------------------------------------------------------------
+
+
+class SkillVocabulary(Base):
+    __tablename__ = "skill_vocabulary"
+
+    term_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    term: Mapped[str] = mapped_column(Text, nullable=False)
+    # Distinct jobs the term was extracted from — the signal separating a real
+    # technology from a hallucination, which does not recur across unrelated ads.
+    job_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Retire a bad entry by hand without deleting it, so a rebuild honours it.
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=sa_text("true")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (Index("ix_skill_vocabulary_active", "is_active", "job_count"),)

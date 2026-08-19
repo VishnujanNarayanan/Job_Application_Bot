@@ -340,6 +340,14 @@ scoring:
     success_prob: 0.30
     recency: 0.10
     project: 0.05
+  # How many DISTINCT job ads a term must appear in before it joins the
+  # technology vocabulary that Layer 3 scans each JD against. Recurrence is
+  # what separates a technology from a hallucination: an invented skill does
+  # not turn up in five unrelated listings. Measured over 767 parsed jobs,
+  # 5 keeps 228 terms (Python 276 ads, LangChain 25, FastAPI 18) and discards
+  # the 4,349 one-off strings.
+  vocabulary_min_jobs: 5
+
   # Jobs below this threshold are not applied to (reason: LOW_SCORE).
   apply_threshold: 0.50
 
