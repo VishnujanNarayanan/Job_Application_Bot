@@ -59,7 +59,8 @@ def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
 _NOT_A_SKILL = re.compile(
     r"\b(bachelor|master|b\.?tech|m\.?tech|phd|degree|diploma|"
     r"years?\s+of\s+experience|yrs?\s+experience|years?\s+experience|"
-    r"equivalent\s+(practical\s+)?experience|equal\s+opportunity)\b",
+    r"equivalent\s+(practical\s+)?experience|equal\s+opportunity|"
+    r"related\s+field|similar\s+field)\b",
     re.IGNORECASE,
 )
 
