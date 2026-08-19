@@ -253,3 +253,68 @@ class TestPoolBackstop:
         from src.parser import with_pool_skills
 
         assert with_pool_skills(["Python"], "") == ["Python"]
+
+
+class TestVocabularyScan:
+    """Technologies outside the operator's pool, recovered from the JD text.
+
+    The pool backstop covers what decides the match score. This covers the
+    rest — the gap skills Familiar With is built from — which the model drops
+    just as readily.
+    """
+
+    TERMS = (("LangChain", "langchain"), ("Node.js", "node.js"),
+             ("MLOps", "mlops"), ("Go", "go"), ("FastAPI", "fastapi"))
+
+    def test_finds_terms_the_jd_names(self):
+        from src.state.vocabulary import scan
+
+        found = scan("We use LangChain and MLOps practices.", self.TERMS)
+        assert found == ["LangChain", "MLOps"]
+
+    def test_returns_terms_in_the_order_they_appear(self):
+        from src.state.vocabulary import scan
+
+        assert scan("MLOps first, then LangChain.", self.TERMS) == ["MLOps", "LangChain"]
+
+    def test_short_term_does_not_match_inside_a_word(self):
+        from src.state.vocabulary import scan
+
+        # "Go" must not fire on "Google" or "algorithms".
+        assert scan("We use Google and good algorithms.", self.TERMS) == []
+        assert scan("We write Go services.", self.TERMS) == ["Go"]
+
+    def test_dot_blocks_only_when_a_word_follows(self):
+        from src.state.vocabulary import scan
+
+        assert scan("Built on Node.js here.", self.TERMS) == ["Node.js"]
+        assert scan("The stack is FastAPI.", self.TERMS) == ["FastAPI"]
+
+    def test_empty_inputs_are_safe(self):
+        from src.state.vocabulary import scan
+
+        assert scan("", self.TERMS) == []
+        assert scan("LangChain", ()) == []
+
+    def test_soft_skills_are_not_candidates(self):
+        from src.state.vocabulary import _is_candidate
+
+        assert not _is_candidate("communication skills")
+        assert not _is_candidate("teamwork")
+        assert not _is_candidate("data")
+        assert _is_candidate("LangChain")
+        assert _is_candidate("Apache Kafka")
+
+    def test_prose_and_numbers_are_not_candidates(self):
+        from src.state.vocabulary import _is_candidate
+
+        assert not _is_candidate("experience building scalable distributed systems")
+        assert not _is_candidate("2026")
+        assert not _is_candidate("")
+
+    def test_added_skills_do_not_duplicate_existing(self):
+        from src.parser import with_vocabulary_skills
+
+        jd = "We use LangChain."
+        got = with_vocabulary_skills(["LangChain"], jd)
+        assert sum(1 for s in got if s.casefold() == "langchain") == 1

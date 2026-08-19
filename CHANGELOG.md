@@ -67,6 +67,13 @@ and this project loosely tracks iterations rather than semver.
 
 ### Added
 
+- Layer 3: `skill_vocabulary` — a technology vocabulary learned from the corpus
+  of already-parsed ads, scanned against every JD so a technology outside the
+  operator's pool is not lost when the model omits it. Recurrence is the
+  filter: a term must have been extracted from 5+ distinct listings, since a
+  hallucination does not recur across unrelated ads. Over 767 jobs that keeps
+  237 terms and discards 4,340 one-off strings. Build with
+  `python -m src.cli.vocabulary --rebuild`
 - Layer 3: a pool skill the JD names outright is added to `required_skills`
   whatever the model returned. The model under-reports — on one ad it returned
   "experience working with LLMs" and dropped the "(e.g., GPT-3/4, Claude,

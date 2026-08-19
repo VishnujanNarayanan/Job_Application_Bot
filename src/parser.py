@@ -26,6 +26,7 @@ from functools import lru_cache
 import structlog
 
 from src.config import settings
+from src.state.vocabulary import scan
 from src.llm.client import complete as _default_complete
 from src.llm.prompts import jd_parse_prompt, jd_parse_system
 from src.llm.schemas import JDParsed
@@ -53,6 +54,7 @@ def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
     parsed.required_skills = grounded_skills(parsed.required_skills, jd_text)
     parsed.nice_to_have = grounded_skills(parsed.nice_to_have, jd_text)
     parsed.required_skills = with_pool_skills(parsed.required_skills, jd_text)
+    parsed.required_skills = with_vocabulary_skills(parsed.required_skills, jd_text)
     return parsed
 
 
@@ -122,6 +124,52 @@ def with_pool_skills(skills: list[str], jd_text: str) -> list[str]:
             present.add(key)
     if added:
         log.info("pool_skills_recovered", count=len(added), skills=added[:12])
+    return skills + added
+
+
+@lru_cache(maxsize=1)
+def _vocabulary() -> tuple[tuple[str, str], ...]:
+    """The learned technology vocabulary, loaded once per process.
+
+    Opens its own session rather than taking one as an argument: `parse()` is
+    called from inside the orchestrator's transaction, and threading a session
+    through it only to read a small static table would couple Layer 3 to the
+    caller's transaction for no benefit.
+    """
+    from src.state.db import session_scope
+    from src.state.vocabulary import load_terms
+
+    try:
+        with session_scope() as session:
+            return load_terms(session)
+    except Exception as exc:  # noqa: BLE001 - a missing vocabulary must not fail a parse
+        log.warning("vocabulary_unavailable", error=str(exc)[:160])
+        return ()
+
+
+def with_vocabulary_skills(skills: list[str], jd_text: str) -> list[str]:
+    """Add technologies the JD names that the model failed to return.
+
+    `with_pool_skills` covers the operator's own skills — the ones that decide
+    the match score. This covers the rest: technologies outside the pool, which
+    become the gap skills Familiar With is built from, and which the model drops
+    just as readily. Measured 2026-08-19, LangChain, LangGraph, MLOps, NLP, RAG
+    and Scikit were all in the JD text and missing from the parse.
+
+    The vocabulary is learned from previously parsed ads (see
+    `src.state.vocabulary`), so it needs no curated list and grows as the corpus
+    does. Matching is literal and word-bounded, so this can only add something
+    the ad actually says.
+    """
+    if not jd_text:
+        return skills
+    terms = _vocabulary()
+    if not terms:
+        return skills
+    present = {s.casefold() for s in skills}
+    added = [t for t in scan(jd_text, terms) if t.casefold() not in present]
+    if added:
+        log.info("vocabulary_skills_recovered", count=len(added), skills=added[:12])
     return skills + added
 
 
