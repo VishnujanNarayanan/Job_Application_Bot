@@ -32,7 +32,7 @@ from sqlalchemy import select
 
 from src.llm.client import provider_config
 from src.llm.prompts import jd_parse_prompt, jd_parse_system
-from src.llm.schemas import JDParsed
+from src.llm.schemas import JDParsed, collect_skill_rejections
 from src.parser import parse
 from src.state.db import session_scope
 from src.state.models import AllJobs, ParseEval
@@ -98,7 +98,7 @@ def run_variant(variant: str, limit: int, *, baseline: bool = False) -> None:
 
         print(f"variant={variant}  provider={cfg.provider}  model={cfg.model}  "
               f"temperature={temperature}  max_skill_chars={bound}")
-        print(f"{'job':38} {'jd':>6} {'sent':>6} {'time':>7} {'skills':>7} {'longest':>8}")
+        print(f"{'job':34} {'jd':>6} {'time':>7} {'skills':>7} {'dropped':>8} {'longest':>8}")
         print("-" * 80)
 
         for job in jobs:
@@ -106,10 +106,11 @@ def run_variant(variant: str, limit: int, *, baseline: bool = False) -> None:
             started = time.time()
             parsed: JDParsed | None = None
             error: str | None = None
-            try:
-                parsed = _parse_unbounded(job, cfg) if baseline else parse(job)
-            except Exception as exc:  # noqa: BLE001 - recorded, not handled
-                error = f"{type(exc).__name__}: {exc}"
+            with collect_skill_rejections() as rejections:
+                try:
+                    parsed = _parse_unbounded(job, cfg) if baseline else parse(job)
+                except Exception as exc:  # noqa: BLE001 - recorded, not handled
+                    error = f"{type(exc).__name__}: {exc}"
             elapsed_ms = int((time.time() - started) * 1000)
 
             skills = list(parsed.required_skills) + list(parsed.nice_to_have) if parsed else []
@@ -127,15 +128,16 @@ def run_variant(variant: str, limit: int, *, baseline: bool = False) -> None:
                     prompt_chars=len(prompt),
                     jd_chars=len(job.jd_text or ""),
                     output_json=parsed.model_dump() if parsed else None,
+                    rejections=list(rejections) or None,
                     error=error,
                     latency_ms=elapsed_ms,
                 )
             )
             session.flush()
 
-            label = f"{job.company[:18]} {job.role[:18]}"
-            print(f"{label:38} {len(job.jd_text or ''):>6} {len(prompt):>6} "
-                  f"{elapsed_ms/1000:>6.1f}s {len(skills):>7} {longest:>8}"
+            label = f"{job.company[:16]} {job.role[:16]}"
+            print(f"{label:34} {len(job.jd_text or ''):>6} "
+                  f"{elapsed_ms/1000:>6.1f}s {len(skills):>7} {len(rejections):>8} {longest:>8}"
                   + ("  ERROR" if error else ""))
             if error:
                 print(f"    {error[:100]}")
@@ -186,6 +188,25 @@ def compare(variants: list[str]) -> None:
         pct = 100 * longs / total_skills if total_skills else 0
         print(f"{variant:14} {statistics.mean(counts) if counts else 0:>11.1f} "
               f"{pct:>8.0f}% {longest:>8} {statistics.mean(secs):>7.1f}s {errs:>7}")
+
+    # What each variant threw away, so a rejection rule can be judged rather
+    # than assumed safe.
+    for variant in variants:
+        rs = [r for r in by_variant.get(variant, []) if r.job_id in shared]
+        dropped: dict[str, list[str]] = defaultdict(list)
+        for r in rs:
+            for item in (r.rejections or []):
+                dropped[item.get("rule", "?")].append(item.get("text", ""))
+        if not dropped:
+            continue
+        total = sum(len(v) for v in dropped.values())
+        print(f"\n{variant}: {total} skills discarded")
+        for rule, texts in sorted(dropped.items(), key=lambda kv: -len(kv[1])):
+            print(f"  {rule:20} {len(texts):>4}")
+            for t in texts[:4]:
+                print(f"      {t[:88]}")
+            if len(texts) > 4:
+                print(f"      ... and {len(texts) - 4} more")
 
 
 def main(argv: list[str] | None = None) -> int:

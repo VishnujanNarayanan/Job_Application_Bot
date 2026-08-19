@@ -314,6 +314,10 @@ class ParseEval(Base):
     prompt_chars: Mapped[int] = mapped_column(Integer, nullable=False)
     jd_chars: Mapped[int] = mapped_column(Integer, nullable=False)
     output_json: Mapped[Any | None] = mapped_column(JSONB)
+    # Every skill this parse discarded, with the rule that did it. Job ads vary
+    # enough that no rejection rule can be assumed safe; keeping the discards
+    # is what makes one auditable over a corpus.
+    rejections: Mapped[Any | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
