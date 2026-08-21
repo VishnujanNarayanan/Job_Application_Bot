@@ -1,0 +1,87 @@
+# Cosmetic. Exists to be filmed: a chain of fast jobs so the run graph goes
+# green one box at a time, in order. Runs nothing real — see ci.yml for the
+# actual test gate. Delete the ci-video branch when the footage is cut.
+
+name: pipeline
+
+on:
+  push:
+    branches: [ci-video]
+  workflow_dispatch:
+
+jobs:
+  deps:
+    name: "dependencies"
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 4 && echo "resolved 41 packages"
+
+  scrape:
+    name: "1 · scrape"
+    needs: deps
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 3 && echo "15 passed"
+
+  parse:
+    name: "2 · parse"
+    needs: scrape
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 3 && echo "28 passed"
+
+  score:
+    name: "3 · score"
+    needs: parse
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 3 && echo "26 passed"
+
+  llm:
+    name: "4 · llm"
+    needs: score
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 3 && echo "64 passed"
+
+  build:
+    name: "5 · build"
+    needs: llm
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 3 && echo "67 passed"
+
+  notify:
+    name: "6 · notify"
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 3 && echo "23 passed"
+
+  serve:
+    name: "7 · serve"
+    needs: notify
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 3 && echo "55 passed"
+
+  observe:
+    name: "8 · observe"
+    needs: serve
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 3 && echo "31 passed"
+
+  smoke:
+    name: "9 · smoke"
+    needs: observe
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 3 && echo "9 passed"
+
+  green:
+    name: "all green"
+    needs: smoke
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "### 319 passed" >> "$GITHUB_STEP_SUMMARY"
