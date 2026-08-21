@@ -4,9 +4,9 @@
 
 name: pipeline
 
+# pull_request only: a push trigger as well would run every stage twice on
+# the same commit and double every row in the PR's checks list.
 on:
-  push:
-    branches: [ci-video]
   pull_request:
   workflow_dispatch:
 
