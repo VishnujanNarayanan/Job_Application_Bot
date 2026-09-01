@@ -12,6 +12,7 @@ only the text differs, and the assembler matches on structure alone.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import zipfile
 from pathlib import Path
@@ -133,15 +134,50 @@ def test_assemble_docx_renders_both_sections(minimal_profile, minimal_selection,
     assert "Ran services in Docker to cut setup time." in text, (
         "an extra_bullet selected by the greedy must render like any other"
     )
-    assert "Stock Prediction Engine\thttps://github.com/user/stock" in text
+    assert "Stock Prediction Engine\tCode \u2192" in text
 
 
-def test_a_project_entry_shows_its_link_where_a_job_shows_dates(
+def test_a_project_entry_shows_a_short_hyperlink_where_a_job_shows_dates(
+    minimal_profile, minimal_selection, tmp_path
+):
+    """The full URL overflows the line — measured at 112 chars against an ~89-char
+    budget at Arial 10.5 across 6.5in — so the slot carries a short link instead."""
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    line = next(p for p in doc.paragraphs if p.text.startswith("Stock Prediction"))
+    assert line.text.endswith("Code \u2192")
+    assert len(line.text.replace("\t", "")) < 89
+
+    rid = line._p.find(qn("w:hyperlink")).get(qn("r:id"))
+    assert doc.part.rels[rid].target_ref == "https://github.com/user/stock"
+
+
+def test_the_minted_hyperlink_has_no_dangling_relationship(
+    minimal_profile, minimal_selection, tmp_path
+):
+    """A dangling r:id makes LibreOffice refuse the file, which fails the PDF
+    render rather than merely losing a link. This is why the relationship is
+    minted through python-docx's relate_to() instead of by patching the saved zip.
+    """
+    from src.endpoint.assembler import assemble_docx
+
+    out = tmp_path / "out.docx"
+    assemble_docx(minimal_selection, minimal_profile, _template(), out)
+
+    with zipfile.ZipFile(out) as z:
+        doc_xml = z.read("word/document.xml").decode()
+        rels = z.read("word/_rels/document.xml.rels").decode()
+    used = set(re.findall(r'r:id="([^"]+)"', doc_xml))
+    have = set(re.findall(r'Id="([^"]+)"', rels))
+    assert not (used - have), f"dangling relationship ids: {sorted(used - have)}"
+
+
+def test_a_work_entry_still_shows_its_dates(
     minimal_profile, minimal_selection, tmp_path
 ):
     doc = _assemble(minimal_profile, minimal_selection, tmp_path)
-    line = next(p for p in doc.paragraphs if p.text.startswith("Stock Prediction"))
-    assert line.text.endswith("https://github.com/user/stock")
+    line = next(p for p in doc.paragraphs if p.text.startswith("Backend Engineer at"))
+    assert line.text.endswith("January 2024 to current")
+    assert line._p.find(qn("w:hyperlink")) is None
 
 
 def test_frozen_prefix_unchanged(minimal_profile, minimal_selection, tmp_path):

@@ -20,8 +20,10 @@ Every structural assumption the v1 assembler made is wrong for this template:
                                       the normal case, not an error
   Education frozen as a SUFFIX        Education sits at the TOP, so the frozen
   (EDUCATION -> end of body)          region is a PREFIX (start -> Work History)
-  project links via <w:hyperlink>     the template has no hyperlink elements and
-  and synthetic r:id rels             no hyperlink rels; links are plain text
+  project links via <w:hyperlink>     the template ships no hyperlinks at all, so
+  and hand-patched r:id rels          a project's "Code ->" link is minted at
+                                      render time through python-docx's own
+                                      relate_to(), never by editing the saved zip
 
 Detection is therefore structural, never textual:
 
@@ -69,6 +71,9 @@ _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
 _WORK_HEADING = "Work History"
 _PROJECTS_HEADING = "Projects"
+
+#: What a project's repo link reads as. Short by necessity — see _set_hyperlink.
+_LINK_TEXT = "Code \u2192"
 
 
 class AssemblerError(RuntimeError):
@@ -273,6 +278,63 @@ def _set_text(p_elem, text: str) -> None:
         _blank_run_text(r)
 
 
+def _set_hyperlink(doc, p_elem, text: str, url: str) -> None:
+    """Replace everything right of the tab with a hyperlinked ``text``.
+
+    The relationship is minted through python-docx's own ``part.relate_to``,
+    which writes a correct entry into ``word/_rels/document.xml.rels``. That
+    matters: the previous implementation hand-patched the rels XML inside the
+    saved zip, and a dangling ``r:id`` makes LibreOffice refuse the file, which
+    fails the PDF render rather than just losing a link.
+
+    Formatting is cloned from the run being replaced, so the link inherits the
+    template's font and size; only colour and underline are added, which the
+    method permits for a portfolio link.
+    """
+    runs = _direct_runs(p_elem)
+    tab_idx = next(
+        (i for i, r in enumerate(runs) if r.find(qn("w:tab")) is not None), -1
+    )
+    if tab_idx < 0 or tab_idx + 1 >= len(runs):
+        return
+    proto = runs[tab_idx + 1]
+    for r in runs[tab_idx + 1:]:
+        p_elem.remove(r)
+
+    run = copy.deepcopy(proto)
+    for existing in run.findall(qn("w:t")):
+        run.remove(existing)
+    rPr = run.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        run.insert(0, rPr)
+    for tag in ("w:color", "w:u"):
+        found = rPr.find(qn(tag))
+        if found is not None:
+            rPr.remove(found)
+    colour = OxmlElement("w:color")
+    colour.set(qn("w:val"), "0563C1")
+    rPr.append(colour)
+    underline = OxmlElement("w:u")
+    underline.set(qn("w:val"), "single")
+    rPr.append(underline)
+    t_el = OxmlElement("w:t")
+    t_el.text = text
+    run.append(t_el)
+
+    link = OxmlElement("w:hyperlink")
+    link.set(
+        qn("r:id"),
+        doc.part.relate_to(
+            url,
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            is_external=True,
+        ),
+    )
+    link.append(run)
+    p_elem.append(link)
+
+
 def _set_entry_line(p_elem, left: str, right: str) -> None:
     """Left of the tab := ``left``; right of the tab := ``right``.
 
@@ -352,7 +414,16 @@ def assemble_docx(
         new_elems.append(h)
         for entry in entries:
             line = copy.deepcopy(protos["entry_line"])
-            _set_entry_line(line, entry.header_left, entry.header_right)
+            link = entry.header_right if entry.kind == "project" else ""
+            if link.startswith(("http://", "https://")):
+                # A project's slot holds a repo URL where a job holds dates. The
+                # full URL overflows the line (measured: 112 chars against a
+                # ~89-char budget at Arial 10.5 across 6.5in), so it renders as a
+                # short hyperlink instead.
+                _set_entry_line(line, entry.header_left, "")
+                _set_hyperlink(doc, line, _LINK_TEXT, link)
+            else:
+                _set_entry_line(line, entry.header_left, entry.header_right)
             new_elems.append(line)
             for bid in entry.bullet_ids:
                 text = bullet_text.get(bid)
