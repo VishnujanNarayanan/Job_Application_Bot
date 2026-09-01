@@ -224,30 +224,47 @@ selection:
     off_role_scaling: true
     off_role_floor: 0.05  # relevance never scales fully to zero
 
+  # STAGE 6, measured 2026-09-01 over all 767 parsed all_jobs rows.
+  # Provisional: the profile behind these numbers is the OLD flat bullet pool
+  # mechanically converted to role_blocks, not a bullet-extract re-run. Coverage
+  # will rise once the bullets are rewritten to the method, which lifts
+  # final_score -- RE-RUN the calibration after Stage 0 or this floods.
+  #
+  # Distributions (entry.score): employment p50=0.172 p75=0.199 p90=0.224
+  # max=0.341 | freelance p50=0.158 p75=0.188 p90=0.218 max=0.568 | project
+  # p50=0.085 p75=0.117 p90=0.153 max=0.588. best-second gap p50=0.015
+  # p90=0.047 p99=0.098. final_score p50=0.254 p90=0.341 p95=0.372 max=0.523.
   work:
-    # CALIBRATED, not chosen — see the v2 note kept below. Measured over 60 real
-    # JDs on 2026-08-19 against the OLD scoring formula; the entry score is now
-    # similarity+coverage rather than pure similarity, so this MUST be
-    # re-measured (PIVOT_V3.md Stage 6) before it means anything again.
-    threshold: 0.332
+    # p75 of employment entry scores. The previous 0.332 sat ABOVE the observed
+    # maximum (0.341) and its p99 (0.286): no employment entry ever cleared it,
+    # and the operator's job reached the page only through min_shown.
+    threshold: 0.199
     max_shown: 3
     min_shown: 2
     # If best_score - second_score > this gap, best-match goes to position 1.
     # Otherwise positions follow recency (most recent first).
-    match_then_recency_gap: 0.20
+    # p90 of the observed gap, so merit-ordering fires for the clearest ~10% of
+    # jobs. The previous 0.20 was above the p99 (0.098) — it never fired once.
+    match_then_recency_gap: 0.047
 
   # Freelance engagements: separate entries that render under Work History but
   # compete on merit like projects. min_shown is 0 by design — unlike a job, a
   # gig that does not match this JD simply should not appear.
   freelance:
     label: "Freelance"
-    threshold: 0.150      # same caveat as `work.threshold` above
+    # p88 of freelance entry scores. 0.150 was the p22 — ~78% of gig/JD pairs
+    # passed it, so all three gigs landed on nearly every resume and pushed the
+    # page to two. min_shown is 0 by design; the threshold is what makes "any,
+    # all or none" mean anything, and at this value the typical resume shows 0-1.
+    threshold: 0.210
     max_shown: 3
     min_shown: 0
-    match_then_recency_gap: 0.20
+    match_then_recency_gap: 0.047
 
   project:
-    threshold: 0.344      # same caveat as `work.threshold` above
+    # p90 of project entry scores. 0.344 sat above the p99 (0.241), so the
+    # section was filled entirely by min_shown; this makes the third slot earned.
+    threshold: 0.153
     max_shown: 3
     min_shown: 2
     hide_section: false   # projects section NEVER hidden
@@ -268,7 +285,17 @@ scoring:
   vocabulary_min_jobs: 5
 
   # Jobs below this threshold are not applied to (reason: LOW_SCORE).
-  apply_threshold: 0.50
+  #
+  # STAGE 6, measured 2026-09-01 over all 767 parsed all_jobs rows: final_score
+  # p50=0.254 p90=0.341 p95=0.372 p99=0.457, MAXIMUM 0.523. The previous 0.50
+  # would have notified on one or two ads out of 767 — the inert-threshold
+  # failure this file already records once, repeated.
+  #
+  # p95, so roughly 1 ad in 20 notifies. This is the one number to turn if the
+  # volume is wrong: lower it for more matches, raise it for fewer. Same
+  # provisional caveat as the selection thresholds above — re-measure after the
+  # bullet-extract re-run.
+  apply_threshold: 0.372
 
   fit:
     # Weights sum to 1.0.

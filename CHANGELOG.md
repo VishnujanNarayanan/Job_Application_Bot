@@ -91,6 +91,27 @@ and this project loosely tracks iterations rather than semver.
   Matching paragraph properties does not mean correct rendered gaps; that
   assumption hid a doubled blank line for several review rounds
 
+### Changed
+
+- Layer 4 (Stage 6): every selection threshold recalibrated against all 767
+  parsed `all_jobs` rows, replacing v2 values measured under the old scoring
+  formula. `apply_threshold` 0.50 → 0.372, `work.threshold` 0.332 → 0.199,
+  `project.threshold` 0.344 → 0.153, `freelance.threshold` 0.150 → 0.210,
+  `match_then_recency_gap` 0.20 → 0.047. Each is a measured percentile, recorded
+  with its distribution in `config.yaml`
+- Layer 4: the old thresholds were not merely stale, they were inert in both
+  directions. `apply_threshold: 0.50` sat above the observed MAXIMUM final_score
+  (0.523) and its p99 (0.457) — one or two ads in 767 would ever have notified.
+  `work` and `project` sat above their entries' p99, so no entry ever cleared
+  either and both sections were filled entirely by `min_shown`.
+  `match_then_recency_gap: 0.20` was above the p99 gap (0.098) and had never
+  fired once. `freelance: 0.150` failed the opposite way, at the p22: ~78% of
+  gig/JD pairs passed, so all three gigs appeared on nearly every resume
+- Measured effect: 40 of 767 ads now notify (5.2%); freelance appears on 31% of
+  resumes rather than effectively all; the third project slot is earned in 18%
+- Tests: the two that hardcoded a threshold now derive it from config, so a
+  future recalibration does not break them
+
 ### Fixed
 
 - Layer 6: every hyperlink was dead in the rendered PDF — the five header links

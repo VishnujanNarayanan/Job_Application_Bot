@@ -402,15 +402,22 @@ def test_order_entries_best_match_first_when_gap_large() -> None:
     a, b = _simple_entry("e1", "x", end="2020-01"), _simple_entry("e2", "y")
     sa = select_entries([a], _jd(), _kw(), kind="work", now=NOW)[0]
     sb = select_entries([b], _jd(), _kw(), kind="work", now=NOW)[0]
-    sa.score, sb.score = 0.9, 0.1
+    sa.score, sb.score = 0.9, 0.1   # a gap no calibration will ever exceed
     assert order_entries([sb, sa])[0] is sa
 
 
 def test_order_entries_recency_when_gap_small() -> None:
+    """Derived from the configured gap, not a literal — recalibration moves it.
+
+    Stage 6 measured the real best-second gap at p50=0.015 and set the config to
+    the p90 (0.047). A hardcoded 0.05 was "small" against the old inert 0.20 and
+    is large against the measured value, so the literal tested the opposite of
+    its own name."""
+    gap = float(settings.selection.work.match_then_recency_gap)
     a, b = _simple_entry("e1", "x", end="2020-01"), _simple_entry("e2", "y")
     sa = select_entries([a], _jd(), _kw(), kind="work", now=NOW)[0]
     sb = select_entries([b], _jd(), _kw(), kind="work", now=NOW)[0]
-    sa.score, sb.score = 0.55, 0.50
+    sa.score, sb.score = 0.50 + gap / 2, 0.50
     assert order_entries([sa, sb])[0] is sb  # "present" is newest
 
 

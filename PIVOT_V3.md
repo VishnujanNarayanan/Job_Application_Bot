@@ -502,7 +502,7 @@ uncorrupted · `title_alias_of` handles both shapes.
 | **2+3** ✅ | Profile schema + migration 0009 + `rebuild`/`load_profile`, **merged with** the selection algorithm — `Profile` changes shape, so splitting them needs a throwaway alias. Regenerate `master_profile.yaml` from bullet-extract runs. Config `selection:`/`scoring.fit` diff. Rewrite scorer tests. | ✅ |
 | **4** ✅ | `StoredSelection` v2, `llm_call.build`, `deterministic.py` trio deleted, `selection_compat.py`, `main`/`analytics`/`dashboard` updates, `cache.py` version dispatch + 409. | ✅ |
 | **5** ✅ | Assembler rewrite, `hyperlinks.py` deleted, both `template_path` keys moved, `assets push`, endpoint tests rewritten. | ✅ |
-| **6** | ⏳ **Recalibration.** Re-run selection over the 839 parsed `all_jobs` rows; read the distributions of `entry.score`, `keyword_coverage`, `lead_entry_coverage`, `final_score`; set `selection.work.threshold`, `selection.project.threshold`, `scoring.apply_threshold` from measured percentiles. | ✅ |
+| **6** ✅ | **Recalibration.** Done 2026-09-01 over all 767 parsed rows; see TODO 8. **Provisional** — measured against the mechanically converted profile, so re-run after the bullet-extract re-run. |
 | **7** | 🔶 Partly done (CHANGELOG written). Docs: CLAUDE.md "Selection rules — locked" + hard rules #1/#7/#9/#10/#11, PRD, architecture §3/§4/§5/§6, and `resume_method.md`'s "Where this conflicts with the bot" table (4 of 5 rows become resolved). CHANGELOG `[Unreleased]`. | ✅ |
 
 **Riskiest: Stage 5.** Every other stage is pure functions with cheap unit tests.
@@ -740,21 +740,39 @@ Spacing decisions against it have to be made by eye.
    words, one period, past tense, **no performance numbers** (the current pool is
    full of them).
 5. Mark `employment_type: freelance` on DekhLaw, SCPLS and the MQL5/Yaagi
-   entries; shorten the SCPLS company name; strip "Freelance" from every title.
+   entries. ~~shorten the SCPLS company name; strip "Freelance" from every
+   title.~~ **Both done 2026-09-01** — company is `SCPLS`, and "Freelance" is
+   gone from `actual_title` and from four `safe_title_aliases`. The
+   `employment_type` marking still needs doing, and until it is, the operator's
+   actual job is not force-included: measured, CiteSert drops off the page
+   entirely when all four entries claim to be employment.
 6. `alembic upgrade head` — the database is still at `0008`; `0009_role_blocks`
    has never been applied.
 7. `python -m src.cli.assets push` — `resumes/templates/` is gitignored, so the
    GitHub Actions runner has no template until this is run.
 
 **Stage 6 — recalibration, and it matters more than it looks**
-8. Every threshold is the v2 value measured against the OLD scoring formula and
-   is meaningless now. Measured on real ads: entry scores land at **0.12–0.31**
-   against a `work.threshold` of 0.332 and a `freelance.threshold` of 0.344 — so
-   **freelance entries never appear at all**, exactly the inert-threshold failure
-   the changelog already records once. `final_score` reached 0.46 at best against
-   an `apply_threshold` of 0.50, so **nothing would be applied to**.
-9. `match_then_recency_gap: 0.20` is likewise too wide: real scores cluster
-   within ~0.01, so recency always wins and D14a's merit-ordering never fires.
+8. ~~Every threshold is the v2 value measured against the OLD scoring formula.~~
+   **Done 2026-09-01**, over all 767 parsed `all_jobs` rows. Every threshold was
+   inert, and in both directions:
+
+   | knob | was | observed | now |
+   |---|---|---|---|
+   | `scoring.apply_threshold` | 0.50 | final_score p50 0.254, p95 0.372, **max 0.523** | **0.372** (p95) |
+   | `selection.work.threshold` | 0.332 | employment entry p50 0.172, p90 0.224, max 0.341 | **0.199** (p75) |
+   | `selection.project.threshold` | 0.344 | project entry p50 0.085, p90 0.153, p99 0.241 | **0.153** (p90) |
+   | `selection.freelance.threshold` | 0.150 | freelance entry p50 0.158 — the old value was the **p22** | **0.210** (p88) |
+   | `match_then_recency_gap` | 0.20 | best-second gap p50 0.015, p99 0.098 | **0.047** (p90) |
+
+   Effect: 40 of 767 ads notify (5.2%); freelance appears on 31% of resumes
+   instead of effectively all; the third project slot is earned in 18%.
+
+   **Provisional.** The profile behind these numbers is the OLD flat bullet pool
+   mechanically converted to `role_blocks`, not a bullet-extract re-run. Coverage
+   rises once bullets are rewritten to the method, which lifts `final_score` —
+   **re-run the calibration after Stage 0 or this floods.**
+9. ~~`match_then_recency_gap: 0.20` is likewise too wide.~~ **Done** — folded
+   into 8 above. Measured p50 gap 0.015, p99 0.098; set to the p90, 0.047.
 
 **Verification that is not optional**
 10. Render a real PDF and *read it*. 389 passing tests did not catch: a sentence
