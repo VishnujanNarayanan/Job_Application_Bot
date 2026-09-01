@@ -23,6 +23,8 @@ from docx import Document
 from docx.oxml.ns import qn
 from lxml import etree
 
+from src.endpoint.assembler import _is_entry_bullet
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 #: The operator's personalised template (gitignored, may be absent).
 TEMPLATE_PATH = REPO_ROOT / "resumes" / "templates" / "headless_v1.docx"
@@ -231,15 +233,20 @@ def test_a_cloned_bullet_keeps_the_prototype_formatting(
     from src.endpoint.assembler import _is_entry_bullet
 
     def _props(paragraph) -> str:
-        """Canonical <w:pPr>, minus namespace declarations.
+        """Canonical <w:pPr>, minus namespace declarations and keep-flags.
 
         python-docx rewrites the root nsmap on save, so the declarations carried
         on a c14n-serialised subtree differ between the template and the output
-        even when every formatting property is identical. Stripping them keeps
-        the assertion about formatting, which is what can actually break.
+        even when every formatting property is identical.
+
+        keepNext/keepLines are excluded because the assembler adds them
+        deliberately, to stop an entry being stranded across a page break — see
+        test_an_entry_is_bound_together_across_a_page_break. Everything else
+        must survive cloning untouched.
         """
         xml = etree.tostring(paragraph._p.find(qn("w:pPr")), method="c14n").decode()
-        return re.sub(r'\sxmlns(:\w+)?="[^"]*"', "", xml)
+        xml = re.sub(r'\sxmlns(:\w+)?="[^"]*"', "", xml)
+        return re.sub(r"<w:keep(?:Next|Lines)[^>]*></w:keep(?:Next|Lines)>", "", xml)
 
     template = Document(str(_template()))
     proto = next(p for p in template.paragraphs if _is_entry_bullet(p._p))
@@ -352,3 +359,66 @@ def test_app_health():
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
+
+
+def test_an_entry_is_bound_together_across_a_page_break(
+    minimal_profile, minimal_selection, tmp_path
+):
+    """A title with one orphaned bullet at the foot of a page reads as an error.
+
+    Word has no "keep 66% together" setting, so the rule is expressed as a chain:
+    the header and the first ceil(0.66 * n) bullets each carry keepNext, binding
+    them into one unbreakable group. If that group does not fit in the space
+    left, Word moves all of it to the next page. The chain stops there, so the
+    remaining bullets may still flow rather than wasting the page.
+    """
+    import math
+
+    from docx.oxml.ns import qn as _qn
+
+    from src.config import settings
+
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    ratio = float(settings.endpoint.render.keep_together_ratio)
+
+    def keep_next(p):
+        pPr = p._p.find(_qn("w:pPr"))
+        el = pPr.find(_qn("w:keepNext")) if pPr is not None else None
+        return el is not None and el.get(_qn("w:val")) in ("1", "true")
+
+    paras = doc.paragraphs
+    header_i = next(i for i, p in enumerate(paras)
+                    if p.text.startswith("Backend Engineer at"))
+    bullets = []
+    for p in paras[header_i + 1:]:
+        if not _is_entry_bullet(p._p):
+            break
+        bullets.append(p)
+
+    assert bullets, "no bullets found under the entry"
+    assert keep_next(paras[header_i]), "header is not bound to its first bullet"
+
+    bound = max(1, math.ceil(ratio * len(bullets)))
+    for i, b in enumerate(bullets[: bound - 1]):
+        assert keep_next(b), f"bullet {i} should be bound to the next"
+    assert not keep_next(bullets[bound - 1]), (
+        "the chain must end so the remaining bullets can flow"
+    )
+
+
+def test_every_bullet_keeps_its_own_lines_together(
+    minimal_profile, minimal_selection, tmp_path
+):
+    """A single bullet wrapping across a page boundary is the other half of the
+    problem, and is what keepLines prevents."""
+    from docx.oxml.ns import qn as _qn
+
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    for p in doc.paragraphs:
+        if not _is_entry_bullet(p._p):
+            continue
+        pPr = p._p.find(_qn("w:pPr"))
+        el = pPr.find(_qn("w:keepLines")) if pPr is not None else None
+        assert el is not None and el.get(_qn("w:val")) in ("1", "true"), (
+            f"bullet may split across pages: {p.text[:40]!r}"
+        )

@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from pathlib import Path
 
 import structlog
@@ -122,16 +123,28 @@ def _is_bold(r_elem) -> bool:
 
 
 def _is_section_heading(p_elem) -> bool:
-    """A bold Normal paragraph — the template's only bold body text.
+    """A section heading: Heading 2, or a bold Normal paragraph.
 
-    The method makes "bold ONLY the section headings" a formatting rule, so
-    boldness on an unnumbered Normal paragraph is an unambiguous marker. Text is
-    deliberately NOT matched: the template ships the placeholder "Work History OR
-    Projects", and the operator's copy may say anything.
+    Heading 2 is the preferred form and what the operator's template uses. It
+    gives the paragraph an outline level, so the section collapses in Word,
+    appears in the navigation pane, and presents real structure to a document
+    parser — none of which a merely-bolded Normal paragraph does.
+
+    Bold-Normal is still accepted, because the pristine upstream template ships
+    the headings that way and a hand-made template may too. The method's "bold
+    ONLY the section headings" rule makes boldness unambiguous on an unnumbered
+    Normal paragraph.
+
+    Text is deliberately NOT matched in either case: the template ships the
+    placeholder "Work History OR Projects", and an operator's copy may say
+    anything.
     """
-    if _style_of(p_elem) not in ("Normal", ""):
-        return False
     if _num_id(p_elem) is not None:
+        return False
+    style = _style_of(p_elem)
+    if style in ("Heading2", "Heading 2"):
+        return bool(_text_of(p_elem).strip())
+    if style not in ("Normal", ""):
         return False
     runs = [r for r in _direct_runs(p_elem) if (r.find(qn("w:t")) is not None
                                                 and (r.find(qn("w:t")).text or "").strip())]
@@ -278,6 +291,28 @@ def _set_text(p_elem, text: str) -> None:
         _blank_run_text(r)
 
 
+def _set_keep(p_elem, *, keep_next: bool, keep_lines: bool = True) -> None:
+    """Set ``w:keepNext`` / ``w:keepLines`` on a paragraph.
+
+    ``keepLines`` stops a single bullet's own wrapped lines from splitting across
+    a page break. ``keepNext`` binds this paragraph to the one after it, and a
+    chain of them makes Word move the whole group to the next page rather than
+    break it -- which is how the "don't strand an entry" rule below is enforced.
+    """
+    pPr = p_elem.find(qn("w:pPr"))
+    if pPr is None:
+        pPr = OxmlElement("w:pPr")
+        p_elem.insert(0, pPr)
+    for tag, want in (("w:keepNext", keep_next), ("w:keepLines", keep_lines)):
+        existing = pPr.find(qn(tag))
+        if existing is not None:
+            pPr.remove(existing)
+        el = OxmlElement(tag)
+        el.set(qn("w:val"), "1" if want else "0")
+        # Word reads these in schema order; both belong at the front of pPr.
+        pPr.insert(0, el)
+
+
 def _set_hyperlink(doc, p_elem, text: str, url: str) -> None:
     """Replace everything right of the tab with a hyperlinked ``text``.
 
@@ -323,6 +358,10 @@ def _set_hyperlink(doc, p_elem, text: str, url: str) -> None:
     run.append(t_el)
 
     link = OxmlElement("w:hyperlink")
+    # LibreOffice only emits a PDF link annotation when w:history is present.
+    # Without it the link is intact in the DOCX and simply absent from the PDF,
+    # which is the copy a recruiter actually opens.
+    link.set(qn("w:history"), "1")
     link.set(
         qn("r:id"),
         doc.part.relate_to(
@@ -425,7 +464,17 @@ def assemble_docx(
             else:
                 _set_entry_line(line, entry.header_left, entry.header_right)
             new_elems.append(line)
-            for bid in entry.bullet_ids:
+
+            # Never strand an entry across a page break. The header is bound to
+            # the first `keep_together_ratio` of its bullets; if that group does
+            # not fit in the remaining space, Word moves the whole group to the
+            # next page instead of leaving a title with one orphaned bullet. The
+            # remainder may flow, so a long entry still uses the page it has.
+            ratio = float(settings.endpoint.render.keep_together_ratio)
+            bound = max(1, math.ceil(ratio * len(entry.bullet_ids)))
+            _set_keep(line, keep_next=True)
+
+            for position, bid in enumerate(entry.bullet_ids):
                 text = bullet_text.get(bid)
                 if text is None:
                     raise AssemblerError(
@@ -434,6 +483,9 @@ def assemble_docx(
                     )
                 bp = copy.deepcopy(protos["entry_bullet"])
                 _set_text(bp, text)
+                # keepNext on every bullet except the last of the bound group,
+                # which is where the chain is allowed to break.
+                _set_keep(bp, keep_next=position < bound - 1)
                 new_elems.append(bp)
             if protos["spacer"] is not None:
                 new_elems.append(copy.deepcopy(protos["spacer"]))
