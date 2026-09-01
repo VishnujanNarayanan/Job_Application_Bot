@@ -68,6 +68,24 @@ and this project loosely tracks iterations rather than semver.
 - `resume guide/score_coverage.py`: walks `work_experience` (it only ever walked
   `projects`), survives a missing baseline, and adds `--per-title`
 
+### Fixed
+
+- Layer 4: the same sentence could render twice in one entry. The bullet pool
+  deduped by id, but the extractor writes each accomplishment "re-worded in
+  every block it honestly serves", so an entry legitimately holds near-twins
+  under different ids. The greedy alone does not catch them — once coverage is
+  exhausted every candidate has gain 0, and the floor then fills the remaining
+  slots by cosine, which picks the twin of a bullet already on the page. Now
+  deduped on normalised text too, with the lead block's wording winning
+- Layer 6: a project's entry line overflowed. The full repo URL in the right tab
+  slot measured 112 characters against an ~89-character budget (Arial 10.5
+  across a 6.5in text width); it now renders as a short hyperlinked "Code →" at
+  59. Reverses PIVOT_V3.md D8 — that ban existed because the old code
+  hand-patched the rels XML inside the saved zip, where a dangling `r:id` makes
+  LibreOffice refuse the file and fails the PDF render. The link is now minted
+  through python-docx's `part.relate_to()`, and a test asserts no dangling
+  relationship survives assembly
+
 ### Removed
 
 - Layer 4: `select_summary`, `select_skill_candidates`, `score_experience`,
