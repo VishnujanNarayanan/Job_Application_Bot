@@ -19,6 +19,7 @@ template itself rather than being asserted here.
 import copy
 import os
 import re
+import sys
 from pathlib import Path
 
 import yaml
@@ -28,6 +29,9 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from src.endpoint.assembler import apply_link_style  # noqa: E402
 SRC = Path(os.environ.get(
     "HEADLESS_TEMPLATE",
     "/home/vishnu/projects/resume guide/Headless+Resume+Template.docx",
@@ -168,11 +172,13 @@ def set_paragraph(p, pieces):
             rid = add_hyperlink_rel(url)
             hl = OxmlElement("w:hyperlink")
             hl.set(qn("r:id"), rid)
-            # LibreOffice only emits a PDF link annotation when w:history is
-            # present; without it the link survives in the DOCX and silently
-            # vanishes from the rendered PDF.
+            # Word's own followed-link marker. It does NOT decide whether the
+            # PDF gets a link annotation -- the run's rStyle does, which is why
+            # apply_link_style is called below. See its docstring.
             hl.set(qn("w:history"), "1")
-            hl.append(styled_run(proto, text, blue=True, underline=True))
+            run = styled_run(proto, text, blue=True, underline=True)
+            apply_link_style(doc, run)
+            hl.append(run)
             p._p.append(hl)
         else:
             p._p.append(styled_run(proto, text, blue=False, underline=False))

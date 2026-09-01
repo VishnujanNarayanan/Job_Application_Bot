@@ -93,6 +93,17 @@ and this project loosely tracks iterations rather than semver.
 
 ### Fixed
 
+- Layer 6: every hyperlink was dead in the rendered PDF — the five header links
+  and the project `Code →` link alike. LibreOffice emits a link annotation
+  only when the run inside `<w:hyperlink>` carries a `<w:rStyle>`; with direct
+  colour/underline and no character style the link is valid in the DOCX and
+  silently absent from the PDF, which is the copy a recruiter opens. Both the
+  assembler and the template builder now apply the `Hyperlink` character style
+  (`assembler.apply_link_style`, which defines the style if the operator's
+  template lacks it). Measured end to end: 0 annotations before, 6 after.
+  Isolated by A/B — `w:history` and element provenance make no difference; only
+  `rStyle` does, which corrects the note in `PIVOT_V3.md` §12
+
 - Layer 4: the same sentence could render twice in one entry. The bullet pool
   deduped by id, but the extractor writes each accomplishment "re-worded in
   every block it honestly serves", so an entry legitimately holds near-twins
