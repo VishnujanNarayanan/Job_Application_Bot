@@ -82,3 +82,12 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Rendered resumes, ANYWHERE in the tree — this repo is public and a resume
+# carries the operator's real name, phone, email and links. resumes/ is already
+# ignored, but a render written elsewhere for inspection (repo root, a scratch
+# dir) was not, and `git add -A` would have taken it. No .pdf or .docx is
+# tracked today, so a blanket rule costs nothing; un-ignore explicitly with
+# `git add -f` if a genuine document ever needs committing.
+*.pdf
+*.docx
