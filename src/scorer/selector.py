@@ -1,39 +1,54 @@
-"""Layer 4 — pure selection functions (experience, project, summary, skills).
+"""Layer 4 — pure selection functions (entries and their bullets).
 
-All selection is deterministic sentence-transformers cosine math against the
-JD embedding — NO LLM (the LLM only names skill categories and picks a title
-alias later, in Layer 5 Call 1b). Every tunable comes from
-``config.selection`` / ``config.scoring``; nothing is hardcoded.
+Selection is deterministic: no LLM anywhere in this module. Every tunable comes
+from ``config.selection``; nothing is hardcoded. Inputs are in-memory candidate
+dataclasses with embeddings already attached by the master-profile rebuild, so
+these functions unit-test exhaustively against synthetic profiles with no DB, no
+model and no network.
 
-Inputs are in-memory candidate dataclasses (the master_profile rebuild loads
-these from the DB with embeddings already attached). Keeping the functions
-pure means they unit-test exhaustively with synthetic profiles + JDs, with no
-DB, model, or network.
+WHAT CHANGED IN v3, and why
+---------------------------
+The old template had a Skills section and a profile Summary, so this module also
+picked a summary from a pool and ranked the skills pool. The Headless template has
+neither. A qualification now counts only when it is written *inside a bullet*, so
+bullet selection stopped being "top 3 by cosine" and became a coverage problem:
 
-Selection rules (CLAUDE.md "Selection rules — locked"):
+    Pick the bullets that, together, cover the most of what this JD asks for.
 
-    EXPERIENCE  score = alias*0.30 + top3_bullet_avg*0.70
-                threshold 0.45, max 3, min 2 (force-include top-2)
-                bullets: top 3 by score
-    PROJECT     score = name*0.20 + topN_bullet_avg*0.80
-                threshold 0.50, max 3, min 2 (force-include), never hidden
-                bullets: >= floor, min 2, max 3, descending
-    SUMMARY     role_category match then highest cosine (fallback: all)
-    SKILLS      top-14 pool candidates, each scored by max cosine against the
-                best individual JD skill (Layer 5 groups them)
+That is a set-cover, and it is solved greedily — repeatedly take the bullet adding
+the most currently-uncovered JD keyword weight. Two properties fall out of the
+greedy rather than needing rules of their own:
+
+  * A bullet that repeats only keywords already covered has zero gain and is never
+    picked, which is the old "no repeated keyword within an entry" rule.
+  * A bullet that repeats a covered keyword BUT also carries an uncovered one has
+    positive gain and IS picked — because not having a keyword is more damaging
+    than saying one twice.
+
+The covered set resets for EVERY entry (PIVOT_V3.md D5a). Coverage is not rationed
+across entries: the method grades the first entry on whether it clears the whole
+checklist alone, so a keyword the first entry used must remain available to the
+second. Repetition across entries is expected; only within one entry is it waste.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+import structlog
 
 from src.config import settings
 from src.llm.schemas import JDParsed
 from src.scorer.embeddings import Vector, add, cosine, embed_batch
+from src.scorer.keywords import Keyword, covered_by, coverage_of, norm, weight_of
+from src.scorer.qualifications import canonical_overlap
+
+log = structlog.get_logger(__name__)
+
 
 # ---------------------------------------------------------------------------
-# Input candidate structures (embeddings pre-computed by the rebuild)
+# Input candidates (embeddings pre-computed by the rebuild)
 # ---------------------------------------------------------------------------
 
 
@@ -42,34 +57,48 @@ class BulletCand:
     id: str
     text: str
     embedding: Vector
+    block_id: str = ""
+    role: str = ""
+    is_summary: bool = False
+    is_extra: bool = False
+    #: ``norm(text)``, computed once at load. The greedy tests every remaining
+    #: bullet against every keyword on every iteration, so re-normalising inside
+    #: the loop would dominate the cost.
+    norm_text: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.norm_text:
+            self.norm_text = norm(self.text)
 
 
 @dataclass
-class ExperienceCand:
-    id: str
-    company: str
-    actual_title: str
-    safe_title_aliases: list[str]
+class RoleBlockCand:
+    block_id: str
+    role: str
+    role_fit: str
+    entry_header: str
+    entry_dates: str
+    checklist: tuple[str, ...]
+    title_aliases: list[str]
     alias_embeddings: list[Vector]
-    end_date: str  # "YYYY-MM" or "present"
     bullets: list[BulletCand]
 
 
 @dataclass
-class ProjectCand:
-    id: str
-    name: str
-    link: str
-    name_embedding: Vector
-    bullets: list[BulletCand]
+class EntryCand:
+    """A work entry or a project. They render identically, so they select
+    identically — the only differences are the tenure cap and the header's right
+    slot (dates for work, a repo URL for projects)."""
 
-
-@dataclass
-class SummaryCand:
     id: str
-    text: str
-    role_categories: list[str]
-    embedding: Vector
+    kind: str  # "work" | "project"
+    label: str  # company, or project name
+    blocks: list[RoleBlockCand]
+    link: str = ""
+    actual_title: str = ""
+    safe_title_aliases: list[str] = field(default_factory=list)
+    start_date: str = ""
+    end_date: str = ""
 
 
 @dataclass
@@ -80,47 +109,13 @@ class SkillCand:
 
 @dataclass
 class Profile:
-    """The whole candidate pool for one operator (from master_profile)."""
-
-    experiences: list[ExperienceCand]
-    projects: list[ProjectCand]
-    summaries: list[SummaryCand]
+    work: list[EntryCand]
+    projects: list[EntryCand]
     skills: list[SkillCand]
 
 
-@dataclass(frozen=True)
-class JDContext:
-    """Everything Layer 4 needs about the job being scored.
-
-    JD query facets (architecture §4.1), each matched against a different
-    candidate facet:
-      * ``vec_role``       = embed(role_summary)        — titles, project
-                              names, summary (role-level identity)
-      * ``jd_skill_vecs``  = [embed(s) for s in required+nice_to_have] —
-                              skills_pool. Each pool skill is scored against
-                              the BEST individual JD skill (max cosine), not a
-                              blended centroid, so exact matches score ~1.0.
-      * ``vec_match``      = embed(required+nice_to_have) + vec_resp —
-                              bullets (concrete work vs what the JD wants done;
-                              intentionally holistic, architecture §4.2)
-    Build one with :func:`build_jd_context`.
-    """
-
-    vec_role: Vector
-    vec_match: Vector
-    jd_skill_vecs: tuple[Vector, ...]
-    role_category: str | None = None
-    role_level: str | None = None
-    posted_at: datetime | None = None
-    # Most portals (LinkedIn: 471 of 472) give no posting timestamp, so
-    # recency has to be inferred from when the job was SEEN and how far back
-    # that scrape looked. See `apply_decision.recency_score`.
-    scraped_at: datetime | None = None
-    scrape_window_hours: float | None = None
-
-
 # ---------------------------------------------------------------------------
-# Output structures
+# Outputs
 # ---------------------------------------------------------------------------
 
 
@@ -128,42 +123,47 @@ class JDContext:
 class SelectedBullet:
     id: str
     text: str
-    score: float
+    score: float  # cosine vs vec_match — ordering and logging only
+    is_summary: bool = False
+    #: What THIS bullet added to the entry's covered set. Makes a greedy run
+    #: auditable after the fact: `python -m src.cli.inspect` can show why each
+    #: bullet earned its slot.
+    new_keywords: list[str] = field(default_factory=list)
 
 
 @dataclass
-class SelectedExperience:
+class SelectedEntry:
     id: str
-    company: str
-    actual_title: str
-    safe_title_aliases: list[str]
+    kind: str
+    block_id: str
+    label: str
+    header_left: str
+    header_right: str
+    bullets: list[SelectedBullet]
+    covered: set[str]
+    coverage: float
+    similarity: float
     score: float
-    alias_score: float
-    end_date: str
-    bullets: list[SelectedBullet]  # ordered, top-3 by score
+    cap: int
+    title_alias: str = ""
+    link: str = ""
+    end_date: str = ""
 
 
-@dataclass
-class SelectedProject:
-    id: str
-    name: str
-    link: str
-    score: float
-    bullets: list[SelectedBullet]  # ordered descending by score
+@dataclass(frozen=True)
+class JDContext:
+    vec_role: Vector
+    vec_match: Vector
+    role_category: str | None
+    role_level: str | None
+    posted_at: datetime | None
+    scraped_at: datetime | None
+    scrape_window_hours: float | None
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _scored_bullets(bullets: list[BulletCand], query: Vector) -> list[SelectedBullet]:
-    """Score every bullet against a query vector, sorted best-first."""
-    scored = [
-        SelectedBullet(b.id, b.text, cosine(b.embedding, query)) for b in bullets
-    ]
-    scored.sort(key=lambda s: s.score, reverse=True)
-    return scored
 
 
 def _force_min(passing: list, ranked: list, max_shown: int, min_shown: int) -> list:
@@ -175,155 +175,251 @@ def _force_min(passing: list, ranked: list, max_shown: int, min_shown: int) -> l
     return selected
 
 
-# ---------------------------------------------------------------------------
-# Experience
-# ---------------------------------------------------------------------------
+def _months_between(start: str, end: str, now: datetime) -> int:
+    """Whole months between two ``YYYY-MM`` strings; ``present`` means ``now``."""
+
+    def parse(value: str) -> tuple[int, int] | None:
+        v = (value or "").strip().lower()
+        if v in ("", "present", "current"):
+            return None
+        year, _, month = v.partition("-")
+        try:
+            return int(year), int(month or 1)
+        except ValueError:
+            return None
+
+    s = parse(start) or (now.year, now.month)
+    e = parse(end) or (now.year, now.month)
+    return max(0, (e[0] - s[0]) * 12 + (e[1] - s[1]))
 
 
-def score_experience(
-    exp: ExperienceCand, jd: JDContext
-) -> tuple[float, float, list[SelectedBullet]]:
-    """Return (experience_score, alias_score, top-N scored bullets)."""
-    cfg = settings.selection.experience
-    alias_score = max(
-        (cosine(e, jd.vec_role) for e in exp.alias_embeddings), default=0.0
+def bullet_cap(entry: EntryCand, now: datetime) -> int:
+    """How many bullets this entry may show.
+
+    The method: minimum 3, maximum 8, "scaled to how long you were there — if
+    you've been here less than six months you need three, not five". Projects have
+    no dates, so they take a flat cap.
+    """
+    cfg = settings.selection.bullets
+    if entry.kind == "project":
+        return int(cfg.project_cap)
+    months = _months_between(entry.start_date, entry.end_date, now)
+    for band in sorted(cfg.tenure_bands, key=lambda b: float(b["under_months"])):
+        if months < float(band["under_months"]):
+            return int(band["cap"])
+    return int(cfg.max_cap)
+
+
+def _alias_score(block: RoleBlockCand, jd: JDContext) -> float:
+    return max((cosine(e, jd.vec_role) for e in block.alias_embeddings), default=0.0)
+
+
+def lead_block(entry: EntryCand, jd: JDContext) -> RoleBlockCand:
+    """The block that supplies the header, dates and title alias.
+
+    Best title-alias cosine to the JD role, preferring a ``primary`` block on a
+    tie: an ``adjacent`` block is, by the extractor's own admission, a stretch, so
+    it should not get to name the entry when a primary block matches as well.
+    """
+    return max(
+        entry.blocks,
+        key=lambda rb: (_alias_score(rb, jd), rb.role_fit == "primary"),
     )
-    scored = _scored_bullets(exp.bullets, jd.vec_match)
-    top = scored[: cfg.bullets_per_experience]
-    top_avg = sum(s.score for s in top) / len(top) if top else 0.0
-    exp_score = cfg.weight_alias * alias_score + cfg.weight_bullets * top_avg
-    return exp_score, alias_score, top
 
 
-def select_experiences(
-    experiences: list[ExperienceCand], jd: JDContext
-) -> list[SelectedExperience]:
-    """Select 2-3 experiences by score (threshold 0.45, force-include top-2).
+def _entry_pool(entry: EntryCand) -> list[BulletCand]:
+    """Every bullet of every block, deduped by id.
 
-    Returns them score-ranked; display ordering (match-then-recency) is
-    applied separately by :func:`src.scorer.ordering.order_experiences`.
+    Pooled across blocks deliberately: a `data` bullet and a `backend` bullet from
+    the same job are both true of that job, and confining the choice to one block
+    throws away coverage the entry actually has. The off-role scaling below is what
+    keeps that from turning the entry into a stack-mixed mess.
     """
-    cfg = settings.selection.experience
-    ranked: list[SelectedExperience] = []
-    for exp in experiences:
-        score, alias_score, bullets = score_experience(exp, jd)
-        ranked.append(
-            SelectedExperience(
-                id=exp.id,
-                company=exp.company,
-                actual_title=exp.actual_title,
-                safe_title_aliases=list(exp.safe_title_aliases),
-                score=score,
-                alias_score=alias_score,
-                end_date=exp.end_date,
-                bullets=bullets,
+    seen: set[str] = set()
+    pool: list[BulletCand] = []
+    for rb in entry.blocks:
+        for b in rb.bullets:
+            if b.id not in seen:
+                seen.add(b.id)
+                pool.append(b)
+    return pool
+
+
+def _relevance(block_scores: dict[str, float], lead_id: str, block_id: str) -> float:
+    """How much an off-role bullet's coverage gain counts.
+
+    1.0 for the lead block. For any other block, its alias cosine relative to the
+    lead's — so a bullet from a barely-related block must cover something genuinely
+    unclaimed to beat an on-role bullet, but is never excluded outright. Excluding
+    it wholesale (a hard floor) would drop keywords the operator really has, which
+    is the more expensive mistake: not having a keyword costs the match, repeating
+    one costs a line.
+    """
+    if block_id == lead_id:
+        return 1.0
+    cfg = settings.selection.entry
+    if not cfg.off_role_scaling:
+        return 1.0
+    lead = block_scores.get(lead_id, 0.0)
+    if lead <= 0:
+        return 1.0
+    return max(float(cfg.off_role_floor), min(1.0, block_scores.get(block_id, 0.0) / lead))
+
+
+# ---------------------------------------------------------------------------
+# Bullet selection — the greedy set-cover
+# ---------------------------------------------------------------------------
+
+
+def select_entry_bullets(
+    entry: EntryCand,
+    jd: JDContext,
+    keywords: tuple[Keyword, ...],
+    *,
+    now: datetime,
+) -> SelectedEntry:
+    """Pin the summary bullet, then greedily cover this JD's checklist.
+
+    Precedence, when the three limits disagree: **cap > early-stop > floor.**
+
+      * ``cap`` is a hard ceiling — it is what fits on the page.
+      * a zero-gain best candidate stops the fill early: a bullet that says nothing
+        new is exactly what the method says to delete.
+      * the floor overrides that early stop, because an entry showing one bullet is
+        not a valid entry. Below the floor every gain is already 0, so those slots
+        are filled by cosine.
+    """
+    cfg = settings.selection.bullets
+    cap = bullet_cap(entry, now)
+    floor = min(int(cfg.min_per_entry), cap)
+
+    block = lead_block(entry, jd)
+    block_scores = {rb.block_id: _alias_score(rb, jd) for rb in entry.blocks}
+    pool = _entry_pool(entry)
+
+    covered: set[str] = set()
+    chosen: list[SelectedBullet] = []
+
+    # --- 1. pin the summary bullet ----------------------------------------
+    # The lead block's bullets[0]: the one an eight-year-old can follow, and the
+    # method requires an entry to open with it.
+    summary = next((b for b in block.bullets if b.is_summary), None)
+    if summary is None:  # malformed block — fall back to any block's summary
+        summary = next((b for b in pool if b.is_summary), None)
+    if summary is not None:
+        gained = covered_by(summary.norm_text, keywords)
+        chosen.append(
+            SelectedBullet(
+                summary.id, summary.text, cosine(summary.embedding, jd.vec_match),
+                True, sorted(gained),
             )
         )
-    ranked.sort(key=lambda x: x.score, reverse=True)
-    passing = [x for x in ranked if x.score >= cfg.threshold]
-    return _force_min(passing, ranked, cfg.max_shown, cfg.min_shown)
+        covered |= gained
 
-
-# ---------------------------------------------------------------------------
-# Project
-# ---------------------------------------------------------------------------
-
-
-def _select_project_bullets(
-    bullets: list[BulletCand], jd: JDContext
-) -> list[SelectedBullet]:
-    cfg = settings.selection.project
-    scored = _scored_bullets(bullets, jd.vec_match)
-    passing = [b for b in scored if b.score >= cfg.bullet_threshold]
-    return _force_min(passing, scored, cfg.bullet_max, cfg.bullet_min)
-
-
-def score_project(
-    project: ProjectCand, jd: JDContext
-) -> tuple[float, list[SelectedBullet]]:
-    """Return (project_score, selected bullets) — N = bullets shown."""
-    cfg = settings.selection.project
-    name_score = cosine(project.name_embedding, jd.vec_role)
-    chosen = _select_project_bullets(project.bullets, jd)
-    bullet_avg = sum(b.score for b in chosen) / len(chosen) if chosen else 0.0
-    score = cfg.weight_name * name_score + cfg.weight_bullets * bullet_avg
-    return score, chosen
-
-
-def select_projects(
-    projects: list[ProjectCand], jd: JDContext
-) -> list[SelectedProject]:
-    """Select 2-3 projects by score (threshold 0.50, force-include top-2).
-
-    The projects section is NEVER hidden (CLAUDE.md hard rule), so at least
-    ``min_shown`` are always returned when any project exists.
-    """
-    cfg = settings.selection.project
-    ranked: list[SelectedProject] = []
-    for project in projects:
-        score, bullets = score_project(project, jd)
-        ranked.append(
-            SelectedProject(
-                id=project.id,
-                name=project.name,
-                link=project.link,
-                score=score,
-                bullets=bullets,
+    # --- 2. greedy set-cover over the rest --------------------------------
+    # Other blocks' summary bullets stay in the pool. They describe the same work
+    # from another angle, and if one carries a keyword the pinned summary lacks it
+    # earns a slot like any other bullet.
+    remaining = [b for b in pool if summary is None or b.id != summary.id]
+    while len(chosen) < cap and remaining:
+        best = None
+        for b in remaining:
+            gained = covered_by(b.norm_text, keywords) - covered
+            gain = weight_of(gained, keywords) * _relevance(
+                block_scores, block.block_id, b.block_id
             )
+            sim = cosine(b.embedding, jd.vec_match)
+            # Tie-break on the role's canonical checklist (PIVOT_V3.md D12): when
+            # JD gain is equal, prefer the bullet that also covers more of what
+            # recruiters for this title screen for. It can only ever reorder
+            # candidates that already have equal, positive JD gain — a canonical
+            # token the JD never mentions cannot pull a bullet in, because the
+            # zero-gain stop below fires first.
+            canon = canonical_overlap(b.norm_text, block.checklist)
+            key = (round(gain, 9), canon, sim)
+            if best is None or key > best[0]:
+                best = (key, b, gained, gain, sim)
+
+        _, cand, gained, gain, sim = best
+        if gain <= 0.0 and len(chosen) >= floor:
+            break
+        chosen.append(
+            SelectedBullet(cand.id, cand.text, sim, False, sorted(gained))
         )
-    ranked.sort(key=lambda x: x.score, reverse=True)
-    passing = [x for x in ranked if x.score >= cfg.threshold]
-    return _force_min(passing, ranked, cfg.max_shown, cfg.min_shown)
+        covered |= gained
+        remaining.remove(cand)
+
+    return SelectedEntry(
+        id=entry.id,
+        kind=entry.kind,
+        block_id=block.block_id,
+        label=entry.label,
+        header_left=block.entry_header,
+        header_right=block.entry_dates if entry.kind == "work" else entry.link,
+        bullets=chosen,
+        covered=covered,
+        coverage=coverage_of(covered, keywords),
+        similarity=0.0,
+        score=0.0,
+        cap=cap,
+        link=entry.link,
+        end_date=entry.end_date,
+    )
 
 
 # ---------------------------------------------------------------------------
-# Summary (deterministic — no LLM)
+# Entry scoring
 # ---------------------------------------------------------------------------
 
 
-def select_summary(
-    summaries: list[SummaryCand], jd: JDContext
-) -> tuple[SummaryCand | None, float]:
-    """Pick the best summary: among those whose role_categories include the
-    JD's category, highest cosine; else (fallback) highest cosine overall."""
-    if not summaries:
-        return None, 0.0
-    scored = [(s, cosine(s.embedding, jd.vec_role)) for s in summaries]
-    if jd.role_category:
-        matching = [t for t in scored if jd.role_category in t[0].role_categories]
-        if matching:
-            return max(matching, key=lambda t: t[1])
-    if settings.selection.summary.fallback_to_all:
-        return max(scored, key=lambda t: t[1])
-    return None, 0.0
+def score_entry(
+    entry: EntryCand,
+    jd: JDContext,
+    keywords: tuple[Keyword, ...],
+    *,
+    now: datetime,
+) -> SelectedEntry:
+    """Select first, then score the entry on what it actually selected.
 
-
-# ---------------------------------------------------------------------------
-# Skills — Layer 4 produces ranked candidates; Layer 5's LLM groups them
-# ---------------------------------------------------------------------------
-
-
-def select_skill_candidates(
-    skills: list[SkillCand], jd: JDContext
-) -> list[tuple[str, float]]:
-    """Top-N skills_pool candidates by JD cosine (N = config top_candidates).
-
-    Each pool skill scores against the BEST individual JD skill (max cosine
-    over ``jd.jd_skill_vecs``), so an exact match (e.g. pool ``Python`` vs a
-    JD that requires ``Python``) scores ~1.0 instead of being diluted across a
-    blended skill centroid. If the JD listed no skills, every pool skill
-    scores 0.0.
+    Two signals, deliberately not one. ``coverage`` is what a recruiter grades in
+    twenty seconds; ``similarity`` is the calibrated embedding score with a year of
+    measured thresholds behind it. Scoring on coverage alone would rank a
+    keyword-dense but off-topic entry above a well-matched one — which is precisely
+    the "hot dog" failure the method warns about.
     """
-    cfg = settings.selection.skills
-    if jd.jd_skill_vecs:
-        scored = [
-            (s.skill, max(cosine(s.embedding, jv) for jv in jd.jd_skill_vecs))
-            for s in skills
-        ]
-    else:
-        scored = [(s.skill, 0.0) for s in skills]
-    scored.sort(key=lambda t: t[1], reverse=True)
-    return scored[: cfg.top_candidates]
+    cfg = settings.selection.entry
+    selected = select_entry_bullets(entry, jd, keywords, now=now)
+    block = next(b for b in entry.blocks if b.block_id == selected.block_id)
+
+    alias = _alias_score(block, jd)
+    bullet_avg = (
+        sum(b.score for b in selected.bullets) / len(selected.bullets)
+        if selected.bullets
+        else 0.0
+    )
+    selected.similarity = cfg.weight_alias * alias + cfg.weight_bullets * bullet_avg
+    selected.score = (
+        cfg.weight_similarity * selected.similarity
+        + cfg.weight_coverage * selected.coverage
+    )
+    return selected
+
+
+def select_entries(
+    entries: list[EntryCand],
+    jd: JDContext,
+    keywords: tuple[Keyword, ...],
+    *,
+    kind: str,
+    now: datetime | None = None,
+) -> list[SelectedEntry]:
+    """Rank entries, keep ``max_shown`` above threshold, force-include ``min_shown``."""
+    now = now or datetime.now(timezone.utc)
+    cfg = settings.selection.work if kind == "work" else settings.selection.project
+    ranked = [score_entry(e, jd, keywords, now=now) for e in entries]
+    ranked.sort(key=lambda s: s.score, reverse=True)
+    passing = [s for s in ranked if s.score >= cfg.threshold]
+    return _force_min(passing, ranked, cfg.max_shown, cfg.min_shown)
 
 
 # ---------------------------------------------------------------------------
@@ -341,26 +437,27 @@ def build_jd_context(
 ) -> JDContext:
     """Embed a parsed JD into the query facets Layer 4 scores against.
 
-    One batched embed call per job. The batch is
-    ``[blended_skills, responsibilities+summary, role_summary, *each_skill]``:
-    the first three give ``vec_match`` (blended skills + responsibilities, for
-    holistic bullet matching) and ``vec_role``; the trailing per-skill vectors
-    are kept individually as ``jd_skill_vecs`` so each pool skill scores against
-    its best individual JD-skill match. The embed function is injectable so
-    scoring tests run without the model.
+    One batched embed call per job: ``[blended_skills, responsibilities+summary,
+    role_summary]``. The first two sum into ``vec_match`` (holistic "does this
+    bullet describe the work they want done"); the third is ``vec_role``, matched
+    against title aliases.
+
+    The old per-skill ``jd_skill_vecs`` are gone. Their only consumer was
+    ``select_skill_candidates``, which ranked the skills pool for a Skills section
+    that no longer exists — so the batch drops from ``3 + len(skills)`` embeds per
+    job to a flat 3.
+
+    ``responsibilities`` feeds ``vec_match`` but is deliberately NOT a keyword (see
+    ``keywords.jd_keywords``): it is the right signal for "is this the same kind of
+    work" and the wrong one for "does the resume state this qualification".
     """
     embed_batch_fn = embed_batch_fn or embed_batch
-    skill_list = [*parsed.required_skills, *parsed.nice_to_have]
-    skills_text = " ".join(skill_list)
+    skills_text = " ".join([*parsed.required_skills, *parsed.nice_to_have])
     resp_text = " ".join([*parsed.responsibilities, parsed.role_summary])
-    role_text = parsed.role_summary
-    base = embed_batch_fn([skills_text, resp_text, role_text, *skill_list])
-    vec_skills_blended, vec_resp, vec_role = base[0], base[1], base[2]
-    jd_skill_vecs = tuple(base[3:])
+    base = embed_batch_fn([skills_text, resp_text, parsed.role_summary])
     return JDContext(
-        vec_role=vec_role,
-        vec_match=add(vec_skills_blended, vec_resp),
-        jd_skill_vecs=jd_skill_vecs,
+        vec_role=base[2],
+        vec_match=add(base[0], base[1]),
         role_category=parsed.role_category,
         role_level=parsed.role_level,
         posted_at=posted_at,

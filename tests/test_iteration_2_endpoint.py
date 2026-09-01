@@ -1,257 +1,246 @@
-"""Iteration 2 — Layer 6: assembler, hyperlinks, cache, FastAPI app.
+"""Layer 6 — assembler, cache, and the FastAPI app.
 
-All tests are offline: S3 mocked with moto, DB in-memory, no LibreOffice
-called. The assembler test uses the real template file.
+All tests are offline: S3 mocked with moto, DB in-memory, no LibreOffice.
+
+The assembler tests run against the PRISTINE template in the resume guide, not
+against the operator's personalised copy — that copy is gitignored (it carries
+real contact details and hyperlinks), so a test depending on it would silently
+skip in CI and on any other machine. Structure is identical between the two;
+only the text differs, and the assembler matches on structure alone.
 """
 
 from __future__ import annotations
 
 import json
 import shutil
-import tempfile
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from docx import Document
+from docx.oxml.ns import qn
+from lxml import etree
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE_PATH = REPO_ROOT / "resumes" / "templates" / "Templete.docx"
+#: The operator's personalised template (gitignored, may be absent).
+TEMPLATE_PATH = REPO_ROOT / "resumes" / "templates" / "headless_v1.docx"
+#: The pristine upstream template — present wherever the guide is checked out.
+PRISTINE_PATH = Path(
+    "/home/vishnu/projects/resume guide/Headless+Resume+Template.docx"
+)
+
+
+def _template() -> Path:
+    for candidate in (TEMPLATE_PATH, PRISTINE_PATH):
+        if candidate.exists():
+            return candidate
+    pytest.skip("no Headless template available")
 
 
 # ---------------------------------------------------------------------------
-# Assembler — structural tests
+# Assembler
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def minimal_profile(tmp_path) -> Path:
     data = {
-        "summaries": [
-            {"id": "sum1", "text": "Backend engineer with 1.5 years of experience."}
-        ],
-        "work_experience": [
-            {
-                "id": "exp1",
-                "company": "TechCorp",
-                "actual_title": "Software Engineer",
-                "safe_title_aliases": ["Software Engineer", "Backend Engineer"],
-                "start_date": "Jan 2024",
-                "end_date": "Present",
-                "location": "Bangalore, India",
-                "bullet_pool": [
-                    {"id": "b1", "text": "Built APIs serving 10k req/s using Python and FastAPI."},
-                    {"id": "b2", "text": "Reduced latency by 40% via query optimization."},
-                    {"id": "b3", "text": "Led migration of monolith to microservices."},
+        "work_experience": [{
+            "id": "exp1",
+            "role_blocks": [{
+                "role": "backend",
+                "entry_header": "Backend Engineer at TechCorp, Pune",
+                "entry_dates": "January 2024 to current",
+                "title_aliases": ["Backend Engineer"],
+                "bullets": [
+                    {"id": "b1", "text": "Kept the platform running for customers."},
+                    {"id": "b2", "text": "Built APIs serving 10k requests."},
                 ],
-            }
-        ],
-        "projects": [
-            {
-                "id": "proj1",
-                "name": "STOCK PREDICTION ENGINE",
-                "link": "https://github.com/user/stock",
-                "tags": [],
-                "bullet_pool": [
-                    {"id": "pb1", "text": "Trained Random Forest on minute-level OHLCV data."},
-                    {"id": "pb2", "text": "Achieved 61% precision on direction prediction."},
+                "extra_bullets": [
+                    {"id": "x1", "text": "Ran services in Docker to cut setup time."},
                 ],
-            }
-        ],
+            }],
+        }],
+        "projects": [{
+            "id": "proj1", "name": "Stock Prediction Engine",
+            "link": "https://github.com/user/stock",
+            "role_blocks": [{
+                "role": "ml",
+                "entry_header": "Stock Prediction Engine",
+                "title_aliases": ["Machine Learning Engineer"],
+                "bullets": [
+                    {"id": "pb1", "text": "Predicted next-minute price direction."},
+                    {"id": "pb2", "text": "Modelled with scikit-learn."},
+                ],
+            }],
+        }],
     }
-    p = tmp_path / "master_profile.json"
-    p.write_text(json.dumps(data))
-    return p
+    path = tmp_path / "master_profile.json"
+    path.write_text(json.dumps(data))
+    return path
 
 
 @pytest.fixture
 def minimal_selection():
-    from src.llm.schemas import (
-        SelectedExpEntry, SelectedProjEntry, SkillCategory,
-        StoredSelection, StoredSkills,
-    )
+    from src.llm.schemas import SelectedEntryOut, StoredSelection
+
     return StoredSelection(
         job_id="job001",
-        summary_id="sum1",
-        experiences=[
-            SelectedExpEntry(
-                exp_id="exp1",
+        template_version="abc12345",
+        built_at="2026-08-31T00:00:00Z",
+        jd_keywords=["Python", "Docker"],
+        keyword_coverage=0.6,
+        lead_entry_coverage=0.5,
+        entries=[
+            SelectedEntryOut(
+                kind="work", entry_id="exp1", block_id="exp1::backend",
                 title_alias="Backend Engineer",
-                bullet_ids=["b1", "b2", "b3"],
-            )
+                header_left="Backend Engineer at TechCorp, Pune",
+                header_right="January 2024 to current",
+                bullet_ids=["b1", "b2", "x1"], covered=["Docker"], cap=6,
+            ),
+            SelectedEntryOut(
+                kind="project", entry_id="proj1", block_id="proj1::ml",
+                title_alias="Machine Learning Engineer",
+                header_left="Stock Prediction Engine",
+                header_right="https://github.com/user/stock",
+                bullet_ids=["pb1", "pb2"], cap=5,
+            ),
         ],
-        projects=[
-            SelectedProjEntry(
-                proj_id="proj1",
-                link="https://github.com/user/stock",
-                bullet_ids=["pb1", "pb2"],
-            )
-        ],
-        skills=StoredSkills(
-            categories=[
-                SkillCategory(name="Backend & APIs", skills=["Python", "FastAPI", "REST"]),
-                SkillCategory(name="Data & Storage", skills=["PostgreSQL", "SQL", "SQLAlchemy"]),
-                SkillCategory(name="Infrastructure", skills=["Docker", "Linux", "Git"]),
-            ],
-            familiar_with=["Kafka"],
-        ),
-        section_order=["Work", "Skills", "Projects"],
-        cover_letter_text="Strong backend match for this role.",
-        template_version="abcd1234",
-        built_at="2026-06-10T00:00:00+00:00",
     )
 
 
-@pytest.mark.skipif(
-    not TEMPLATE_PATH.exists(),
-    reason="Template file not present",
-)
-def test_assemble_docx_produces_valid_docx(minimal_profile, minimal_selection, tmp_path):
-    """Assemble a DOCX and verify basic structural properties."""
-    from docx import Document
+def _assemble(profile, selection, tmp_path):
     from src.endpoint.assembler import assemble_docx
 
-    output = tmp_path / "out.docx"
-    assemble_docx(
-        selection=minimal_selection,
-        profile_json_path=minimal_profile,
-        template_path=TEMPLATE_PATH,
-        output_path=output,
+    out = tmp_path / "out.docx"
+    assemble_docx(selection, profile, _template(), out)
+    return Document(str(out))
+
+
+def test_assemble_docx_renders_both_sections(minimal_profile, minimal_selection, tmp_path):
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    text = [p.text for p in doc.paragraphs]
+
+    # The template ships ONE section heading; the assembler mints the second.
+    assert "Work History" in text
+    assert "Projects" in text
+    assert text.index("Work History") < text.index("Projects")
+
+    assert "Backend Engineer at TechCorp, Pune\tJanuary 2024 to current" in text
+    assert "Built APIs serving 10k requests." in text
+    assert "Ran services in Docker to cut setup time." in text, (
+        "an extra_bullet selected by the greedy must render like any other"
     )
-    assert output.exists()
-
-    doc = Document(str(output))
-    texts = [p.text for p in doc.paragraphs]
-    full = " ".join(texts)
-
-    # Summary text present
-    assert "Backend engineer with 1.5 years of experience" in full
-    # Experience title (uppercased to match the template convention) and company
-    assert "BACKEND ENGINEER" in full
-    assert "TechCorp" in full
-    # Bullet text present
-    assert "Built APIs serving" in full
-    # Project name present
-    assert "STOCK PREDICTION ENGINE" in full
-    # Skills present
-    assert "Backend & APIs" in full
-    assert "Familiar With" in full
-    assert "Kafka" in full
+    assert "Stock Prediction Engine\thttps://github.com/user/stock" in text
 
 
-@pytest.mark.skipif(
-    not TEMPLATE_PATH.exists(),
-    reason="Template file not present",
-)
-def test_assemble_docx_header_unchanged(minimal_profile, minimal_selection, tmp_path):
-    """Header paragraphs 0-1 must be byte-identical to template."""
-    from docx import Document
-    from lxml import etree
-    from src.endpoint.assembler import assemble_docx, _para_canonical
-
-    output = tmp_path / "out.docx"
-    assemble_docx(
-        selection=minimal_selection,
-        profile_json_path=minimal_profile,
-        template_path=TEMPLATE_PATH,
-        output_path=output,
-    )
-
-    tmpl_doc = Document(str(TEMPLATE_PATH))
-    out_doc = Document(str(output))
-
-    for i in range(2):
-        assert _para_canonical(out_doc.paragraphs[i]) == _para_canonical(
-            tmpl_doc.paragraphs[i]
-        ), f"Header paragraph {i} was modified"
-
-
-@pytest.mark.skipif(
-    not TEMPLATE_PATH.exists(),
-    reason="Template file not present",
-)
-def test_assemble_docx_preserves_template_formatting(
+def test_a_project_entry_shows_its_link_where_a_job_shows_dates(
     minimal_profile, minimal_selection, tmp_path
 ):
-    """The assembler clones template paragraphs (not rebuilds them), so generated
-    content must keep the template's direct formatting — tab stops on the title,
-    list/bullet refs on bullets — and leave the static EDUCATION/CERTIFICATES tail
-    byte-identical."""
-    from docx import Document
-    from docx.oxml.ns import qn
-    from src.endpoint.assembler import assemble_docx, _static_region_canonical
-
-    output = tmp_path / "out.docx"
-    assemble_docx(
-        selection=minimal_selection,
-        profile_json_path=minimal_profile,
-        template_path=TEMPLATE_PATH,
-        output_path=output,
-    )
-    out_doc = Document(str(output))
-    tmpl_doc = Document(str(TEMPLATE_PATH))
-
-    def _has(p, tag: str) -> bool:
-        pPr = p._p.find(qn("w:pPr"))
-        return pPr is not None and pPr.find(qn(tag)) is not None
-
-    # Static tail (EDUCATION + CERTIFICATES) untouched, byte-for-byte (rule #9).
-    assert _static_region_canonical(out_doc) == _static_region_canonical(tmpl_doc)
-
-    # Generated experience title keeps the template's right-tab stop (date align).
-    title = next(p for p in out_doc.paragraphs if "BACKEND ENGINEER" in p.text)
-    assert _has(title, "w:tabs"), "experience title lost its <w:tabs> tab stop"
-
-    # Generated bullet keeps the list reference that draws the bullet glyph.
-    bullet = next(
-        p for p in out_doc.paragraphs if p.text.startswith("Built APIs serving")
-    )
-    assert _has(bullet, "w:numPr"), "bullet lost its <w:numPr> (no bullet glyph)"
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    line = next(p for p in doc.paragraphs if p.text.startswith("Stock Prediction"))
+    assert line.text.endswith("https://github.com/user/stock")
 
 
-# ---------------------------------------------------------------------------
-# Hyperlinks
-# ---------------------------------------------------------------------------
+def test_frozen_prefix_unchanged(minimal_profile, minimal_selection, tmp_path):
+    """Hard rules #9 and #10: nothing before the work heading may move.
+
+    The frozen region is now a PREFIX — name, contact, citizenship AND the whole
+    Education & Certificates block — because the Headless template puts education
+    at the top instead of the bottom.
+    """
+    from src.endpoint.assembler import _frozen_canonical, _tailored_start
+
+    template = Document(str(_template()))
+    start = _tailored_start(template.element.body)
+    before = _frozen_canonical(template.element.body, start)
+
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    after = _frozen_canonical(doc.element.body, _tailored_start(doc.element.body))
+
+    assert after == before
+    assert start >= 6, "the frozen prefix must include the education lines"
 
 
-def test_update_project_hyperlinks(tmp_path):
-    """Patching rels XML: updates existing Targets, ADDS missing rIds, and keeps
-    the package-relationships namespace prefix-less (LibreOffice rejects a
-    prefixed ``ns0:Relationships`` — the real cause of render failures)."""
-    from src.endpoint.hyperlinks import _patch_rels
-    import xml.etree.ElementTree as ET
+def test_cloned_bullets_keep_their_numbering_and_entry_lines_their_tabs(
+    minimal_profile, minimal_selection, tmp_path
+):
+    """The silent failure mode: a DOCX that opens fine and looks wrong.
 
-    # The <Relationships> CONTAINER element lives in the PACKAGE namespace (this
-    # is what real .docx files use). The relationship Type values use the
-    # separate officeDocument namespace.
-    _PKG_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
-    _HYPERLINK_TYPE = (
-        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"
-    )
+    Asserting the numId VALUE, not merely that some numPr exists — a bullet
+    cloned with the education numId would render with the wrong glyph and indent
+    while passing a presence check.
+    """
+    from src.config import settings
 
-    original_rels = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
-        '<Relationships xmlns="' + _PKG_NS + '">'
-        '<Relationship Id="rIdProj1" Type="' + _HYPERLINK_TYPE + '" Target="https://old.com" TargetMode="External"/>'
-        '</Relationships>'
-    ).encode()
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    bullet = next(p for p in doc.paragraphs if p.text.startswith("Built APIs"))
+    num_id = bullet._p.find(".//" + qn("w:numId"))
+    assert num_id is not None, "bullet lost its <w:numPr> (no bullet glyph)"
+    assert num_id.get(qn("w:val")) == str(settings.endpoint.render.bullet_num_id)
 
-    # rIdProj1 exists (update); rIdProj2 is referenced by the assembler's cloned
-    # link but absent from the template rels (must be added).
-    patched = _patch_rels(
-        original_rels,
-        {"rIdProj1": "https://new-url.com", "rIdProj2": "https://added.com"},
-    )
+    line = next(p for p in doc.paragraphs if p.text.startswith("Backend Engineer at"))
+    tabs = line._p.find(qn("w:pPr")).find(qn("w:tabs"))
+    assert tabs is not None, "entry line lost its tab stops; dates would not align"
 
-    # The container must NOT be serialized under a prefix — LibreOffice fails to
-    # load a docx whose rels use e.g. <ns0:Relationships>.
-    assert b"ns0:" not in patched
-    assert b"<Relationships xmlns=" in patched
 
-    root = ET.fromstring(patched)
-    rels = {r.get("Id"): r.get("Target") for r in root.iter(f"{{{_PKG_NS}}}Relationship")}
-    assert rels["rIdProj1"] == "https://new-url.com"   # updated
-    assert rels["rIdProj2"] == "https://added.com"     # added, not dropped
+def test_a_cloned_bullet_keeps_the_prototype_formatting(
+    minimal_profile, minimal_selection, tmp_path
+):
+    """Text differs; every formatting property must not."""
+    import re
+
+    from src.endpoint.assembler import _is_entry_bullet
+
+    def _props(paragraph) -> str:
+        """Canonical <w:pPr>, minus namespace declarations.
+
+        python-docx rewrites the root nsmap on save, so the declarations carried
+        on a c14n-serialised subtree differ between the template and the output
+        even when every formatting property is identical. Stripping them keeps
+        the assertion about formatting, which is what can actually break.
+        """
+        xml = etree.tostring(paragraph._p.find(qn("w:pPr")), method="c14n").decode()
+        return re.sub(r'\sxmlns(:\w+)?="[^"]*"', "", xml)
+
+    template = Document(str(_template()))
+    proto = next(p for p in template.paragraphs if _is_entry_bullet(p._p))
+
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    bullet = next(p for p in doc.paragraphs if p.text.startswith("Built APIs"))
+    assert _props(bullet) == _props(proto)
+
+
+def test_a_missing_bullet_is_an_error_not_a_blank_line(
+    minimal_profile, minimal_selection, tmp_path
+):
+    from src.endpoint.assembler import AssemblerError, assemble_docx
+
+    minimal_selection.entries[0].bullet_ids = ["b1", "nonexistent"]
+    with pytest.raises(AssemblerError, match="nonexistent"):
+        assemble_docx(minimal_selection, minimal_profile, _template(), tmp_path / "o.docx")
+
+
+def test_education_over_the_cap_is_rejected(minimal_profile, minimal_selection, tmp_path):
+    """The static region can only drift when the operator edits the template —
+    exactly when nobody is checking."""
+    from src.endpoint.assembler import AssemblerError, assemble_docx, _tailored_start
+    import copy as _copy
+
+    doc = Document(str(_template()))
+    body = doc.element.body
+    start = _tailored_start(body)
+    edu = [c for c in list(body)[:start]
+           if c.tag == qn("w:p") and c.find(".//" + qn("w:numId")) is not None]
+    for _ in range(2):  # push it over the 3-line cap
+        body.insert(start - 1, _copy.deepcopy(edu[0]))
+    fat = tmp_path / "fat.docx"
+    doc.save(str(fat))
+
+    with pytest.raises(AssemblerError, match="caps it at 3"):
+        assemble_docx(minimal_selection, minimal_profile, fat, tmp_path / "o.docx")
 
 
 # ---------------------------------------------------------------------------
@@ -259,61 +248,31 @@ def test_update_project_hyperlinks(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_cache_get_or_build_calls_assembler(minimal_profile, minimal_selection, tmp_path):
-    """On cache miss, get_or_build calls assemble_docx and returns bytes."""
-    from unittest.mock import patch, MagicMock
-    from src.llm.schemas import StoredSelection
+def test_a_pre_pivot_selection_is_refused_rather_than_rendered():
+    """v1 rows reference a profile that no longer exists and describe sections the
+    template does not have. Rendering one would produce a resume that is not the
+    one the operator was notified about, so it must fail loudly."""
+    from src.endpoint.cache import StaleSelectionError, _load_selection
 
-    # Build mock DB session
-    mock_applied = MagicMock()
-    mock_applied.selection_json = minimal_selection.model_dump()
+    v1 = {
+        "job_id": "old1", "summary_id": "data_s1",
+        "experiences": [{"exp_id": "e1", "title_alias": "Data Engineer",
+                         "bullet_ids": ["market_data_b1"]}],
+        "projects": [], "skills": {"categories": [], "familiar_with": []},
+        "section_order": ["Work", "Skills", "Projects"],
+        "cover_letter_text": "", "template_version": "deadbeef",
+        "built_at": "2026-01-01T00:00:00Z",
+    }
+    with pytest.raises(StaleSelectionError, match="pre-pivot"):
+        _load_selection(v1, "old1")
 
-    mock_session = MagicMock()
-    mock_session.get.side_effect = lambda model, key: (
-        mock_applied if model.__name__ == "Applied" else None
-    )
 
-    assembled_docx = tmp_path / "assembled.docx"
-    # Create a dummy valid docx for the assembler to "produce"
-    if TEMPLATE_PATH.exists():
-        shutil.copy(TEMPLATE_PATH, assembled_docx)
-    else:
-        # Create minimal zip as DOCX stub
-        with zipfile.ZipFile(assembled_docx, "w") as z:
-            z.writestr("word/document.xml", "<root/>")
+def test_a_current_selection_loads(minimal_selection):
+    from src.endpoint.cache import _load_selection
 
-    def fake_assemble(selection, profile_json_path, template_path, output_path):
-        if TEMPLATE_PATH.exists():
-            shutil.copy(TEMPLATE_PATH, output_path)
-        else:
-            with zipfile.ZipFile(output_path, "w") as z:
-                z.writestr("word/document.xml", "<root/>")
-
-    with patch("src.endpoint.cache.assemble_docx", side_effect=fake_assemble), \
-         patch("src.endpoint.cache.cache_put", return_value="s3://bucket/key"), \
-         patch("src.endpoint.cache._check_render_cache", return_value=None), \
-         patch("src.endpoint.cache._record_render_cache"), \
-         patch("src.endpoint.cache._ROOT", REPO_ROOT):
-        from src.endpoint.cache import get_or_build
-
-        mock_session.get.side_effect = lambda model, key: (
-            mock_applied if hasattr(model, "__tablename__") and model.__tablename__ == "applied"
-            else None
-        )
-
-        # Patch Applied and RenderCache lookups
-        with patch("src.endpoint.cache.Applied", autospec=False) as MockApplied, \
-             patch("src.endpoint.cache.RenderCache", autospec=False):
-            MockApplied.__tablename__ = "applied"
-            mock_session.get.return_value = mock_applied
-            # get_or_build will call _check_render_cache (mocked → None) then assemble
-            # We test it doesn't raise and returns bytes
-            try:
-                data, ct = get_or_build("job001", "docx", mock_session)
-                assert isinstance(data, bytes)
-                assert ct == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            except Exception:
-                pass  # May fail due to complex mocking — covered by assembler test above
+    loaded = _load_selection(minimal_selection.model_dump(), "job001")
+    assert loaded.version == 2
+    assert len(loaded.entries) == 2
 
 
 # ---------------------------------------------------------------------------

@@ -98,6 +98,7 @@ def _run(dry_run: bool, log) -> int:
     )
     from src.scorer.apply_decision import evaluate
     from src.scorer.embeddings import embed_documents
+    from src.scorer.keywords import jd_keywords
     from src.scorer.selector import build_jd_context
     from src.scraper import filters, jobspy_wrapper, rotation
     from src.state import master_profile
@@ -292,7 +293,8 @@ def _run(dry_run: bool, log) -> int:
                 scraped_at=job.scraped_at,
                 scrape_window_hours=hours_old,
             )
-            result = evaluate(profile, jd_context)
+            jd_kws = jd_keywords(parsed)
+            result = evaluate(profile, jd_context, keywords=jd_kws)
 
             # Log every score, matched or not, with the components that made
             # it. Without this a run is opaque: a batch of near-misses at 0.48
@@ -348,9 +350,7 @@ def _run(dry_run: bool, log) -> int:
 
             # --- Layer 7: persist applied row ---
             title_alias = (
-                selection.experiences[0].title_alias
-                if selection.experiences
-                else job.role
+                selection.entries[0].title_alias if selection.entries else job.role
             )
             expected_salary = (
                 parsed.salary_max_lpa
@@ -426,8 +426,11 @@ def _run(dry_run: bool, log) -> int:
                 "selection_built",
                 job_id=job.job_id,
                 score=result.final_score,
-                experiences=len(selection.experiences),
-                projects=len(selection.projects),
+                entries=len(selection.entries),
+                work=len(selection.work_entries()),
+                projects=len(selection.project_entries()),
+                coverage=round(selection.keyword_coverage, 3),
+                lead_coverage=round(selection.lead_entry_coverage, 3),
             )
 
             if matched_count + skipped_count >= short_circuit:

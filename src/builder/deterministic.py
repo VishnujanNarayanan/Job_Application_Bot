@@ -43,7 +43,6 @@ from __future__ import annotations
 import structlog
 
 from src.config import settings
-from src.llm.schemas import SkillCategory, StoredSkills
 from src.scorer.embeddings import cosine, embed, embed_batch
 
 log = structlog.get_logger(__name__)
@@ -70,109 +69,6 @@ def choose_title_alias(
     vecs = embed_batch(aliases)
     best = max(zip(aliases, vecs), key=lambda pair: cosine(pair[1], jd_role_vec))
     return best[0]
-
-
-def _taxonomy() -> dict[str, str]:
-    """``{skill_casefold: category}`` from the configured taxonomy."""
-    mapping: dict[str, str] = {}
-    for category, skills in settings.selection.skills.taxonomy.as_dict().items():
-        for skill in skills or []:
-            mapping[str(skill).casefold()] = str(category)
-    return mapping
-
-
-def _category_of(
-    skill: str,
-    taxonomy: dict[str, str],
-    skill_vec,
-    category_vecs: dict[str, list[float]],
-) -> str:
-    """The skill's category: exact lookup, falling back to nearest heading.
-
-    The fallback exists so a skill added to master_profile.yaml but not yet to
-    the taxonomy still lands somewhere rather than vanishing from the resume.
-    It is logged so the gap gets closed — embedding similarity is unreliable
-    for this (see the config comment), so it is a stopgap, not the mechanism.
-    """
-    hit = taxonomy.get(skill.casefold())
-    if hit is not None:
-        return hit
-
-    nearest = max(
-        category_vecs, key=lambda name: cosine(skill_vec, category_vecs[name])
-    )
-    log.warning("skill_untaxonomised", skill=skill, assigned_to=nearest)
-    return nearest
-
-
-def assign_skill_categories(
-    candidates: list[tuple[str, float]],
-    gap_skills: list[str],
-    jd_role_vec=None,
-) -> StoredSkills:
-    """Group Layer 4's ranked skills and show the categories this JD wants.
-
-    ``candidates`` is the ranked ``(skill, jd_cosine)`` list — already the
-    top-N by JD match, so this decides *grouping and which groups to show*,
-    never membership.
-
-    Grouping is an exact taxonomy lookup, so it is always correct. Which
-    categories appear still varies per job: categories are ranked by their
-    best-matching skill's JD score, so a data-heavy JD surfaces the data
-    categories and a backend JD surfaces the backend ones.
-
-    ``gap_skills`` become the "Familiar With" group (capped by
-    ``familiar_with_max``), ordered against the others rather than pinned
-    first (hard rule #7).
-    """
-    cfg = settings.selection.skills
-    per_max = int(cfg.skills_per_category_max)
-    wanted = int(cfg.categories_count)
-
-    if not candidates:
-        return StoredSkills(categories=[], familiar_with=[])
-
-    taxonomy = _taxonomy()
-    all_categories = [str(c) for c in cfg.taxonomy.as_dict()]
-
-    # Only embed anything if a skill is missing from the taxonomy.
-    unknown = [s for s, _ in candidates if s.casefold() not in taxonomy]
-    category_vecs: dict[str, list[float]] = {}
-    skill_vecs: dict[str, list[float]] = {}
-    if unknown:
-        category_vecs = dict(zip(all_categories, embed_batch(all_categories)))
-        skill_vecs = dict(zip(unknown, embed_batch(unknown)))
-
-    buckets: dict[str, list[tuple[str, float]]] = {}
-    for skill, jd_score in candidates:
-        category = _category_of(
-            skill, taxonomy, skill_vecs.get(skill), category_vecs
-        )
-        buckets.setdefault(category, []).append((skill, jd_score))
-
-    # Rank categories by their strongest JD match, keep the top `wanted`.
-    ranked = sorted(
-        buckets.items(),
-        key=lambda kv: max(score for _, score in kv[1]),
-        reverse=True,
-    )[:wanted]
-
-    categories: list[SkillCategory] = []
-    for name, entries in ranked:
-        entries.sort(key=lambda pair: pair[1], reverse=True)
-        categories.append(
-            SkillCategory(name=name, skills=[s for s, _ in entries[:per_max]])
-        )
-
-    familiar = [str(g) for g in gap_skills][: int(cfg.familiar_with_max)]
-
-    log.info(
-        "skills_assigned",
-        categories={c.name: len(c.skills) for c in categories},
-        familiar_with=len(familiar),
-        untaxonomised=len(unknown),
-    )
-    return StoredSkills(categories=categories, familiar_with=familiar)
 
 
 def jd_role_vector(jd_role_summary: str, fallback_text: str = "") -> list[float]:

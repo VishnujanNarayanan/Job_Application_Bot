@@ -36,28 +36,46 @@ from src.state.models import (
 
 
 def _valid_profile() -> dict[str, Any]:
+    """A role_block-shaped profile, as the bullet-extract skill now emits it."""
     return {
         "personal": {"name": "Jane Doe", "email": "jane@example.com"},
-        "summaries": [
-            {"id": "sum1", "text": "Data engineer summary.", "role_categories": ["data"]},
-        ],
         "work_experience": [
             {
                 "id": "exp1", "company": "Acme", "actual_title": "Data Engineer",
                 "safe_title_aliases": ["Data Engineer", "Analytics Engineer"],
                 "start_date": "2023-01", "end_date": "present",
-                "bullet_pool": [
-                    {"id": "exp1_b1", "text": "Built pipelines in Python."},
-                    {"id": "exp1_b2", "text": "Owned the SQL warehouse."},
+                "role_blocks": [
+                    {
+                        "role": "data",
+                        "entry_header": "Data Engineer at Acme, Pune",
+                        "entry_dates": "January 2023 to current",
+                        "checklist": ["Data Engineer"],
+                        "title_aliases": ["Data Engineer", "Analytics Engineer"],
+                        "bullets": [
+                            {"id": "exp1_b1", "text": "Kept the warehouse current."},
+                            {"id": "exp1_b2", "text": "Built pipelines in Python."},
+                        ],
+                        "extra_bullets": [
+                            {"id": "exp1_x1", "text": "Ran jobs in Docker on Linux."},
+                        ],
+                    }
                 ],
             }
         ],
         "projects": [
             {
                 "id": "proj1", "name": "Pipeline Tool", "link": "http://x",
-                "bullet_pool": [
-                    {"id": "proj1_b1", "text": "Streaming ETL with Kafka."},
-                    {"id": "proj1_b2", "text": "Dashboards in Superset."},
+                "role_blocks": [
+                    {
+                        "role": "data",
+                        "entry_header": "Pipeline Tool",
+                        "checklist": ["Data Engineer"],
+                        "title_aliases": ["Data Engineer"],
+                        "bullets": [
+                            {"id": "proj1_b1", "text": "Streaming ETL with Kafka."},
+                            {"id": "proj1_b2", "text": "Dashboards in Superset."},
+                        ],
+                    }
                 ],
             }
         ],
@@ -129,25 +147,43 @@ def test_actual_title_must_be_in_aliases() -> None:
         MasterProfile.model_validate(bad)
 
 
-def test_project_needs_two_bullets() -> None:
+def test_a_project_may_not_carry_dates() -> None:
+    """The method: projects don't need dates, and showing them invites the
+    reader to date a side project like a job."""
     bad = _valid_profile()
-    bad["projects"][0]["bullet_pool"] = [{"id": "proj1_b1", "text": "only one"}]
-    with pytest.raises(ValueError, match="bullet_pool needs >= 2"):
+    bad["projects"][0]["role_blocks"][0]["entry_dates"] = "Jan 2024 to Mar 2024"
+    with pytest.raises(ValueError, match="projects carry no dates"):
+        MasterProfile.model_validate(bad)
+
+
+def test_a_work_block_must_carry_dates() -> None:
+    bad = _valid_profile()
+    del bad["work_experience"][0]["role_blocks"][0]["entry_dates"]
+    with pytest.raises(ValueError, match="entry_dates"):
+        MasterProfile.model_validate(bad)
+
+
+def test_block_aliases_must_be_within_safe_title_aliases() -> None:
+    """Hard rule #6 — a block alias is a title that can reach the page."""
+    bad = _valid_profile()
+    bad["work_experience"][0]["role_blocks"][0]["title_aliases"].append("CTO")
+    with pytest.raises(ValueError, match="not in safe_title_aliases"):
         MasterProfile.model_validate(bad)
 
 
 def test_duplicate_bullet_id_rejected() -> None:
     bad = _valid_profile()
-    bad["projects"][0]["bullet_pool"][1]["id"] = "exp1_b1"  # collides
+    bad["projects"][0]["role_blocks"][0]["bullets"][1]["id"] = "exp1_b1"  # collides
     with pytest.raises(ValueError, match="duplicate bullet id"):
         MasterProfile.model_validate(bad)
 
 
-def test_empty_skills_pool_rejected() -> None:
-    bad = _valid_profile()
-    bad["skills_pool"] = []
-    with pytest.raises(ValueError, match="skills_pool is empty"):
-        MasterProfile.model_validate(bad)
+def test_an_empty_skills_pool_warns_but_loads() -> None:
+    """It renders nothing — it only feeds JD-parse repair and the gap list — so a
+    skill-less extractor run must not be a hard failure."""
+    ok = _valid_profile()
+    ok["skills_pool"] = []
+    assert MasterProfile.model_validate(ok).skills_pool == []
 
 
 # ---------------------------------------------------------------------------
@@ -155,17 +191,26 @@ def test_empty_skills_pool_rejected() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_desired_bullets_includes_skills_and_project_names() -> None:
+def test_desired_bullets_carries_block_provenance() -> None:
     p = MasterProfile.model_validate(_valid_profile())
-    desired = desired_bullets(p)
-    by_type = defaultdict(list)
-    for d in desired:
-        by_type[d.parent_type].append(d)
-    assert {b.id for b in by_type["experience"]} == {"exp1_b1", "exp1_b2"}
-    assert {b.id for b in by_type["project"]} == {"proj1_b1", "proj1_b2"}
-    assert {b.text for b in by_type["skill"]} == {"Python", "SQL", "Airflow"}
-    assert by_type["project_name"][0].text == "Pipeline Tool"
-    assert by_type["project_name"][0].id == "projname::proj1"
+    desired = {d.id: d for d in desired_bullets(p)}
+
+    assert desired["exp1_b1"].block_id == "exp1::data"
+    assert desired["exp1_b1"].is_summary is True, "bullets[0] is the summary bullet"
+    assert desired["exp1_b1"].bullet_index == 0
+    assert desired["exp1_b2"].is_summary is False
+
+    extra = desired["exp1_x1"]
+    assert extra.is_extra is True
+    assert extra.is_summary is False, "the recovery pool never leads an entry"
+    assert extra.bullet_index is None, "the recovery pool is unordered"
+
+    assert {d.text for d in desired.values() if d.parent_type == "skill"} == {
+        "Python", "SQL", "Airflow"
+    }
+    assert not any(d.parent_type == "project_name" for d in desired.values()), (
+        "project_name rows fed the old name-cosine and are gone"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -204,10 +249,11 @@ def test_rebuild_clean_db_inserts_everything(tmp_path) -> None:
     report = rebuild(session, path=yaml_path, embed_fn=_embed)
 
     assert report.skipped is False
-    # 2 exp bullets + 2 proj bullets + 1 project_name + 3 skills = 8
+    # 2 exp bullets + 1 exp extra + 2 proj bullets + 3 skills = 8
     assert report.bullets_inserted == 8
-    assert report.summaries_inserted == 1
-    assert report.aliases_inserted == 2  # two safe_title_aliases
+    # 2 aliases on the work block + 1 on the project block; projects have
+    # aliases now, which they never did before the pivot.
+    assert report.aliases_inserted == 3
     # Embeddings were attached.
     bullets = list(session.store[MasterBullets].values())
     assert all(b.embedding for b in bullets)
@@ -242,38 +288,60 @@ def test_load_profile_joins_json_and_db(tmp_path) -> None:
 
     session = FakeSession()
     # Prime active DB rows as the rebuild would have produced.
-    session.add(MasterBullets(bullet_id="exp1_b1", parent_id="exp1",
-                              parent_type="experience", text="Built pipelines.",
-                              embedding=[1.0, 0.0], is_active=True))
+    for bid, text, emb in [
+        ("exp1_b1", "Kept the warehouse current.", [1.0, 0.0]),
+        ("exp1_b2", "Built pipelines in Python.", [0.9, 0.1]),
+        ("exp1_x1", "Ran jobs in Docker on Linux.", [0.8, 0.2]),
+    ]:
+        session.add(MasterBullets(bullet_id=bid, parent_id="exp1",
+                                  parent_type="experience", text=text,
+                                  embedding=emb, is_active=True))
     session.add(MasterBullets(bullet_id="proj1_b1", parent_id="proj1",
                               parent_type="project", text="Kafka ETL.",
                               embedding=[0.0, 1.0], is_active=True))
-    session.add(MasterBullets(bullet_id="projname::proj1", parent_id="proj1",
-                              parent_type="project_name", text="Pipeline Tool",
-                              embedding=[0.5, 0.5], is_active=True))
     session.add(MasterBullets(bullet_id="skill::Python", parent_id="__skills_pool__",
                               parent_type="skill", text="Python",
                               embedding=[0.9, 0.1], is_active=True))
-    session.add(MasterTitleAliases(id="exp1::alias::Data Engineer", parent_id="exp1",
+    session.add(MasterTitleAliases(id="exp1::data::alias::Data Engineer",
+                                   parent_id="exp1", block_id="exp1::data",
                                    alias="Data Engineer", embedding=[1.0, 0.0],
                                    is_active=True))
-    session.add(MasterSummaries(summary_id="sum1", text="Data engineer summary.",
-                                role_categories=["data"], embedding=[0.7, 0.7],
-                                is_active=True))
 
     profile = load_profile(session, json_path=json_path)
 
-    assert len(profile.experiences) == 1
-    exp = profile.experiences[0]
-    assert exp.company == "Acme"                      # structure from JSON
-    assert exp.bullets[0].embedding == [1.0, 0.0]     # embedding from DB
-    assert exp.safe_title_aliases == ["Data Engineer"]
-    assert exp.alias_embeddings == [[1.0, 0.0]]
-    proj = profile.projects[0]
-    assert proj.name == "Pipeline Tool"
-    assert proj.name_embedding == [0.5, 0.5]          # project_name row
+    assert len(profile.work) == 1
+    entry = profile.work[0]
+    assert entry.label == "Acme"                       # structure from JSON
+    assert entry.kind == "work"
+    block = entry.blocks[0]
+    assert block.block_id == "exp1::data"
+    assert block.entry_header == "Data Engineer at Acme, Pune"
+    assert block.alias_embeddings == [[1.0, 0.0]]      # embeddings from DB
+    assert [b.id for b in block.bullets] == ["exp1_b1", "exp1_b2", "exp1_x1"]
+    assert block.bullets[0].is_summary is True
+    assert block.bullets[2].is_extra is True, "extra_bullets load into the pool"
+    assert block.bullets[0].embedding == [1.0, 0.0]
+
+    project = profile.projects[0]
+    assert project.label == "Pipeline Tool"
+    assert project.link == "http://x"
     assert [s.skill for s in profile.skills] == ["Python"]
-    assert profile.summaries[0].role_categories == ["data"]
+
+
+def test_load_profile_skips_a_deactivated_bullet(tmp_path) -> None:
+    """A bullet removed from the YAML is deactivated, never deleted — it must
+    drop out of selection without a zero vector standing in for it."""
+    json_path = tmp_path / "master_profile.json"
+    json_path.write_text(json.dumps(_valid_profile()))
+
+    session = FakeSession()
+    session.add(MasterBullets(bullet_id="exp1_b1", parent_id="exp1",
+                              parent_type="experience", text="Kept it current.",
+                              embedding=[1.0, 0.0], is_active=True))
+
+    profile = load_profile(session, json_path=json_path)
+    ids = [b.id for b in profile.work[0].blocks[0].bullets]
+    assert ids == ["exp1_b1"]
 
 
 def test_load_profile_missing_json_raises(tmp_path) -> None:

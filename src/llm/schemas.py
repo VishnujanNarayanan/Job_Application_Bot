@@ -417,91 +417,84 @@ class JDParsed(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Gemini Call 1b — title alias + skills selection + cover letter (Layer 5)
+# The stored selection (Layer 5) — the durable per-job artifact
 # ---------------------------------------------------------------------------
+#
+# SkillCategory / StoredSkills / SelectedExpEntry / SelectedProjEntry were
+# removed with the Skills section. The Headless template has no skills list and
+# no profile summary, so there is nothing for them to describe; a keyword now
+# counts only when it is written inside a bullet.
 
 
-class SkillCategory(BaseModel):
-    """One named skills grouping, filled from Layer 4's pool candidates."""
+class SelectedEntryOut(BaseModel):
+    """One rendered entry. Work and projects share a shape because they render
+    identically — a header line and a bullet list. The only difference is what
+    sits in the header's right-hand slot."""
 
-    name: str = Field(
-        ...,
-        max_length=60,
-        description="Category label, from selection.skills.category_names.",
+    kind: Literal["work", "project"]
+    entry_id: str
+    block_id: str = Field(
+        ..., description="'{entry_id}::{role}' — which role_block led this entry."
     )
-    skills: list[str] = Field(
-        ...,
-        min_length=1,
-        max_length=5,
-        description="Skills drawn from Layer 4's top-N pool candidates.",
+    title_alias: str = Field(
+        ..., description="From that block's title_aliases (hard rule #6)."
     )
-
-
-class StoredSkills(BaseModel):
-    """Skills section of a resume selection."""
-
-    # The bounds were "exactly 3" when this was the LLM's output contract and
-    # the prompt asked for three. Grouping is now computed, so the count is a
-    # RESULT: with a full candidate list all configured categories fill, but a
-    # sparse pool legitimately yields fewer, and an empty category is dropped
-    # rather than padded with filler.
-    categories: list[SkillCategory] = Field(
-        ...,
-        max_length=6,
-        description="Non-empty skill categories, ordered by JD relevance.",
+    header_left: str = Field(
+        ..., description="e.g. 'Data Engineer at CiteSert, Mumbai'."
     )
-    familiar_with: list[str] = Field(
-        default_factory=list,
-        max_length=4,
-        description="0-4 gap skills the JD wants but that are not in the pool.",
+    header_right: str = Field(
+        "", description="Dates for work; the repo URL for a project; may be empty."
     )
-
-
-# ResumeBuildLLMOutput was removed with Call 1b. Title alias and skill
-# grouping are now deterministic (src/builder/deterministic.py), so no model
-# returns them and there is nothing to validate at the API boundary.
-
-class SelectedExpEntry(BaseModel):
-    """One selected work-experience entry."""
-
-    exp_id: str
-    title_alias: str
-    bullet_ids: list[str] = Field(..., description="3 ordered bullet IDs.")
-
-
-class SelectedProjEntry(BaseModel):
-    """One selected project entry."""
-
-    proj_id: str
-    link: str = Field(..., description="Project URL used for the 'Code →' hyperlink.")
     bullet_ids: list[str] = Field(
-        ..., description="2-3 ordered bullet IDs, descending by score."
+        ..., description="Ordered; [0] is the entry's summary bullet."
+    )
+    covered: list[str] = Field(
+        default_factory=list, description="JD keywords this entry's bullets hit."
+    )
+    coverage: float = 0.0
+    score: float = 0.0
+    cap: int = Field(
+        0, description="The tenure cap that applied — makes a 3-vs-8 entry auditable."
     )
 
 
 class StoredSelection(BaseModel):
-    """The durable per-job artifact written to applied.selection_json.
+    """The durable per-job artifact written to ``applied.selection_json``.
 
-    The endpoint assembler reads this to render the resume on demand.
-    Bullet texts are looked up from master_bullets by id; profile
-    structure (company, dates, project names) from master_profile.json.
+    The endpoint assembler reads this to render on demand. Bullet texts are looked
+    up from ``master_bullets`` by id; structure comes from ``master_profile.json``.
+
+    ``version`` exists because v1 rows are still in the table and are NOT
+    migrated: they reference bullet ids and a ``summary_id`` from the pre-pivot
+    profile, which no longer resolve. The endpoint detects them and says so rather
+    than rendering something wrong.
     """
 
+    version: Literal[2] = 2
     job_id: str
-    summary_id: str
-    experiences: list[SelectedExpEntry]
-    projects: list[SelectedProjEntry]
-    skills: StoredSkills
-    section_order: list[str] = Field(
-        ...,
-        description="Variable section names in display order. "
-        "E.g. ['Work', 'Skills', 'Projects'] or ['Work', 'Projects', 'Skills'].",
+    entries: list[SelectedEntryOut] = Field(
+        ..., description="Work entries then project entries, in render order."
     )
-    cover_letter_text: str
+    jd_keywords: list[str] = Field(
+        default_factory=list, description="The checklist this selection was graded on."
+    )
+    keyword_coverage: float = Field(
+        0.0, description="Weighted fraction covered by the union of all entries."
+    )
+    lead_entry_coverage: float = Field(
+        0.0, description="The same for the first entry alone — the headline number."
+    )
     template_version: str = Field(
         ..., description="MD5[:8] of the template file at build time."
     )
     built_at: str = Field(..., description="ISO-8601 timestamp.")
+    cover_letter_text: str = ""
+
+    def work_entries(self) -> list[SelectedEntryOut]:
+        return [e for e in self.entries if e.kind == "work"]
+
+    def project_entries(self) -> list[SelectedEntryOut]:
+        return [e for e in self.entries if e.kind == "project"]
 
 
 class MonthlyReportLLM(BaseModel):

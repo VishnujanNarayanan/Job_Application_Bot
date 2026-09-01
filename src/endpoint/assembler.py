@@ -1,31 +1,49 @@
-"""DOCX assembler — clone the template, substitute text only (Layer 6 / §6.3).
+"""Layer 6 — assemble a tailored DOCX from a StoredSelection + the template.
 
-Produces a tailored DOCX from a ``StoredSelection`` and the current template.
+Design principle, unchanged from v1: **the template is the layout authority.** The
+assembler never builds a paragraph from style names. It deep-clones the template's
+own paragraphs as formatting *prototypes* and replaces only the text inside their
+runs, so tab stops, numbering references, fonts, spacing and colour survive exactly
+as the operator laid them out in Word.
 
-Design principle: **the template is the layout authority.** The assembler never
-builds paragraphs from style names — that loses the template's direct formatting
-(tab stops, list/bullet references, indentation, spacing, run fonts/sizes). Instead
-it deep-clones the template's own paragraphs as formatting *prototypes* and replaces
-ONLY the text inside their runs. Everything else — `<w:tabs>`, `<w:numPr>`, `<w:ind>`,
-`<w:spacing>`, each run's `<w:rPr>` — is preserved byte-for-byte.
+WHAT THE HEADLESS TEMPLATE CHANGED
+----------------------------------
+Every structural assumption the v1 assembler made is wrong for this template:
 
-Tailored regions: summary text (para 2), WORK EXPERIENCE, SKILLS, PROJECTS.
-Static regions (left verbatim): header (paras 0-1), EDUCATION, CERTIFICATES.
+  v1                                  Headless
+  ----------------------------------  -----------------------------------------
+  sections found by Heading 1 text    section headings are BOLD Normal paragraphs
+  ("WORK EXPERIENCE", "SKILLS", ...)  whose text is a placeholder, so it cannot
+                                      be matched on
+  summary written to paragraphs[2]    there is no summary paragraph at all
+  6 prototypes incl. a SKILLS one     4 prototypes; a missing SKILLS section is
+                                      the normal case, not an error
+  Education frozen as a SUFFIX        Education sits at the TOP, so the frozen
+  (EDUCATION -> end of body)          region is a PREFIX (start -> Work History)
+  project links via <w:hyperlink>     the template has no hyperlink elements and
+  and synthetic r:id rels             no hyperlink rels; links are plain text
 
-Algorithm:
-  1. Load a fresh template copy (original never modified); load a reference copy.
-  2. Assert header (paras 0-1) unchanged (hard rule #10).
-  3. Fill the summary paragraph (para 2) text.
-  4. Capture deep-copy prototypes of the first experience block (title/company/
-     bullet), the first project block (name/bullet), and a skill paragraph —
-     BEFORE any mutation, so edits cannot corrupt the prototypes.
-  5. Build WORK / SKILLS / PROJECTS by cloning prototypes and substituting text;
-     replace each section's content between its heading and the next (by live
-     element identity — never stale indices).
-  6. Reorder Skills <-> Projects per ``selection.section_order`` if needed.
-  7. Re-assert header unchanged; diff-validate EDUCATION + CERTIFICATES unchanged
-     (hard rule #9).
-  8. Save; update project hyperlink targets in document.xml.rels by r:id (#11).
+Detection is therefore structural, never textual:
+
+    section heading  Normal, no numPr, non-empty, every non-empty run bold
+    entry line       Heading 3 WITHOUT numPr  (Education lines HAVE numPr)
+    entry bullet     Normal with numId == 1   (numId 2 is Education)
+
+The template ships ONE section heading ("Work History OR Projects"), so the
+assembler mints the second by cloning it — "Work History", then "Projects".
+
+HARD RULES #9 AND #10
+---------------------
+They collapse into one property, which is a real simplification over v1. The
+assembler never touches any body element before the second section heading: name,
+contact, citizenship, and the whole Education & Certificates block. That prefix is
+canonicalised (lxml c14n) before and after assembly and must be byte-identical.
+Everything after it is rebuilt from scratch, so there is no "permitted region"
+nuance left to police.
+
+Education & Certificates is static by design (PIVOT_V3.md D9): the method caps it
+at three lines and the operator hand-writes it into their template copy, which is
+also why no code chooses which of nine education/certification records appear.
 """
 
 from __future__ import annotations
@@ -40,24 +58,263 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from lxml import etree
 
-from src.endpoint.hyperlinks import update_project_hyperlinks
+from src.config import settings
 from src.llm.schemas import StoredSelection
 
 log = structlog.get_logger(__name__)
 
 _ROOT = Path(__file__).resolve().parents[2]
 
-_WORK = "WORK EXPERIENCE"
-_SKILLS = "SKILLS"
-_PROJECTS = "PROJECTS"
-_EDUCATION = "EDUCATION"
-_CERTS = "CERTIFICATES"
-
 _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+_WORK_HEADING = "Work History"
+_PROJECTS_HEADING = "Projects"
 
 
 class AssemblerError(RuntimeError):
     """Raised when a template constraint is violated."""
+
+
+# ---------------------------------------------------------------------------
+# Structural predicates
+# ---------------------------------------------------------------------------
+
+
+def _style_of(p_elem) -> str:
+    pPr = p_elem.find(qn("w:pPr"))
+    if pPr is None:
+        return ""
+    pStyle = pPr.find(qn("w:pStyle"))
+    return pStyle.get(qn("w:val"), "") if pStyle is not None else ""
+
+
+def _num_id(p_elem) -> str | None:
+    pPr = p_elem.find(qn("w:pPr"))
+    if pPr is None:
+        return None
+    numPr = pPr.find(qn("w:numPr"))
+    if numPr is None:
+        return None
+    numId = numPr.find(qn("w:numId"))
+    return numId.get(qn("w:val")) if numId is not None else None
+
+
+def _direct_runs(p_elem) -> list:
+    """Direct ``<w:r>`` children (excludes runs nested in ``<w:hyperlink>``)."""
+    return p_elem.findall(qn("w:r"))
+
+
+def _text_of(p_elem) -> str:
+    return "".join(t.text or "" for t in p_elem.iter(qn("w:t")))
+
+
+def _is_bold(r_elem) -> bool:
+    rPr = r_elem.find(qn("w:rPr"))
+    if rPr is None:
+        return False
+    b = rPr.find(qn("w:b"))
+    return b is not None and b.get(qn("w:val")) not in ("0", "false")
+
+
+def _is_section_heading(p_elem) -> bool:
+    """A bold Normal paragraph — the template's only bold body text.
+
+    The method makes "bold ONLY the section headings" a formatting rule, so
+    boldness on an unnumbered Normal paragraph is an unambiguous marker. Text is
+    deliberately NOT matched: the template ships the placeholder "Work History OR
+    Projects", and the operator's copy may say anything.
+    """
+    if _style_of(p_elem) not in ("Normal", ""):
+        return False
+    if _num_id(p_elem) is not None:
+        return False
+    runs = [r for r in _direct_runs(p_elem) if (r.find(qn("w:t")) is not None
+                                                and (r.find(qn("w:t")).text or "").strip())]
+    return bool(runs) and all(_is_bold(r) for r in runs)
+
+
+def _is_entry_line(p_elem) -> bool:
+    """Heading 3 WITHOUT numPr — the italic 'Title at Company \\t Dates' line.
+
+    Education lines are also Heading 3 but carry numId 2, which is what separates
+    them.
+    """
+    return _style_of(p_elem) in ("Heading3", "Heading 3") and _num_id(p_elem) is None
+
+
+def _is_entry_bullet(p_elem) -> bool:
+    return _num_id(p_elem) == str(settings.endpoint.render.bullet_num_id)
+
+
+def _is_spacer(p_elem) -> bool:
+    return (
+        p_elem.tag == qn("w:p")
+        and _num_id(p_elem) is None
+        and not _text_of(p_elem).strip()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Region split
+# ---------------------------------------------------------------------------
+
+
+def _body_paragraphs(body) -> list:
+    return [c for c in body if c.tag == qn("w:p")]
+
+
+def _tailored_start(body) -> int:
+    """Index into ``body`` of the SECOND section heading.
+
+    The first is "Education & Certificates" (static, frozen); the second opens the
+    tailored region. Everything from here to the ``sectPr`` is rebuilt.
+    """
+    seen = 0
+    for i, child in enumerate(body):
+        if child.tag == qn("w:p") and _is_section_heading(child):
+            seen += 1
+            if seen == 2:
+                return i
+    raise AssemblerError(
+        "Template has fewer than two bold section headings. It needs "
+        "'Education & Certificates' and a work/projects heading, both bold."
+    )
+
+
+def _frozen_canonical(body, start: int) -> bytes:
+    """Canonical XML of the frozen prefix (hard rules #9 + #10)."""
+    return b"".join(etree.tostring(c, method="c14n") for c in list(body)[:start])
+
+
+def _assert_education_within_cap(body, start: int, template_name: str) -> None:
+    """The method caps Education & Certificates at three lines.
+
+    The region is static, so this cannot drift at runtime — but it CAN drift when
+    the operator edits their template, which is exactly when nobody is checking.
+    """
+    cap = int(settings.endpoint.render.education_max_lines)
+    edu_num_id = str(settings.endpoint.render.education_num_id)
+    lines = [c for c in list(body)[:start]
+             if c.tag == qn("w:p") and _num_id(c) == edu_num_id]
+    if len(lines) > cap:
+        raise AssemblerError(
+            f"Education & Certificates has {len(lines)} lines; the method caps it "
+            f"at {cap}. Trim {template_name}."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Prototype capture
+# ---------------------------------------------------------------------------
+
+
+def _capture_prototypes(body, start: int) -> dict:
+    """Deep-copy the four paragraphs the assembler clones from.
+
+    Captured BEFORE any mutation, because the originals live inside the region
+    that gets deleted.
+    """
+    tail = [c for c in list(body)[start:] if c.tag == qn("w:p")]
+    protos = {
+        "section_heading": next((p for p in tail if _is_section_heading(p)), None),
+        "entry_line": next((p for p in tail if _is_entry_line(p)), None),
+        "entry_bullet": next((p for p in tail if _is_entry_bullet(p)), None),
+        "spacer": next((p for p in tail if _is_spacer(p)), None),
+    }
+    missing = [k for k, v in protos.items() if v is None and k != "spacer"]
+    if missing:
+        raise AssemblerError(
+            f"Template prototype(s) not found: {missing}. The tailored region must "
+            "contain at least one bold section heading, one Heading-3 entry line "
+            f"with a tab stop, and one bullet with numId="
+            f"{settings.endpoint.render.bullet_num_id}."
+        )
+    if not _has_tab(protos["entry_line"]):
+        raise AssemblerError(
+            "The entry-line prototype has no tab run, so dates and project links "
+            "would have nowhere to sit. Keep the template's right-aligned tab stop."
+        )
+    return {k: (copy.deepcopy(v) if v is not None else None) for k, v in protos.items()}
+
+
+def _has_tab(p_elem) -> bool:
+    return any(r.find(qn("w:tab")) is not None for r in _direct_runs(p_elem))
+
+
+# ---------------------------------------------------------------------------
+# Run-level text substitution (preserves rPr, tabs, numPr)
+# ---------------------------------------------------------------------------
+
+
+def _set_run_text(r_elem, text: str) -> None:
+    """Set a run's ``<w:t>``, preserving its ``<w:rPr>``."""
+    t = r_elem.find(qn("w:t"))
+    if t is None:
+        t = OxmlElement("w:t")
+        r_elem.append(t)
+    t.text = text
+    if text != text.strip():
+        t.set(_XML_SPACE, "preserve")
+
+
+def _blank_run_text(r_elem) -> None:
+    t = r_elem.find(qn("w:t"))
+    if t is not None:
+        t.text = ""
+
+
+def _set_text(p_elem, text: str) -> None:
+    """Single-text paragraph (a bullet): first run gets it, the rest are blanked."""
+    runs = _direct_runs(p_elem)
+    if not runs:
+        return
+    _set_run_text(runs[0], text)
+    for r in runs[1:]:
+        _blank_run_text(r)
+
+
+def _set_entry_line(p_elem, left: str, right: str) -> None:
+    """Left of the tab := ``left``; right of the tab := ``right``.
+
+    The template splits the left side over two italic runs ("Title at Company, " +
+    "Company, State "). The whole header goes into the first and the second is
+    blanked rather than trying to re-split it: ``entry_header`` arrives from the
+    extractor as one string, and both runs carry identical ``rPr``, so the
+    rendered result is indistinguishable.
+    """
+    runs = _direct_runs(p_elem)
+    tab_idx = next(
+        (i for i, r in enumerate(runs) if r.find(qn("w:tab")) is not None), -1
+    )
+    if tab_idx < 0:
+        _set_text(p_elem, left)
+        return
+    pre, post = runs[:tab_idx], runs[tab_idx + 1:]
+    if pre:
+        _set_run_text(pre[0], left)
+        for r in pre[1:]:
+            _blank_run_text(r)
+    if post:
+        _set_run_text(post[0], right)
+        for r in post[1:]:
+            _blank_run_text(r)
+
+
+# ---------------------------------------------------------------------------
+# Profile indexing
+# ---------------------------------------------------------------------------
+
+
+def _index_profile(profile_json_path: Path) -> dict[str, str]:
+    """bullet_id -> text, across every role_block's render set AND recovery pool."""
+    data = json.loads(Path(profile_json_path).read_text())
+    bullet_text: dict[str, str] = {}
+    for key in ("work_experience", "projects"):
+        for entry in data.get(key) or []:
+            for rb in entry.get("role_blocks") or []:
+                for b in (*(rb.get("bullets") or []), *(rb.get("extra_bullets") or [])):
+                    bullet_text[b["id"]] = b["text"]
+    return bullet_text
 
 
 # ---------------------------------------------------------------------------
@@ -70,448 +327,75 @@ def assemble_docx(
     profile_json_path: Path,
     template_path: Path,
     output_path: Path,
-) -> None:
-    """Build a tailored DOCX at ``output_path``.
+) -> Path:
+    """Render ``selection`` into a DOCX at ``output_path``."""
+    bullet_text = _index_profile(profile_json_path)
 
-    ``profile_json_path`` is the canonical ``master_profile.json``. Bullet texts,
-    company/dates/location, and project names/links are read from it.
-    """
-    profile = json.loads(profile_json_path.read_text())
-    bullet_text, exp_map, proj_map, summary_map = _index_profile(profile)
-
-    # doc = working copy; ref = immutable reference for the header diff-check.
     doc = Document(str(template_path))
-    ref = Document(str(template_path))
+    body = doc.element.body
 
-    # Hard rule #10: header (paras 0-1) untouched throughout.
-    _assert_header_unchanged(doc, ref)
+    start = _tailored_start(body)
+    frozen_before = _frozen_canonical(body, start)
+    _assert_education_within_cap(body, start, Path(template_path).name)
+    protos = _capture_prototypes(body, start)
 
-    # Hard rule #9: snapshot the static EDUCATION+CERTIFICATES region to verify
-    # it is byte-identical after assembly.
-    static_before = _static_region_canonical(doc)
+    new_elems: list = []
+    sections = (
+        (_WORK_HEADING, selection.work_entries()),
+        (_PROJECTS_HEADING, selection.project_entries()),
+    )
+    for heading, entries in sections:
+        if not entries:
+            continue
+        h = copy.deepcopy(protos["section_heading"])
+        _set_text(h, heading)
+        new_elems.append(h)
+        for entry in entries:
+            line = copy.deepcopy(protos["entry_line"])
+            _set_entry_line(line, entry.header_left, entry.header_right)
+            new_elems.append(line)
+            for bid in entry.bullet_ids:
+                text = bullet_text.get(bid)
+                if text is None:
+                    raise AssemblerError(
+                        f"bullet {bid!r} is in the selection but not in the profile "
+                        "— rebuild master_profile.json (`python -m src.cli.reparse`)"
+                    )
+                bp = copy.deepcopy(protos["entry_bullet"])
+                _set_text(bp, text)
+                new_elems.append(bp)
+            if protos["spacer"] is not None:
+                new_elems.append(copy.deepcopy(protos["spacer"]))
 
-    # --- summary (para 2): replace text, keep its paragraph formatting ---
-    _set_text(doc.paragraphs[2]._p, summary_map.get(selection.summary_id, ""))
+    # No trailing spacer: a blank paragraph at the end can push an empty page 2.
+    while new_elems and _is_spacer(new_elems[-1]):
+        new_elems.pop()
 
-    # --- capture prototypes BEFORE mutating the body ---
-    protos = _capture_prototypes(doc)
+    _replace_tail(body, start, new_elems)
 
-    # --- build tailored sections from cloned prototypes ---
-    proj_rids: dict[str, str] = {}
-    work_elems = _build_work(selection, exp_map, bullet_text, protos)
-    skills_elems = _build_skills(selection, protos)
-    proj_elems = _build_projects(selection, proj_map, bullet_text, protos, proj_rids)
-
-    _replace_content(doc, _WORK, _SKILLS, work_elems)
-    _replace_content(doc, _SKILLS, _PROJECTS, skills_elems)
-    _replace_content(doc, _PROJECTS, _EDUCATION, proj_elems)
-
-    # --- section reorder (Skills <-> Projects) ---
-    _apply_order(doc, selection.section_order)
-
-    # --- header diff-check + static-region diff-check (hard rules #10, #9) ---
-    _assert_header_unchanged(doc, ref)
-    if _static_region_canonical(doc) != static_before:
+    if _frozen_canonical(body, _tailored_start(body)) != frozen_before:
         raise AssemblerError(
-            "EDUCATION/CERTIFICATES region was modified. The assembler must leave "
-            "static sections byte-identical to the template (hard rule #9)."
+            "The frozen region (header + Education & Certificates) was modified. "
+            "The assembler must never touch anything before the work/projects "
+            "heading (hard rules #9 and #10)."
         )
 
-    # --- save ---
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(output_path))
-
-    # --- update project hyperlink targets in rels XML (hard rule #11) ---
-    if proj_rids:
-        update_project_hyperlinks(output_path, proj_rids)
-
     log.info(
         "docx_assembled",
         job_id=selection.job_id,
-        template_version=selection.template_version,
-        experiences=len(selection.experiences),
-        projects=len(selection.projects),
+        entries=len(selection.entries),
+        bullets=sum(len(e.bullet_ids) for e in selection.entries),
+        output=str(output_path),
     )
-
-
-# ---------------------------------------------------------------------------
-# Profile indexing
-# ---------------------------------------------------------------------------
-
-
-def _index_profile(profile: dict):
-    bullet_text: dict[str, str] = {}
-    exp_map: dict[str, dict] = {}
-    proj_map: dict[str, dict] = {}
-    summary_map: dict[str, str] = {}
-
-    for exp in profile.get("work_experience", []):
-        exp_map[exp["id"]] = exp
-        for b in exp.get("bullet_pool", []):
-            bullet_text[b["id"]] = b["text"]
-
-    for proj in profile.get("projects", []):
-        proj_map[proj["id"]] = proj
-        for b in proj.get("bullet_pool", []):
-            bullet_text[b["id"]] = b["text"]
-
-    for s in profile.get("summaries", []):
-        summary_map[s["id"]] = s["text"]
-
-    return bullet_text, exp_map, proj_map, summary_map
-
-
-# ---------------------------------------------------------------------------
-# Run-level text substitution (preserves rPr, tabs, numPr, hyperlinks)
-# ---------------------------------------------------------------------------
-
-
-def _direct_runs(p_elem) -> list:
-    """Direct <w:r> children of a paragraph (excludes runs inside <w:hyperlink>)."""
-    return p_elem.findall(qn("w:r"))
-
-
-def _set_run_text(r_elem, text: str) -> None:
-    """Set a run's <w:t> text, preserving its <w:rPr>."""
-    t = r_elem.find(qn("w:t"))
-    if t is None:
-        t = OxmlElement("w:t")
-        r_elem.append(t)
-    t.text = text
-    if text != text.strip():
-        t.set(_XML_SPACE, "preserve")
-
-
-def _blank_run_text(r_elem) -> None:
-    """Empty a run's <w:t> (keeps the run + rPr so structure/formatting persists)."""
-    t = r_elem.find(qn("w:t"))
-    if t is not None:
-        t.text = ""
-
-
-def _has_tab(p_elem) -> bool:
-    return any(r.find(qn("w:tab")) is not None for r in _direct_runs(p_elem))
-
-
-def _has_numpr(p_elem) -> bool:
-    pPr = p_elem.find(qn("w:pPr"))
-    return pPr is not None and pPr.find(qn("w:numPr")) is not None
-
-
-def _set_text(p_elem, text: str) -> None:
-    """Single-text paragraph (bullet / company): set first run, blank the rest."""
-    runs = _direct_runs(p_elem)
-    if not runs:
-        return
-    _set_run_text(runs[0], text)
-    for r in runs[1:]:
-        _blank_run_text(r)
-
-
-def _set_tabbed(p_elem, before: str, after: str | None) -> None:
-    """Tab-separated paragraph: set the text before and (optionally) after the tab.
-
-    Runs are split at the run containing ``<w:tab/>``. ``after=None`` leaves
-    everything past the tab untouched (used for project name + "Code →" link).
-    """
-    runs = _direct_runs(p_elem)
-    tab_idx = next(
-        (i for i, r in enumerate(runs) if r.find(qn("w:tab")) is not None), -1
-    )
-    if tab_idx < 0:
-        _set_text(p_elem, before)
-        return
-
-    pre, post = runs[:tab_idx], runs[tab_idx + 1:]
-    if pre:
-        _set_run_text(pre[0], before)
-        for r in pre[1:]:
-            _blank_run_text(r)
-    if after is not None and post:
-        _set_run_text(post[0], after)
-        for r in post[1:]:
-            _blank_run_text(r)
-
-
-def _set_skill(p_elem, name: str, skills_csv: str) -> None:
-    """Skill category paragraph: bold "Name: " run + list run; blank extras."""
-    runs = _direct_runs(p_elem)
-    if not runs:
-        return
-    _set_run_text(runs[0], f"{name}: ")
-    if len(runs) > 1:
-        _set_run_text(runs[1], skills_csv)
-    for r in runs[2:]:
-        _blank_run_text(r)
-
-
-# ---------------------------------------------------------------------------
-# Prototype capture
-# ---------------------------------------------------------------------------
-
-
-def _content_elems(doc: Document, start_name: str, end_name: str) -> list:
-    """Paragraph elements between two Heading 1s (excluding the headings)."""
-    body = doc.element.body
-    elems = _collect_section_elems(body, start_name, end_name)
-    return [e for e in elems[1:] if e.tag == qn("w:p")]  # drop the heading itself
-
-
-def _capture_prototypes(doc: Document) -> dict:
-    """Deep-copy the formatting prototypes from the first block of each section."""
-    work = _content_elems(doc, _WORK, _SKILLS)
-    skills = _content_elems(doc, _SKILLS, _PROJECTS)
-    projects = _content_elems(doc, _PROJECTS, _EDUCATION)
-
-    exp_title = next((p for p in work if _has_tab(p) and not _has_numpr(p)), None)
-    exp_bullet = next((p for p in work if _has_numpr(p)), None)
-    # company = the paragraph right after the first title that is not a bullet.
-    exp_company = None
-    if exp_title is not None:
-        after = work[work.index(exp_title) + 1:]
-        exp_company = next((p for p in after if not _has_numpr(p)), None)
-
-    skill = skills[0] if skills else None
-
-    proj_name = next(
-        (p for p in projects if p.find(qn("w:hyperlink")) is not None), None
-    )
-    proj_bullet = next((p for p in projects if _has_numpr(p)), None)
-
-    missing = [
-        n for n, v in {
-            "exp_title": exp_title, "exp_company": exp_company,
-            "exp_bullet": exp_bullet, "skill": skill,
-            "proj_name": proj_name, "proj_bullet": proj_bullet,
-        }.items() if v is None
-    ]
-    if missing:
-        raise AssemblerError(
-            f"Template prototype(s) not found: {missing}. The template must contain "
-            "at least one full experience block, skill line, and project block."
-        )
-
-    return {
-        "exp_title": copy.deepcopy(exp_title),
-        "exp_company": copy.deepcopy(exp_company),
-        "exp_bullet": copy.deepcopy(exp_bullet),
-        "skill": copy.deepcopy(skill),
-        "proj_name": copy.deepcopy(proj_name),
-        "proj_bullet": copy.deepcopy(proj_bullet),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Section builders (clone prototype -> substitute text)
-# ---------------------------------------------------------------------------
-
-
-def _build_work(selection, exp_map, bullet_text, protos) -> list:
-    out = []
-    for entry in selection.experiences:
-        exp = exp_map.get(entry.exp_id, {})
-        company = exp.get("company", "")
-        location = exp.get("location") or ""
-        start = exp.get("start_date", "")
-        end = exp.get("end_date", "")
-        dates = f"{start} – {end}" if start else end
-        company_str = f"{company} - {location}" if location else company
-
-        # Titles are UPPERCASE in the template (the IntenseReference char-style
-        # adds smallCaps on top); match that so the rendering is uniform full
-        # caps rather than small-caps on mixed-case text.
-        title_p = copy.deepcopy(protos["exp_title"])
-        _set_tabbed(title_p, entry.title_alias.upper(), dates)
-        out.append(title_p)
-
-        company_p = copy.deepcopy(protos["exp_company"])
-        _set_text(company_p, company_str)
-        out.append(company_p)
-
-        for bid in entry.bullet_ids:
-            text = bullet_text.get(bid, "")
-            if not text:
-                continue
-            bp = copy.deepcopy(protos["exp_bullet"])
-            _set_text(bp, text)
-            out.append(bp)
-    return out
-
-
-def _build_skills(selection, protos) -> list:
-    out = []
-    for cat in selection.skills.categories:
-        p = copy.deepcopy(protos["skill"])
-        _set_skill(p, cat.name, ", ".join(cat.skills))
-        out.append(p)
-
-    fw = selection.skills.familiar_with
-    if fw:
-        p = copy.deepcopy(protos["skill"])
-        _set_skill(p, "Familiar With", ", ".join(fw))
-        out.append(p)
-    return out
-
-
-def _build_projects(selection, proj_map, bullet_text, protos, proj_rids) -> list:
-    out = []
-    for i, entry in enumerate(selection.projects):
-        proj = proj_map.get(entry.proj_id, {})
-        name = proj.get("name", entry.proj_id)
-        link = entry.link or proj.get("link", "")
-
-        # Project names are UPPERCASE in the template (same smallCaps reason).
-        name_p = copy.deepcopy(protos["proj_name"])
-        _set_tabbed(name_p, name.upper(), None)  # leave the "Code →" hyperlink alone
-        if link:
-            rid = f"rIdProj{i + 1}"
-            hl = name_p.find(qn("w:hyperlink"))
-            if hl is not None:
-                hl.set(qn("r:id"), rid)
-                proj_rids[rid] = link
-        out.append(name_p)
-
-        for bid in entry.bullet_ids:
-            text = bullet_text.get(bid, "")
-            if not text:
-                continue
-            bp = copy.deepcopy(protos["proj_bullet"])
-            _set_text(bp, text)
-            out.append(bp)
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Section content replacement (by live element identity — no stale indices)
-# ---------------------------------------------------------------------------
-
-
-def _replace_content(
-    doc: Document, start_name: str, end_name: str, new_elems: list
-) -> None:
-    """Replace content between two Heading 1s with ``new_elems`` (headings kept)."""
-    body = doc.element.body
-    start_h = _find_heading(body, start_name)
-    if start_h is None:
-        return
-    end_h = _find_heading(body, end_name)
-
-    to_remove = []
-    collecting = False
-    for child in list(body):
-        if child is start_h:
-            collecting = True
-            continue
-        if collecting:
-            if end_h is not None and child is end_h:
-                break
-            to_remove.append(child)
-    for e in to_remove:
-        body.remove(e)
-
-    pos = list(body).index(start_h)
-    for i, e in enumerate(new_elems):
-        body.insert(pos + 1 + i, e)
-
-
-# ---------------------------------------------------------------------------
-# Header + static-region diff-checks (hard rules #10, #9)
-# ---------------------------------------------------------------------------
-
-
-def _para_canonical(p) -> bytes:
-    """Canonical byte representation of a paragraph element (lxml c14n)."""
-    return etree.tostring(p._p, method="c14n")
-
-
-def _assert_header_unchanged(doc: Document, ref: Document) -> None:
-    """Assert paras 0-1 in ``doc`` match ``ref`` exactly (hard rule #10)."""
-    for i in range(2):
-        if _para_canonical(doc.paragraphs[i]) != _para_canonical(ref.paragraphs[i]):
-            raise AssemblerError(
-                f"Header paragraph {i} was modified. The assembler must never touch "
-                "paragraphs before WORK EXPERIENCE (hard rule #10)."
-            )
-
-
-def _static_region_canonical(doc: Document) -> bytes:
-    """c14n of every element from the EDUCATION heading to the document end.
-
-    Covers EDUCATION + CERTIFICATES (the static, non-tailored tail). Used to verify
-    the assembler left those sections byte-identical to the template (hard rule #9).
-    """
-    body = doc.element.body
-    edu = _find_heading(body, _EDUCATION)
-    if edu is None:
-        return b""
-    parts: list[bytes] = []
-    collecting = False
-    for child in body:
-        if child is edu:
-            collecting = True
-        if collecting:
-            parts.append(etree.tostring(child, method="c14n"))
-    return b"".join(parts)
-
-
-# ---------------------------------------------------------------------------
-# Section reorder (Skills <-> Projects)
-# ---------------------------------------------------------------------------
-
-
-def _apply_order(doc: Document, section_order: list[str]) -> None:
-    """Swap the Skills and Projects sections when the order demands it."""
-    if len(section_order) < 3 or section_order[1] != "Projects":
-        return  # default order (Skills before Projects) — no change needed
-
-    body = doc.element.body
-    skills_elems = _collect_section_elems(body, _SKILLS, _PROJECTS)
-    proj_elems = _collect_section_elems(body, _PROJECTS, _EDUCATION)
-    if not skills_elems or not proj_elems:
-        return
-
-    insert_pos = list(body).index(skills_elems[0])
-    for e in skills_elems + proj_elems:
-        body.remove(e)
-    for i, e in enumerate(proj_elems + skills_elems):
-        body.insert(insert_pos + i, e)
-
-
-def _collect_section_elems(body, start_name: str, end_name: str) -> list:
-    """Body elements from the named Heading 1 up to (not including) the next."""
-    start_elem = _find_heading(body, start_name)
-    end_elem = _find_heading(body, end_name)
-    if start_elem is None:
-        return []
-    collecting = False
-    result = []
-    for child in list(body):
-        if child is start_elem:
-            collecting = True
-        if collecting:
-            if end_elem is not None and child is end_elem:
-                break
-            result.append(child)
-    return result
-
-
-def _find_heading(body, section_name: str):
-    """Find the Heading 1 element whose stripped text matches ``section_name``."""
-    for child in body:
-        if child.tag != qn("w:p"):
-            continue
-        pPr = child.find(qn("w:pPr"))
-        if pPr is None:
-            continue
-        pStyle = pPr.find(qn("w:pStyle"))
-        if pStyle is None:
-            continue
-        val = pStyle.get(qn("w:val"), "")
-        if val not in ("Heading1", "Heading 1"):
-            continue
-        text = "".join(
-            t.text or "" for t in child.iter(qn("w:t"))
-        ).strip().rstrip("\t").strip()
-        if text == section_name:
-            return child
-    return None
+    return output_path
+
+
+def _replace_tail(body, start: int, new_elems: list) -> None:
+    """Delete every body child from ``start`` up to ``sectPr``, insert the new ones."""
+    children = list(body)
+    doomed = [c for c in children[start:] if c.tag != qn("w:sectPr")]
+    for c in doomed:
+        body.remove(c)
+    for offset, elem in enumerate(new_elems):
+        body.insert(start + offset, elem)
