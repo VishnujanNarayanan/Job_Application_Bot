@@ -33,7 +33,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -160,6 +160,12 @@ class WorkExperience(_Entry):
     start_date: str  # YYYY-MM — drives the tenure bullet cap
     end_date: str  # YYYY-MM | present
     location: str | None = None
+    #: ``employment`` entries are the operator's actual jobs and are
+    #: force-included: a resume without them is not a resume. ``freelance``
+    #: entries are separate engagements that compete on merit like projects do —
+    #: any, all, or none may appear on a given resume — but they render under
+    #: Work History rather than Projects, because that is what they are.
+    employment_type: Literal["employment", "freelance"] = "employment"
 
     @model_validator(mode="after")
     def _check(self) -> WorkExperience:
@@ -622,6 +628,7 @@ def load_profile(session: Session, *, json_path: Path | None = None) -> Profile:
             safe_title_aliases=list(e.safe_title_aliases),
             start_date=e.start_date,
             end_date=e.end_date,
+            employment_type=e.employment_type,
         )
         for e in profile.work_experience
     ]

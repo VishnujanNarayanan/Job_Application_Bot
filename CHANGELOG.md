@@ -68,6 +68,29 @@ and this project loosely tracks iterations rather than semver.
 - `resume guide/score_coverage.py`: walks `work_experience` (it only ever walked
   `projects`), survives a missing baseline, and adds `--per-title`
 
+### Added
+
+- Layer 4: `employment_type` on work entries. Freelance engagements are separate
+  entries that compete on merit like projects — any, all or none may appear —
+  but render under Work History with `Freelance · <dates>` in the dates slot.
+  Employment is force-included; position is earned, not pinned
+  (`selection.freelance`)
+- Layer 6: an entry is never stranded across a page break. The header and the
+  first `endpoint.render.keep_together_ratio` (0.66) of its bullets are bound by
+  a `keepNext` chain, so the group moves to the next page rather than splitting;
+  `keepLines` stops a single bullet's own wrapped lines splitting
+- Layer 6: section headings are `Heading 2`, so sections collapse in Word and
+  appear in the navigation pane. Appearance is unchanged — runs carry Arial /
+  10.5 / bold as direct formatting — but colour is pinned explicitly, since the
+  style's own colour is blue. `_is_section_heading` still accepts bold-Normal
+- `tools/build_headless_template.py` — builds the operator's template from the
+  pristine one: header, links, Education & Certificates, bullet glyph, section
+  heading styles. Reads identity from `master_profile.yaml` and display strings
+  from `operator.resume_header` in config, so no operator literal enters source
+- `tools/measure_pdf_spacing.py` — reads line positions out of a rendered PDF.
+  Matching paragraph properties does not mean correct rendered gaps; that
+  assumption hid a doubled blank line for several review rounds
+
 ### Fixed
 
 - Layer 4: the same sentence could render twice in one entry. The bullet pool
@@ -77,6 +100,15 @@ and this project loosely tracks iterations rather than semver.
   exhausted every candidate has gain 0, and the floor then fills the remaining
   slots by cosine, which picks the twin of a bullet already on the page. Now
   deduped on normalised text too, with the lead block's wording winning
+- Layer 6: the bullet glyph is `U+2022` in Arial at 16pt with `lineRule="exact"`,
+  replacing `U+25CF` in Noto Sans Symbols at the inherited size. Word lacks that
+  font and substituted a small dot while LibreOffice drew the true heavy circle,
+  so the DOCX and the PDF disagreed. The pin is required because any glyph above
+  10.5pt inflates the line box — measured, uniform 18.1pt spacing became an
+  uneven 19-23pt
+- Layer 6: one blank paragraph before each section heading, not two. The template
+  shipped 36pt before Education against 18pt before the work heading — the same
+  kind of boundary at double the gap
 - Layer 6: a project's entry line overflowed. The full repo URL in the right tab
   slot measured 112 characters against an ~89-character budget (Arial 10.5
   across a 6.5in text width); it now renders as a short hyperlinked "Code →" at
@@ -85,6 +117,18 @@ and this project loosely tracks iterations rather than semver.
   LibreOffice refuse the file and fails the PDF render. The link is now minted
   through python-docx's `part.relate_to()`, and a test asserts no dangling
   relationship survives assembly
+
+### Known issues
+
+- Layer 6: hyperlinks added programmatically are valid in the DOCX but are NOT
+  exported to the PDF by LibreOffice — it renders the text and ignores the
+  reference. Reproduced with raw XML injection, so it is not a python-docx
+  fault; links authored in Word do export. Affects the header links and the
+  project `Code →` links. See PIVOT_V3.md §12 for the isolation and the options
+- Layer 4: every threshold is a v2 value calibrated against the old scoring
+  formula. Measured on real ads, entry scores land at 0.12-0.31 against
+  thresholds of 0.332/0.344, so freelance entries never appear, and no job
+  reaches the 0.50 apply threshold. PIVOT_V3.md Stage 6
 
 ### Removed
 

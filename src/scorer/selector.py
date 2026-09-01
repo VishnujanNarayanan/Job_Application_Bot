@@ -99,6 +99,9 @@ class EntryCand:
     safe_title_aliases: list[str] = field(default_factory=list)
     start_date: str = ""
     end_date: str = ""
+    #: "employment" | "freelance" — see MasterProfile.WorkExperience. Freelance
+    #: entries render under Work History but are selected on merit, like projects.
+    employment_type: str = "employment"
 
 
 @dataclass
@@ -267,6 +270,22 @@ def _text_key(norm_text: str) -> str:
     return " ".join(norm_text.split())
 
 
+def _header_right(entry: EntryCand, block: RoleBlockCand) -> str:
+    """What sits right of the tab: dates for a job, the repo URL for a project.
+
+    A freelance engagement is labelled as such in that slot rather than in the
+    title, so the reader sees at a glance that it was contract work without the
+    entry pretending to be a staff job. The prefix is applied here rather than
+    baked into the profile so the label cannot drift between entries.
+    """
+    if entry.kind != "work":
+        return entry.link
+    dates = block.entry_dates
+    if entry.employment_type == "freelance" and dates:
+        return f"{settings.selection.freelance.label} · {dates}"
+    return dates
+
+
 def _relevance(block_scores: dict[str, float], lead_id: str, block_id: str) -> float:
     """How much an off-role bullet's coverage gain counts.
 
@@ -377,7 +396,7 @@ def select_entry_bullets(
         block_id=block.block_id,
         label=entry.label,
         header_left=block.entry_header,
-        header_right=block.entry_dates if entry.kind == "work" else entry.link,
+        header_right=_header_right(entry, block),
         bullets=chosen,
         covered=covered,
         coverage=coverage_of(covered, keywords),
@@ -437,7 +456,7 @@ def select_entries(
 ) -> list[SelectedEntry]:
     """Rank entries, keep ``max_shown`` above threshold, force-include ``min_shown``."""
     now = now or datetime.now(timezone.utc)
-    cfg = settings.selection.work if kind == "work" else settings.selection.project
+    cfg = getattr(settings.selection, kind)
     ranked = [score_entry(e, jd, keywords, now=now) for e in entries]
     ranked.sort(key=lambda s: s.score, reverse=True)
     passing = [s for s in ranked if s.score >= cfg.threshold]

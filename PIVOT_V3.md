@@ -59,13 +59,19 @@ has already audited for exactly that purpose.
 | D5b | **Off-role bullets get a soft penalty, not a floor.** A pooled bullet's coverage gain is scaled by its own block's JD relevance, so an off-role bullet wins only when nothing on-role covers that keyword. Encodes "not having the keyword is more damaging than repeating" without letting one entry go stack-mixed. |
 | D6 | `fit = 0.55·best_experience + 0.45·keyword_coverage`, coverage measured on the **selected bullet text** by literal substring. Selection runs first; coverage of the result feeds fit. |
 | D7 | Fix the `bullet-extract` skill's internal drift **before** re-running it across the repos. |
-| D8 | ~~**Hyperlinks: projects only, as plain text.**~~ **REVISED after rendering a real resume.** A project's repo URL in the entry line's right slot measured **112 characters** against an ~89-character budget (Arial 10.5 across a 6.5in text width), so it overflowed. The slot now carries a short hyperlinked **"Code →"** (59 chars) instead. The original reason for banning body hyperlinks was that the old code hand-patched `word/_rels/document.xml.rels` inside the saved zip, where a dangling `r:id` makes LibreOffice refuse the file and fails the PDF render. That risk belonged to the hand-patching, not to hyperlinks: the link is now minted through python-docx's own `part.relate_to()`, the same call that produces the five working header links, and a test asserts no dangling relationship survives assembly. `src/endpoint/hyperlinks.py` stays deleted. |
+| D8 | **Project links render as a short hyperlinked "Code →".** The full repo URL in the entry line's right slot measured **112 characters** against an ~89-character budget (Arial 10.5 across 6.5in) and overflowed; "Code →" is 59. ⚠ **See the hyperlink finding in §12 — the link is valid in the DOCX but NOT clickable in the LibreOffice-produced PDF.** This decision is unresolved pending that. `src/endpoint/hyperlinks.py` stays deleted; the link is minted with python-docx's `part.relate_to()`, and a test asserts no dangling relationship survives assembly. |
 | D9 | **Education & Certificates is static.** The operator hand-writes those 2–3 lines into their template copy once; the assembler never touches the block. |
 | D10 | **The 85 existing `applied` rows are left exactly as they are.** They are not real applications — historical data kept for later analysis. No backfill, no deletion. The endpoint 409s on a v1 row (their presigned links expired after 7 days anyway); analytics/dashboard keep a ~6-line version-aware title reader. |
 | D11 | **The extractor emits a bullet POOL, not just the render set.** `bullets:` stays exactly as today — the audited, ordered, density-checked 6–8 with `bullets[0]` the summary. A new **`extra_bullets:`** list holds true-but-off-checklist bullets. The bot pools both. Rationale: today a "hot dog" is deleted at extraction time, so when a JD later asks for Redis the pool has nothing to select and the keyword is **unrecoverable**. Tier ZERO mechanism narration is still cut outright — it is not a keyword at all. The 3–8 cap becomes a **render** cap enforced by the bot, never an extraction cap. |
 | D11a | **Cross-cutting skills go in EVERY role block, not only the block whose checklist names them.** If the repo genuinely used Docker, and Docker appears on the `quant` checklist but not the `data` one, the `data` block still gets a Docker bullet in its `extra_bullets` — because a data JD may well ask for Docker, and the pool must be able to answer. Concretely: a token whose **IDF across the 128 titles is low** (Git, Docker, SQL, CI/CD, Linux, cloud, testing, REST) is cross-cutting by definition — `suggest_titles.py` already computes that IDF. Every such token the repo has earns a bullet in every block it plausibly serves, **written fresh per role** so the WHY and framing suit that role, never copy-pasted across blocks. The bot renders one only when the JD names it. |
 | D12 | **The canonical role checklist is a tie-break only.** JD keywords drive the greedy exactly as in D5. When two bullets have equal JD gain, the one covering more of that role's canonical tokens (from `job_qualifications.md`, via the block's `checklist:`) wins. A canonical token absent from the JD **never forces a bullet in** — zero JD gain still means not selected. |
 | D13 | **`job_qualifications.md` is vendored into the repo** at `data/job_qualifications.md`, so the GitHub Actions runner has it without an S3 fetch. `resume guide/refresh_qualifications.py` regenerates it upstream; a `make refresh-quals` step copies it in and `--check` flags staleness. |
+
+| D14 | **Freelance is a third category, not a flavour of employment.** `WorkExperience.employment_type` is `employment` or `freelance`. Employment is force-included — the operator's actual job always appears. Freelance engagements are *separate entries* that compete on merit exactly as projects do: any, all or none may appear on a given resume (`selection.freelance.min_shown: 0`). They render under **Work History**, because that is what they are, with `Freelance · <dates>` in the right-hand slot. |
+| D14a | **Employment is not pinned to the top.** Once selected, jobs and freelance entries are ordered together by `order_entries` (match-then-recency). If a freelance engagement matches a JD better, it leads and the job moves down. Only *inclusion* differs between the two, not *position*. |
+| D14b | **"Freelance" never appears in a job title.** It is stated once, in the dates slot. A title like "Freelance Full-Stack Developer" reads as a job called that, and repeats what the right-hand column already says. Long legal company names are shortened for the same reason the URL was (`Smart Centre for Perfect Legal Solutions & Research Pvt. Ltd.` → `SCPLS`). |
+| D15 | **An entry is never stranded across a page break.** Word has no "keep 66% together" setting, so the rule is a `keepNext` chain: the entry header plus the first `ceil(keep_together_ratio × n)` bullets are bound into one unbreakable group, and the chain stops there so the remainder may still flow. `keepLines` on every bullet stops a single bullet's own wrapped lines splitting. Config: `endpoint.render.keep_together_ratio: 0.66`. |
+| D16 | **Section headings are `Heading 2`, not bold Normal.** The template shipped them as merely-bolded Normal paragraphs, which carry no outline level: they do not collapse in Word, do not appear in the navigation pane, and give a parser no structure. Appearance is unchanged because every run carries Arial/10.5/bold/black as *direct* formatting, which beats the style — but colour had to be pinned explicitly, or the heading inherits Heading 2's `0f4761` blue. `_is_section_heading` accepts Heading 2 **or** bold-Normal, so a hand-made template still works. |
 
 ## Branch
 
@@ -590,3 +596,130 @@ Also worth knowing: running the rewritten grader against the existing
 target, with `extra: 0` everywhere. That file predates both the `extra_bullets`
 pool and the boundary fix, so re-running the skill on this repo is the first
 real test of the new extraction rules.
+
+
+---
+
+## 12. Session findings — read before continuing
+
+### The hyperlink problem (unresolved, blocks D8)
+
+**LibreOffice renders the text but silently drops the hyperlink for any link that
+was not in the file when Word or Google Docs originally wrote it.** Isolated five
+ways, each reproducible:
+
+| test | link exported to PDF? |
+|---|---|
+| The old `Templete.docx`, 15 Word-authored links | ✅ 15 annotations |
+| Same file re-saved through python-docx, unchanged | ✅ still 15 |
+| One link added via `part.relate_to()` | ❌ 0 |
+| Same, plus `w:history` / `rStyle` / three placements | ❌ 0 |
+| **Raw zip surgery — hand-written XML + rels, no python-docx** | ❌ 0 |
+
+The last row rules out python-docx. The XML is valid, the `Relationship` entry is
+byte-identical in form to the working ones, and the text renders — LibreOffice
+just ignores the reference. Verify with:
+
+```bash
+python -c "import re; d=open('out.pdf','rb').read(); print(len(re.findall(rb'/Subtype\s*/Link', d)))"
+```
+
+**Consequences.** The header links (Portfolio, LinkedIn, Certificates) and the
+project `Code →` links are valid in the DOCX — they work in Word and on portals
+that render DOCX — and are dead in the PDF. `Code →` is currently *worse* than
+the plain URL it replaced: a reader can neither click it nor read the address.
+
+**Three ways out, undecided:**
+1. The operator adds the five header links **in Word** once (the original Stage 0
+   plan). Word-authored links demonstrably export. Does not help project links,
+   which are minted per render.
+2. Revert projects to a readable plain-text URL — not clickable either, but at
+   least copyable. Costs the overflow fix unless shortened.
+3. Post-process the PDF to inject `/Annots` link annotations after conversion.
+   Deterministic, and the only option that fixes both. Real work.
+
+### Bullet glyph and line height
+
+The template defines the bullet as `U+25CF BLACK CIRCLE` in **Noto Sans Symbols**
+at the *inherited* body size. Word lacks that font and substitutes a small dot;
+LibreOffice on Linux has it and draws the true heavy circle — so the DOCX and the
+PDF disagreed. Current setting: `U+2022 BULLET` in Arial at **16pt**.
+
+**Measured, and worth knowing before changing it:** any glyph above 10.5pt
+inflates the line box, because `lineRule="auto"` grows a line to fit its tallest
+content. Uniform 18.1pt spacing became an uneven 19–23pt. The fix is
+`lineRule="exact"` at 360 twips, pinned on every numbered paragraph, which
+restores an 18.0pt dominant gap. Both are applied in
+`tools/build_headless_template.py`.
+
+A **cleaner** route exists and was rendered but not chosen: a naturally larger
+*character* at the inherited 10.5pt needs neither the size override nor the pin,
+because the line box never grows. `U+2022` in the **Symbol** font is Word's own
+default bullet and is the obvious candidate.
+
+### Spacing — the thing that was being checked wrongly
+
+Verifying that paragraph *properties* match the template says nothing about
+rendered *gaps*. That assumption hid a doubled blank paragraph before
+"Education & Certificates" — **36pt against 18pt at the same kind of boundary** —
+through several rounds of review. Use `tools/measure_pdf_spacing.py`, which reads
+line positions out of the PDF itself.
+
+Blank paragraphs quantise spacing to whole 18pt lines. Real control is
+`space_before` / `space_after` on the heading. A ladder at 6/10/14/18pt was
+rendered for the operator to choose from; **no value has been chosen yet**, and
+the template still uses collapsed blank paragraphs.
+
+### The reference resume cannot be measured
+
+`resume guide/Example+Resume+.pdf` is a Google Docs export that writes one `Tm`
+per glyph with three distinct Y values, so per-line positions are not recoverable.
+`skill_update_backlog.md` records the same conclusion from an earlier attempt.
+Spacing decisions against it have to be made by eye.
+
+---
+
+## 13. TODO for the next agent
+
+**Blocking / decide first**
+1. **Resolve the hyperlink problem** (§12). This is the largest open item and it
+   invalidates the stated benefit of D8.
+2. **Choose the header spacing value** — 6/10/14/18pt — and switch the template
+   from blank paragraphs to `space_before` on the section headings.
+3. **Consider the Symbol-font bullet**, which would let both the 16pt size
+   override and the `lineRule="exact"` pin be removed.
+
+**Stage 0 — the operator's own work**
+4. Re-run the `bullet-extract` skill across every repo. The current
+   `master_profile.yaml` is the OLD flat shape and will not validate against the
+   new `role_blocks` schema. Bullets must also be re-written to the method: ≤28
+   words, one period, past tense, **no performance numbers** (the current pool is
+   full of them).
+5. Mark `employment_type: freelance` on DekhLaw, SCPLS and the MQL5/Yaagi
+   entries; shorten the SCPLS company name; strip "Freelance" from every title.
+6. `alembic upgrade head` — the database is still at `0008`; `0009_role_blocks`
+   has never been applied.
+7. `python -m src.cli.assets push` — `resumes/templates/` is gitignored, so the
+   GitHub Actions runner has no template until this is run.
+
+**Stage 6 — recalibration, and it matters more than it looks**
+8. Every threshold is the v2 value measured against the OLD scoring formula and
+   is meaningless now. Measured on real ads: entry scores land at **0.12–0.31**
+   against a `work.threshold` of 0.332 and a `freelance.threshold` of 0.344 — so
+   **freelance entries never appear at all**, exactly the inert-threshold failure
+   the changelog already records once. `final_score` reached 0.46 at best against
+   an `apply_threshold` of 0.50, so **nothing would be applied to**.
+9. `match_then_recency_gap: 0.20` is likewise too wide: real scores cluster
+   within ~0.01, so recency always wins and D14a's merit-ordering never fires.
+
+**Verification that is not optional**
+10. Render a real PDF and *read it*. 389 passing tests did not catch: a sentence
+    rendered twice, a 112-character line overflow, a blue name, a doubled blank
+    line, or dead hyperlinks. Every one of those was found by looking at the page.
+
+**Scratch work worth knowing about**
+The session's throwaway harnesses live in the session scratchpad and will be
+lost: `mkprofile.py` (converts the OLD profile to `role_blocks` for testing
+before the real re-extraction), `e2e.py` (real JD from the DB → selection →
+DOCX → PDF), and the glyph/spacing ladder generators. Only
+`tools/build_headless_template.py` and `tools/measure_pdf_spacing.py` were kept.

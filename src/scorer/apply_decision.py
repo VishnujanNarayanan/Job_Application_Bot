@@ -173,17 +173,32 @@ def evaluate(
     """Score one job against the profile and decide build-or-skip."""
     now = now or datetime.now(timezone.utc)
 
-    work = order_entries(select_entries(profile.work, jd, keywords, kind="work", now=now))
+    # Three groups, not two. Employment is force-included -- a resume without the
+    # operator's actual job is not a resume. Freelance engagements are separate
+    # entries that compete on merit exactly as projects do: any, all or none may
+    # appear on a given resume. They still render under Work History, because
+    # that is what they are.
+    employment = [e for e in profile.work if e.employment_type != "freelance"]
+    freelance = [e for e in profile.work if e.employment_type == "freelance"]
+
+    jobs = select_entries(employment, jd, keywords, kind="work", now=now)
+    gigs = select_entries(freelance, jd, keywords, kind="freelance", now=now)
     projects = sorted(
         select_entries(profile.projects, jd, keywords, kind="project", now=now),
         key=lambda e: e.score,
         reverse=True,
     )
-    # Fixed order: Work History, then Projects. The old variable Skills-vs-Projects
-    # ordering went with the Skills section.
+    # Employment and freelance are selected against different bars -- a job is
+    # force-included, a gig has to earn its slot -- but once selected they are
+    # ORDERED together on merit. Employment is not pinned to the top: if a
+    # freelance engagement matches this JD better, it leads, and the job moves
+    # down. Recency still breaks near-ties (order_entries).
+    work = order_entries([*jobs, *gigs])
     entries = [*work, *projects]
 
-    best_experience = max((e.score for e in work), default=0.0)
+    # Only real employment sets the experience score. A freelance engagement that
+    # happens to match well should not stand in for having held the job.
+    best_experience = max((e.score for e in jobs), default=0.0)
     best_project = max((e.score for e in projects), default=0.0)
 
     # The union of the per-entry covered sets, not a re-scan of the text: an
