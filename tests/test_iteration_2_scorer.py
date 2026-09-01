@@ -164,6 +164,47 @@ def test_a_near_duplicate_bullet_is_never_selected() -> None:
     assert "b2" not in ids
 
 
+def test_the_same_sentence_is_never_rendered_twice_in_one_entry() -> None:
+    """Regression, found on a real ad rather than by a unit test.
+
+    The extractor writes each accomplishment "re-worded in every block it
+    honestly serves", so an entry legitimately holds near-identical bullets under
+    different ids. The greedy alone does not catch them: once coverage is
+    exhausted every candidate has gain 0, and the floor then fills the remaining
+    slots by cosine — which picked the twin of a bullet already on the page.
+    """
+    twin = "Scraped signals with asyncio and Playwright for the desk."
+    entry = _entry(blocks=[
+        _block("e1::data", "data", bullets=[
+            _bullet("d0", "Summary.", summary=True, block="e1::data"),
+            _bullet("d1", twin, block="e1::data"),
+        ]),
+        _block("e1::quant", "quant", fit="adjacent", aliases=["Quant Researcher"],
+               bullets=[_bullet("q1", twin, block="e1::quant", role="quant")]),
+    ])
+    out = select_entry_bullets(entry, _jd(), _kw("Kubernetes"), now=NOW)
+    texts = [b.text for b in out.bullets]
+    assert len(texts) == len(set(texts)), f"a sentence repeated: {texts}"
+
+
+def test_the_lead_blocks_wording_wins_a_text_collision() -> None:
+    """When two blocks say the same thing, keep the one aimed at this JD."""
+    twin = "Built ingestion jobs for the trading desk."
+    entry = _entry(blocks=[
+        _block("e1::data", "data", alias_vecs=[W], bullets=[
+            _bullet("d0", "S.", summary=True, block="e1::data"),
+            _bullet("d1", twin, block="e1::data"),
+        ]),
+        _block("e1::backend", "backend", alias_vecs=[V], bullets=[
+            _bullet("k0", "S.", summary=True, block="e1::backend", role="backend"),
+            _bullet("k1", twin, block="e1::backend", role="backend"),
+        ]),
+    ])
+    out = select_entry_bullets(entry, _jd(vec_role=V), _kw(), now=NOW)
+    assert out.block_id == "e1::backend"
+    assert "d1" not in [b.id for b in out.bullets]
+
+
 def test_the_covered_set_RESETS_for_every_entry() -> None:
     """The rule a global greedy would break.
 
@@ -202,7 +243,10 @@ def test_cap_beats_gain() -> None:
 
 def test_zero_gain_stops_the_fill_above_the_floor() -> None:
     bullets = [_bullet("b0", "Summary with Python.", summary=True)] + [
-        _bullet(f"b{i}", "Nothing relevant here at all.") for i in range(1, 8)
+        # Distinct wording: identical text is deduped out of the pool, which
+        # would make this test pass for the wrong reason.
+        _bullet(f"b{i}", f"Did unrelated thing number {i} for the team.")
+        for i in range(1, 8)
     ]
     out = select_entry_bullets(
         _entry(blocks=[_block(bullets=bullets)]), _jd(), _kw("Python"), now=NOW,
@@ -276,11 +320,13 @@ def test_an_on_role_bullet_wins_a_tie_against_an_off_role_one() -> None:
     entry = _entry(blocks=[
         _block("e1::data", "data", alias_vecs=[V], bullets=[
             _bullet("d0", "Summary.", summary=True, block="e1::data"),
-            _bullet("d1", "Worked with Docker.", block="e1::data"),
+            _bullet("d1", "Shipped pipelines with Docker.", block="e1::data"),
         ]),
         # W is orthogonal to the JD role vector, so this block scores ~0.
+        # Different wording, same keyword — identical text would be deduped.
         _block("e1::quant", "quant", fit="adjacent", alias_vecs=[W], bullets=[
-            _bullet("q1", "Worked with Docker.", block="e1::quant", role="quant"),
+            _bullet("q1", "Ran backtests inside Docker.", block="e1::quant",
+                    role="quant"),
         ]),
     ])
     out = select_entry_bullets(entry, _jd(), _kw("Docker"), now=NOW)
