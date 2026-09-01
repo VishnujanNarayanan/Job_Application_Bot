@@ -57,6 +57,7 @@ from pathlib import Path
 
 import structlog
 from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from lxml import etree
@@ -76,9 +77,45 @@ _PROJECTS_HEADING = "Projects"
 #: What a project's repo link reads as. Short by necessity — see _set_hyperlink.
 _LINK_TEXT = "Code \u2192"
 
+#: Character style that makes LibreOffice emit a PDF link annotation.
+_LINK_STYLE = "Hyperlink"
+
 
 class AssemblerError(RuntimeError):
     """Raised when a template constraint is violated."""
+
+
+def apply_link_style(doc, run_elem) -> None:
+    """Give ``run_elem`` the ``Hyperlink`` character style.
+
+    This is what decides whether a link survives the PDF conversion, and it is
+    the only thing that does. LibreOffice emits a ``/Subtype /Link`` annotation
+    for a ``<w:hyperlink>`` **only when the run inside it carries a
+    ``<w:rStyle>``**; with direct colour/underline formatting and no character
+    style the link is intact in the DOCX, renders as ordinary text in the PDF,
+    and is silently unclickable in the copy a recruiter opens.
+
+    Measured against both templates: a bare run gives 0 annotations,
+    ``w:history="1"`` 0, an empty ``rPr`` 0, an ``rPr`` holding only ``rFonts``
+    0 -- an ``rPr`` holding only ``rStyle`` gets all of them. Provenance is
+    irrelevant: a hand-minted element exports, and a Word-authored one whose run
+    has no ``rStyle`` (which is what a Google Docs export writes) does not.
+
+    The style is defined if the operator's template lacks it, so this holds for
+    any template rather than only the one in the repo (hard rule #21).
+    """
+    if not any(s.style_id == _LINK_STYLE for s in doc.styles):
+        doc.styles.add_style(_LINK_STYLE, WD_STYLE_TYPE.CHARACTER)
+    rPr = run_elem.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        run_elem.insert(0, rPr)
+    if rPr.find(qn("w:rStyle")) is not None:
+        return  # the template already styles this run; don't override it
+    style = OxmlElement("w:rStyle")
+    style.set(qn("w:val"), _LINK_STYLE)
+    # w:rStyle is the first child of rPr in the schema's ordering.
+    rPr.insert(0, style)
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +361,9 @@ def _set_hyperlink(doc, p_elem, text: str, url: str) -> None:
 
     Formatting is cloned from the run being replaced, so the link inherits the
     template's font and size; only colour and underline are added, which the
-    method permits for a portfolio link.
+    method permits for a portfolio link. The run is then given the ``Hyperlink``
+    character style, without which LibreOffice drops the link from the PDF --
+    see ``apply_link_style``.
     """
     runs = _direct_runs(p_elem)
     tab_idx = next(
@@ -353,14 +392,15 @@ def _set_hyperlink(doc, p_elem, text: str, url: str) -> None:
     underline = OxmlElement("w:u")
     underline.set(qn("w:val"), "single")
     rPr.append(underline)
+    apply_link_style(doc, run)
     t_el = OxmlElement("w:t")
     t_el.text = text
     run.append(t_el)
 
     link = OxmlElement("w:hyperlink")
-    # LibreOffice only emits a PDF link annotation when w:history is present.
-    # Without it the link is intact in the DOCX and simply absent from the PDF,
-    # which is the copy a recruiter actually opens.
+    # Word's own marker for a link that has been followed. It has no bearing on
+    # whether the PDF gets an annotation -- apply_link_style decides that -- but
+    # it is what Word writes, so we write it too.
     link.set(qn("w:history"), "1")
     link.set(
         qn("r:id"),

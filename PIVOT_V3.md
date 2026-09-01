@@ -602,7 +602,48 @@ real test of the new extraction rules.
 
 ## 12. Session findings — read before continuing
 
-### The hyperlink problem (unresolved, blocks D8)
+### The hyperlink problem — SOLVED (2026-09-01)
+
+**The earlier diagnosis in this section was wrong and is kept below only so the
+dead end is not walked twice.** It read the evidence as "LibreOffice only
+exports a link Word originally wrote". Provenance has nothing to do with it.
+
+**The actual rule: LibreOffice emits a `/Subtype /Link` annotation only when the
+run inside `<w:hyperlink>` carries a `<w:rStyle>`.** Isolated by A/B against both
+templates:
+
+| minted `<w:hyperlink>` + rels entry | PDF annotations |
+|---|---|
+| bare run, no `rPr` | ❌ 0 |
+| `w:history="1"`, bare run | ❌ 0 |
+| empty `rPr` | ❌ 0 |
+| `rPr` holding only `rFonts` | ❌ 0 |
+| **`rPr` holding only `<w:rStyle>`** | ✅ all |
+
+`w:history` is irrelevant. So is python-docx vs zip surgery. The v2 clone
+approach (`git show main:src/endpoint/hyperlinks.py`) worked purely because its
+donor run happened to carry `rStyle="IntenseQuoteChar"`.
+
+This also explains why `headless_v1.docx` shipped five valid header links that
+rendered zero annotations: its runs use direct `w:color` + `w:u` with no
+character style, which is what a Google Docs export writes.
+
+**Fixed** in `src/endpoint/assembler.py::apply_link_style`, called from
+`_set_hyperlink` and from `tools/build_headless_template.py`. It defines the
+`Hyperlink` character style when the operator's template lacks it, so this holds
+for any template (hard rule #21). Measured end to end on a real render:
+**0 link annotations before, 6 after** — five header links plus the project
+`Code →`. Guarded by `test_every_hyperlink_run_carries_a_character_style` and a
+LibreOffice-gated PDF readback test.
+
+Verify with:
+
+```bash
+python -c "import re; d=open('out.pdf','rb').read(); print(len(re.findall(rb'/Subtype\s*/Link', d)))"
+```
+
+<details>
+<summary>Superseded diagnosis (kept as a record of the dead end)</summary>
 
 **LibreOffice renders the text but silently drops the hyperlink for any link that
 was not in the file when Word or Google Docs originally wrote it.** Isolated five
@@ -637,6 +678,8 @@ the plain URL it replaced: a reader can neither click it nor read the address.
    least copyable. Costs the overflow fix unless shortened.
 3. Post-process the PDF to inject `/Annots` link annotations after conversion.
    Deterministic, and the only option that fixes both. Real work.
+
+</details>
 
 ### Bullet glyph and line height
 
@@ -682,8 +725,9 @@ Spacing decisions against it have to be made by eye.
 ## 13. TODO for the next agent
 
 **Blocking / decide first**
-1. **Resolve the hyperlink problem** (§12). This is the largest open item and it
-   invalidates the stated benefit of D8.
+1. ~~Resolve the hyperlink problem (§12).~~ **Done 2026-09-01** — the run inside
+   `<w:hyperlink>` needs an `<w:rStyle>`; see §12. Header and `Code →` links are
+   live in the PDF.
 2. **Choose the header spacing value** — 6/10/14/18pt — and switch the template
    from blank paragraphs to `space_before` on the section headings.
 3. **Consider the Symbol-font bullet**, which would let both the 16pt size

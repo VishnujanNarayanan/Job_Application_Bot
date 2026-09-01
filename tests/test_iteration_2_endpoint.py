@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import subprocess
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -171,6 +172,56 @@ def test_the_minted_hyperlink_has_no_dangling_relationship(
     used = set(re.findall(r'r:id="([^"]+)"', doc_xml))
     have = set(re.findall(r'Id="([^"]+)"', rels))
     assert not (used - have), f"dangling relationship ids: {sorted(used - have)}"
+
+
+def test_every_hyperlink_run_carries_a_character_style(
+    minimal_profile, minimal_selection, tmp_path
+):
+    """The one condition under which LibreOffice emits a PDF link annotation.
+
+    A ``<w:hyperlink>`` whose run has direct colour/underline but no
+    ``<w:rStyle>`` is a perfectly valid link in the DOCX that renders as plain
+    text in the PDF — the copy a recruiter opens. Measured: bare run 0
+    annotations, ``w:history="1"`` 0, empty ``rPr`` 0, ``rPr`` with only
+    ``rFonts`` 0; ``rPr`` with only ``rStyle`` gets all of them. This covers the
+    template's own header links as well as the minted project link, because the
+    template is loaded whole.
+    """
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    runs = [
+        r
+        for hl in doc.element.body.iter(qn("w:hyperlink"))
+        for r in hl.findall(qn("w:r"))
+    ]
+    assert runs, "expected at least the project link and the header links"
+    unstyled = [
+        "".join(t.text or "" for t in r.findall(qn("w:t")))
+        for r in runs
+        if (r.find(qn("w:rPr")) is None
+            or r.find(qn("w:rPr")).find(qn("w:rStyle")) is None)
+    ]
+    assert not unstyled, f"hyperlink runs with no rStyle (dead in PDF): {unstyled}"
+
+
+@pytest.mark.skipif(
+    shutil.which("soffice") is None, reason="LibreOffice not installed"
+)
+def test_the_rendered_pdf_actually_carries_the_link_annotations(
+    minimal_profile, minimal_selection, tmp_path
+):
+    """The assertion that cannot be faked at the XML level: read the PDF back."""
+    from src.endpoint.assembler import assemble_docx
+
+    out = tmp_path / "out.docx"
+    assemble_docx(minimal_selection, minimal_profile, _template(), out)
+    subprocess.run(
+        ["soffice", "--headless", "--convert-to", "pdf", str(out),
+         "--outdir", str(tmp_path)],
+        check=True, capture_output=True,
+    )
+    pdf = (tmp_path / "out.pdf").read_bytes()
+    uris = {u.decode() for u in re.findall(rb"/URI\s*\(([^)]*)\)", pdf)}
+    assert "https://github.com/user/stock" in uris
 
 
 def test_a_work_entry_still_shows_its_dates(
