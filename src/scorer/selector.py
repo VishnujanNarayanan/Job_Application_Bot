@@ -227,22 +227,44 @@ def lead_block(entry: EntryCand, jd: JDContext) -> RoleBlockCand:
     )
 
 
-def _entry_pool(entry: EntryCand) -> list[BulletCand]:
-    """Every bullet of every block, deduped by id.
+def _entry_pool(entry: EntryCand, lead_id: str = "") -> list[BulletCand]:
+    """Every bullet of every block, deduped by id AND by text.
 
     Pooled across blocks deliberately: a `data` bullet and a `backend` bullet from
     the same job are both true of that job, and confining the choice to one block
-    throws away coverage the entry actually has. The off-role scaling below is what
-    keeps that from turning the entry into a stack-mixed mess.
+    throws away coverage the entry actually has. The off-role scaling keeps that
+    from turning the entry into a stack-mixed mess.
+
+    The text dedup is not belt-and-braces — it is load-bearing. The extractor
+    writes each accomplishment "re-worded in every block it honestly serves", so
+    an entry legitimately holds several near-identical bullets under different
+    ids. The greedy alone does not catch them: once every keyword is covered,
+    every remaining candidate has gain 0, and the floor then fills the last slots
+    by cosine — which picks the twin of a bullet already on the page. Observed on
+    a real ad, where one entry rendered the same sentence twice.
+
+    The lead block's copy wins, since that is the wording aimed at this JD.
     """
-    seen: set[str] = set()
+    seen_ids: set[str] = set()
+    seen_text: dict[str, int] = {}
     pool: list[BulletCand] = []
-    for rb in entry.blocks:
+    blocks = sorted(entry.blocks, key=lambda rb: rb.block_id != lead_id)
+    for rb in blocks:
         for b in rb.bullets:
-            if b.id not in seen:
-                seen.add(b.id)
-                pool.append(b)
+            if b.id in seen_ids:
+                continue
+            key = _text_key(b.norm_text)
+            if key in seen_text:
+                continue
+            seen_ids.add(b.id)
+            seen_text[key] = 1
+            pool.append(b)
     return pool
+
+
+def _text_key(norm_text: str) -> str:
+    """Collapse whitespace so trivially-reflowed duplicates compare equal."""
+    return " ".join(norm_text.split())
 
 
 def _relevance(block_scores: dict[str, float], lead_id: str, block_id: str) -> float:
@@ -295,7 +317,7 @@ def select_entry_bullets(
 
     block = lead_block(entry, jd)
     block_scores = {rb.block_id: _alias_score(rb, jd) for rb in entry.blocks}
-    pool = _entry_pool(entry)
+    pool = _entry_pool(entry, block.block_id)
 
     covered: set[str] = set()
     chosen: list[SelectedBullet] = []
