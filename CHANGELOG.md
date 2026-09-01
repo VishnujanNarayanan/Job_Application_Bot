@@ -7,6 +7,82 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Added
+
+- `PIVOT_V3.md`: the plan for moving to the Headless Headhunter resume template
+  — no Skills section, no Summary section, keyword-coverage scoring, and a
+  master profile shaped like the `bullet-extract` skill's `role_blocks` output
+- Layer 4: `src/scorer/keywords.py` — JD keyword extraction and the literal
+  matcher that defines "covered". A port of `resume guide/score_coverage.py`,
+  held to it by parity tests, so the offline grader and the live selector agree
+- Layer 4: `src/scorer/qualifications.py` — the 128-title sheet, consulted as a
+  selection tie-break only. A canonical token the JD never mentions can never
+  pull a bullet onto the resume
+- `data/job_qualifications.md` vendored into the repo (with `make refresh-quals`
+  / `make check-quals`) so the GitHub Actions runner has the sheet
+- Layer 7: `master_bullets.block_id/role/bullet_index/is_summary/is_extra` and
+  `master_title_aliases.block_id` (migration `0009_role_blocks`)
+- `src/state/selection_compat.py`: reads both selection shapes, so the 85
+  pre-pivot rows stay listable in the dashboard and the monthly report
+
+### Changed
+
+- Layer 4: bullets are selected by greedy keyword set-cover instead of top-3
+  cosine. Each entry takes the bullet adding the most uncovered JD keyword
+  weight, stopping when nothing new is left to say. The covered set resets per
+  entry, so the first entry is free to clear the whole checklist alone
+- Layer 4: bullets per entry are tenure-capped (3 under 6 months, 6 under 18,
+  else 8; projects 5) rather than exactly 3
+- Layer 4: bullets are pooled across all of an entry's `role_blocks`, with an
+  off-role bullet's gain scaled by its block's JD relevance — so it wins only
+  when nothing on-role covers that keyword
+- Layer 4: `fit = 0.55*best_experience + 0.45*keyword_coverage`, replacing
+  `0.50*best_experience + 0.20*summary + 0.30*avg_skill_pool`. The two removed
+  terms scored content the new template does not put on the page
+- Layer 4: work and projects are selected and scored by one code path; section
+  order is fixed (Work History, then Projects)
+- Layer 4: `build_jd_context` embeds 3 vectors per job instead of
+  `3 + len(skills)` — the per-skill vectors only fed the Skills section
+- Layer 5: `selection_json` is v2 — `{version, entries[], jd_keywords,
+  keyword_coverage, lead_entry_coverage}` replacing `{summary_id, experiences[],
+  projects[], skills, section_order}`
+- Layer 6: the assembler detects structure (bold Normal headings, Heading-3
+  entry lines, `numId=1` bullets) instead of matching Heading-1 text, and mints
+  the second section heading by cloning the template's one
+- Layer 6: hard rules #9/#10 collapse into one frozen PREFIX — everything before
+  the work heading, now including Education & Certificates — diff-asserted with
+  a single c14n comparison
+- Layer 6: the endpoint returns 409 for a pre-pivot selection instead of
+  rendering it against a template it was never built for
+- Layer 7: `master_profile.yaml` is `role_blocks`-shaped, mirroring the
+  bullet-extract output; an empty `skills_pool` warns instead of raising
+- Layer 3/4: `hit()` now matches at alphanumeric boundaries. A raw substring
+  test counted `Java` as covered by "javascript", `SQL` by "postgresql", `R` by
+  "ran" and `Go` by "django" — marking keywords covered by bullets that never
+  claimed them. Fixed in `resume guide/score_coverage.py` too
+- The `bullet-extract` skill: Step 12's self-check rewritten against Step 11's
+  schema (it demanded ~8 banned fields), Step 10 `_meta` trimmed to the four
+  emitted keys, and new Step 6f `extra_bullets` — an off-checklist bullet is now
+  demoted to a recovery pool rather than cut, and cross-cutting skills go in
+  every block that serves them
+- `resume guide/score_coverage.py`: walks `work_experience` (it only ever walked
+  `projects`), survives a missing baseline, and adds `--per-title`
+
+### Removed
+
+- Layer 4: `select_summary`, `select_skill_candidates`, `score_experience`,
+  `score_project`, `skills_before_projects` — the Skills and Summary sections
+  they served are gone from the template
+- Layer 5: `assign_skill_categories` and the 130-line `selection.skills.taxonomy`
+  config block; `SkillCategory`, `StoredSkills`, `SelectedExpEntry`,
+  `SelectedProjEntry`
+- Layer 6: `src/endpoint/hyperlinks.py`. The template has no hyperlink elements
+  and no hyperlink relationships; a project's repo URL is plain text in the
+  entry line's right tab slot, which avoids minting synthetic `r:id`s whose
+  dangling-reference failure mode breaks the LibreOffice PDF render
+- Layer 7: `master_bullets` rows with `parent_type='project_name'` and all
+  `master_summaries` rows are deactivated (never deleted — hard rule #17)
+
 ## [v2.0.2] — 2026-08-19
 
 ### Fixed

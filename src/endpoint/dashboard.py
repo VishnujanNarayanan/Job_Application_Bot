@@ -29,6 +29,8 @@ operator's private Tailscale network (see README).
 
 from __future__ import annotations
 
+from src.state.selection_compat import title_alias_of
+
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -58,12 +60,11 @@ _STATUSES = ("pending", "applied", "dismissed")
 # ---------------------------------------------------------------------------
 
 def _title_of(selection_json, fallback: str) -> str:
-    """The chosen title alias, so the page agrees with the resume."""
-    if isinstance(selection_json, dict):
-        experiences = selection_json.get("experiences") or []
-        if experiences and isinstance(experiences[0], dict):
-            return experiences[0].get("title_alias") or fallback
-    return fallback
+    """The chosen title alias, so the page agrees with the resume.
+
+    Reads both selection shapes: the 85 pre-pivot rows are still listed here.
+    """
+    return title_alias_of(selection_json, fallback)
 
 
 def _view(applied, job) -> dict:

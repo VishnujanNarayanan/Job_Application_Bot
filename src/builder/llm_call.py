@@ -24,17 +24,9 @@ from pathlib import Path
 
 import structlog
 
-from src.builder.deterministic import (
-    assign_skill_categories,
-    choose_title_alias,
-    jd_role_vector,
-)
+from src.builder.deterministic import choose_title_alias, jd_role_vector
 from src.config import settings
-from src.llm.schemas import (
-    SelectedExpEntry,
-    SelectedProjEntry,
-    StoredSelection,
-)
+from src.llm.schemas import SelectedEntryOut, StoredSelection
 from src.reasons import BUILD_FAILURE as _BUILD_FAILURE_REASON
 from src.scorer.apply_decision import SelectionResult
 from src.scorer.selector import Profile
@@ -77,77 +69,64 @@ def build(
 ) -> StoredSelection | None:
     """Build the ``StoredSelection`` for a matched job. No LLM call.
 
-    ``complete_fn`` is accepted and ignored: it existed so tests could stub
-    Gemini, and callers (including ``src/main.py``) still pass nothing. Kept in
-    the signature so removing Call 1b is not a breaking change for anything
-    that already calls this.
+    Layer 4 has already done the work: which entries, which bullets, in what
+    order, and what they cover. This function only resolves the one remaining
+    choice — which of the lead block's title aliases to display — and packages the
+    result into the durable artifact.
+
+    ``complete_fn`` is accepted and ignored: it existed so tests could stub Gemini
+    before Call 1b was removed. Kept in the signature so callers do not break.
     """
     if complete_fn is not None:
         log.debug("complete_fn_ignored", reason="call_1b_removed")
 
-    skills_pool = [sc.skill for sc in profile.skills]
-    gap_skills = _gap_skills_for_jd(jd_required_skills, skills_pool)
-
-    # One embedding of the JD role text, reused for every experience's aliases.
+    # One embedding of the JD role text, reused for every entry's aliases.
     jd_role_vec = jd_role_vector(jd_role_summary, fallback_text=jd_team_or_product or "")
 
-    exp_entries: list[SelectedExpEntry] = []
-    for se in result.experiences:
-        alias = choose_title_alias(
-            list(se.safe_title_aliases),
-            jd_role_vec,
-            fallback=se.actual_title,
-        )
-        exp_entries.append(
-            SelectedExpEntry(
-                exp_id=se.id,
-                title_alias=alias,
+    by_id = {e.id: e for e in (*profile.work, *profile.projects)}
+    entries: list[SelectedEntryOut] = []
+    for se in result.entries:
+        entry = by_id.get(se.id)
+        block = None
+        if entry is not None:
+            block = next((b for b in entry.blocks if b.block_id == se.block_id), None)
+        # Hard rule #6: the displayed title comes from the lead block's allow-list,
+        # never from free text. choose_title_alias picks by cosine within that list,
+        # so an out-of-set title is structurally impossible.
+        aliases = list(block.title_aliases) if block else []
+        fallback = (entry.actual_title if entry else "") or se.label
+        entries.append(
+            SelectedEntryOut(
+                kind=se.kind,
+                entry_id=se.id,
+                block_id=se.block_id,
+                title_alias=choose_title_alias(aliases, jd_role_vec, fallback=fallback),
+                header_left=se.header_left,
+                header_right=se.header_right,
                 bullet_ids=[b.id for b in se.bullets],
+                covered=sorted(se.covered),
+                coverage=se.coverage,
+                score=se.score,
+                cap=se.cap,
             )
         )
 
-    skills_selection = assign_skill_categories(
-        result.skill_candidates, gap_skills, jd_role_vec=jd_role_vec
-    )
-
-    # A selection with no experiences cannot produce a resume; Layer 4 should
-    # force-include two, so this means the profile or the selection is broken.
-    if not exp_entries:
+    # A selection with no work entries cannot produce a resume; Layer 4
+    # force-includes two, so reaching here means the profile or selection is broken.
+    if not any(e.kind == "work" for e in entries):
         log.error(
             BUILD_FAILURE_EVENT,
             caller="builder",
-            reason="no_experiences_selected",
+            reason="no_work_entries_selected",
         )
         return None
 
-    # Look up project links from profile
-    proj_link_map = {p.id: p.link for p in profile.projects}
-    proj_entries: list[SelectedProjEntry] = []
-    for sp in result.projects:
-        proj_entries.append(
-            SelectedProjEntry(
-                proj_id=sp.id,
-                link=proj_link_map.get(sp.id, ""),
-                bullet_ids=[b.id for b in sp.bullets],
-            )
-        )
-
-    section_order = (
-        ["Work", "Skills", "Projects"]
-        if result.skills_before_projects
-        else ["Work", "Projects", "Skills"]
-    )
-
-    # Find summary_id: use the selected summary's id or a fallback
-    summary_id = result.summary.id if result.summary else ""
-
     return StoredSelection(
         job_id="",  # caller fills in job_id before writing to DB
-        summary_id=summary_id,
-        experiences=exp_entries,
-        projects=proj_entries,
-        skills=skills_selection,
-        section_order=section_order,
+        entries=entries,
+        jd_keywords=[k.token for k in result.jd_keywords],
+        keyword_coverage=result.keyword_coverage,
+        lead_entry_coverage=result.lead_entry_coverage,
         cover_letter_text="",
         template_version=_template_version(),
         built_at=datetime.now(timezone.utc).isoformat(),

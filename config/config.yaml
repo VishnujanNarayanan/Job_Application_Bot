@@ -164,175 +164,72 @@ scraper:
 # Selection — Layer 4 (pure deterministic, no LLM)
 # ---------------------------------------------------------------------------
 selection:
-  experience:
-    weight_alias: 0.30    # best title alias cosine score contribution
-    weight_bullets: 0.70  # top-3 bullet avg cosine score contribution
-    # CALIBRATED, not chosen. 0.45 was set as if a good cosine ran near 1.0.
-    # Measured over 60 real JDs on 2026-08-19, the BEST-matching experience
-    # this profile can produce scored 0.416 and the 3rd-place one peaked at
-    # 0.395 — so nothing ever cleared 0.45, and 84 of 85 stored selections
-    # were the force-include minimum of exactly 2. The threshold was inert.
-    #
-    # all-MiniLM-L6-v2 cosine between a JD facet and a resume bullet lives in
-    # roughly 0.2-0.45; the bar has to sit inside that band to mean anything.
-    # 0.332 is the 75th percentile of the 3rd-place score, so a third
-    # experience appears on about the top quarter of jobs and stays a signal
-    # of genuine fit rather than padding every resume to 3.
+  # --- The JD checklist ------------------------------------------------------
+  # The template has no Skills section, so a qualification counts only when it is
+  # written inside a bullet. These weights define what Layer 4 grades against.
+  keywords:
+    weight_required: 1.00
+    # Halved because the offline grader (resume guide/score_coverage.py) drops
+    # "Nice to Have:" lines from the required token set entirely. Half weight is
+    # the softest honest version of the same judgement.
+    weight_nice_to_have: 0.50
+    # resume_method.md: "ignore everything except the Qualifications section".
+    # responsibilities is duty prose — tokenising it floods the checklist with
+    # sentences no bullet can match and deflates every coverage ratio. It still
+    # feeds vec_match, where it drives the embedding tie-break.
+    include_responsibilities: false
+    # Vendored copy of the 128-title sheet, used as a TIE-BREAK only (see
+    # src/scorer/qualifications.py). Unset or missing -> the tie-break is off and
+    # selection is unaffected.
+    qualifications_path: "data/job_qualifications.md"
+
+  # --- Bullets per entry -----------------------------------------------------
+  # Method: minimum 3, maximum 8 (1 summary + 2-7), "scaled to how long you were
+  # there — under 6 months you need three, not five".
+  bullets:
+    min_per_entry: 3
+    max_cap: 8
+    project_cap: 5        # projects carry no dates, so no tenure to scale by
+    tenure_bands:
+      - {under_months: 6,  cap: 3}
+      - {under_months: 18, cap: 6}
+
+  # --- Entry scoring ---------------------------------------------------------
+  entry:
+    weight_alias: 0.30    # best title-alias cosine (carried over from experience)
+    weight_bullets: 0.70  # mean cosine of the bullets actually selected
+    # Two signals, not one. `coverage` is what a recruiter grades in 20 seconds;
+    # `similarity` is the calibrated embedding score with a year of measured
+    # thresholds behind it. Coverage alone ranks a keyword-dense but off-topic
+    # entry top, which is exactly the failure the method calls a "hot dog".
+    weight_similarity: 0.50
+    weight_coverage: 0.50
+    # Bullets are pooled across all of an entry's role_blocks, so an off-role
+    # bullet can surface under an on-role header. Rather than excluding those
+    # blocks wholesale (which would drop keywords the operator genuinely has),
+    # scale their coverage gain by how relevant their block is to this JD: an
+    # off-role bullet then wins only when nothing on-role covers that keyword.
+    off_role_scaling: true
+    off_role_floor: 0.05  # relevance never scales fully to zero
+
+  work:
+    # CALIBRATED, not chosen — see the v2 note kept below. Measured over 60 real
+    # JDs on 2026-08-19 against the OLD scoring formula; the entry score is now
+    # similarity+coverage rather than pure similarity, so this MUST be
+    # re-measured (PIVOT_V3.md Stage 6) before it means anything again.
     threshold: 0.332
     max_shown: 3
     min_shown: 2
-    bullets_per_experience: 3   # exactly 3 bullets shown per experience
     # If best_score - second_score > this gap, best-match goes to position 1.
-    # Otherwise positions 1+ follow recency (most recent first).
+    # Otherwise positions follow recency (most recent first).
     match_then_recency_gap: 0.20
 
   project:
-    weight_name: 0.20     # project name cosine score contribution
-    weight_bullets: 0.80  # topN bullet avg contribution (N = bullets shown)
-    # Same calibration as experience above, same measurement run: the 3rd-place
-    # project peaked at 0.383 against a 0.50 bar, so the projects section was
-    # always exactly 2. 0.344 is the 75th percentile of the 3rd-place score.
-    threshold: 0.344
+    threshold: 0.344      # same caveat as `work.threshold` above
     max_shown: 3
     min_shown: 2
-    bullet_threshold: 0.40  # individual bullet floor; 2 force-included if fewer pass
-    bullet_min: 2
-    bullet_max: 3
     hide_section: false   # projects section NEVER hidden
 
-  summary:
-    # Deterministic: pick summary whose role_categories match the JD's
-    # role_category, then highest cosine score. Falls back to all summaries
-    # if no category match.
-    fallback_to_all: true
-
-  skills:
-    # Step 1: deterministic scoring takes top-14 pool candidates.
-    top_candidates: 14
-    # Step 2: group the candidates using the explicit taxonomy below, then show
-    # the `categories_count` categories whose skills best match this JD.
-    #
-    # Why an explicit map rather than embedding similarity: knowing Grafana is
-    # observability, or that pytest is testing rather than infrastructure, is
-    # world knowledge. Sentence-transformer cosines between a short tech token
-    # and a category phrase do NOT carry it — measured on this pool, correct
-    # pairings scored 0.106-0.375 while wrong ones scored 0.054-0.347. The
-    # ranges overlap, so no threshold can separate them: "Grafana ->
-    # Monitoring" (right) scores 0.106 while "Linux -> Web & Frontend" (wrong)
-    # scores 0.347. A lookup is exact and costs nothing.
-    #
-    # Headings still vary per job, because which categories appear depends on
-    # which skills this JD pulled to the top: a data JD surfaces the data
-    # categories, a backend JD surfaces the backend ones.
-    #
-    # Keep in step with master_profile.yaml's skills_pool. A skill missing from
-    # here still gets grouped (nearest category by embedding) and is logged as
-    # `skill_untaxonomised` so it can be added.
-    categories_count: 3
-    taxonomy:
-      "Languages":
-        - "Python"
-        - "JavaScript"
-        - "TypeScript"
-        - "SQL"
-        - "C++"
-        - "Bash"
-      "Backend & APIs":
-        - "Backend Development"
-        - "REST API Development"
-        - "FastAPI"
-        - "NestJS"
-        - "Node.js"
-        - "Express.js"
-        - "WebSockets / Socket.IO"
-        - "JWT Authentication"
-        - "Webhook & Callback Handling"
-      "Frontend & Full-Stack":
-        - "Full-Stack Development"
-        - "React"
-        - "Next.js"
-        - "React Native"
-        - "Tailwind CSS"
-        - "Responsive Web Design"
-      "Data Engineering & ETL":
-        - "Data Engineering"
-        - "ETL Pipelines"
-        - "Data Ingestion"
-        - "Incremental / Resumable ETL"
-        - "Data Quality & Validation"
-        - "Anomaly Detection"
-      "Scraping & Browser Automation":
-        - "Web Scraping"
-        - "Browser Automation"
-        - "Playwright"
-        - "Selenium"
-        - "Scrapy"
-        - "Crawlee"
-        - "BeautifulSoup"
-        - "Proxy Rotation"
-        - "Anti-bot / Stealth Scraping"
-        - "Session Management"
-        - "HTML Parsing / DOM Traversal"
-      "Concurrency & Networking":
-        - "Async Programming (asyncio)"
-        - "Concurrent / Parallel Programming"
-        - "Rate-limit Handling & Backoff"
-        - "HTTP Internals (headers, cookies, TLS, sessions)"
-      "Machine Learning & NLP":
-        - "Machine Learning"
-        - "Deep Learning"
-        - "Natural Language Processing"
-        - "Feature Engineering"
-        - "scikit-learn"
-        - "PyTorch"
-        - "TensorFlow"
-        - "Keras"
-        - "Computer Vision"
-        - "Semantic Search / Vector Retrieval"
-        - "sentence-transformers"
-        - "FAISS"
-      "Data Analysis & Visualisation":
-        - "Statistical Analysis / Hypothesis Testing"
-        - "pandas"
-        - "NumPy"
-        - "Matplotlib"
-        - "Seaborn"
-        - "Jupyter"
-      "Databases & Storage":
-        - "PostgreSQL"
-        - "MongoDB"
-        - "Redis"
-        - "SQLite"
-        - "TypeORM"
-        - "Database Schema Design"
-        - "Caching Strategies"
-      "Cloud, DevOps & Tooling":
-        - "Docker"
-        - "AWS"
-        - "Linux"
-        - "Git / GitHub"
-        - "CI/CD (GitHub Actions)"
-        - "Vercel"
-        - "Railway"
-      "Quantitative Finance":
-        - "Quantitative Finance / Market Data"
-        - "Time-Series Analysis"
-        - "Backtesting"
-        - "Financial Data Analysis"
-        - "NSE / Indian Equity Markets"
-        - "Risk-adjusted Scoring"
-      "Integrations & Platform":
-        - "Twilio (Voice / IVR)"
-        - "Geospatial / Location-Based Matching"
-    skills_per_category_min: 3
-    skills_per_category_max: 5
-    # Gap skills shown under "Familiar With" (ordered against the other
-    # categories by match, never pinned first — hard rule #7).
-    familiar_with_max: 4
-
-# ---------------------------------------------------------------------------
-# Scoring — Layer 4 final score formula
-# ---------------------------------------------------------------------------
 scoring:
   final:
     # Weights sum to 1.0.
@@ -353,9 +250,15 @@ scoring:
 
   fit:
     # Weights sum to 1.0.
-    best_experience: 0.50
-    selected_summary: 0.20
-    avg_skill_pool_match: 0.30
+    #
+    # The old split was best_experience 0.50 + selected_summary 0.20 +
+    # avg_skill_pool_match 0.30. Both of those measured cosine against things the
+    # new template does not put on the page, so half the fit score was graded on
+    # content no recruiter would ever read. keyword_coverage replaces them: the
+    # weighted fraction of the JD's own qualifications that the SELECTED bullets
+    # literally contain (src/scorer/keywords.py).
+    best_experience: 0.55
+    keyword_coverage: 0.45
 
   success_prob:
     # Collapsed formula per project decision (applicant_score and age_score
@@ -410,7 +313,7 @@ scoring:
 # Resume builder — Layer 5
 # ---------------------------------------------------------------------------
 builder:
-  template_path: "resumes/templates/Templete.docx"   # actual filename (typo in name kept)
+  template_path: "resumes/templates/headless_v1.docx"
   output_dir: "resumes/applied"
   # Diff check: reject any build that modifies content outside permitted
   # regions. Header (before first WORK EXPERIENCE Heading1) is never touched.
@@ -764,7 +667,7 @@ endpoint:
   base_url: "https://asus-tuf-f16-vishnu.tail106cde.ts.net"
   port: 8000
   # Template path is config-driven so any instance can swap the file.
-  template_path: "resumes/templates/Templete.docx"
+  template_path: "resumes/templates/headless_v1.docx"
   # How long a cached render stays valid, in days.
   #
   # MUST be kept in step with the S3 lifecycle rule on the `pdf_cache/` and
@@ -773,6 +676,14 @@ endpoint:
   # the endpoint still serves the resume (it re-renders), but every "hit"
   # silently costs a full rebuild.
   render_cache_ttl_days: 90
+
+  # Structural knobs for the Headless template. These are numbering.xml ids, not
+  # style names: the assembler detects structure, never text (the template ships
+  # placeholder headings).
+  render:
+    bullet_num_id: "1"          # numbering.xml: entry bullets, 1.5 line spacing
+    education_num_id: "2"       # numbering.xml: Education & Certificates lines
+    education_max_lines: 3      # the method's hard cap on that section
   # Operator dashboard (Layer 6 browser surface).
   dashboard:
     # The skipped table is the biggest one and only its top is ever scanned.

@@ -7,14 +7,25 @@ LLM, model, or network. The orchestrator loads the profile, calls this, and
 (for every match >= threshold) hands the result to Layer 5; there are NO
 quotas and NO top-N picking (CLAUDE.md hard rule #14).
 
-Formulas (CLAUDE.md "FINAL" + config.scoring):
+Formulas (PIVOT_V3.md D6 + config.scoring):
 
-    fit          = best_experience*0.50 + selected_summary*0.20
-                   + avg_skill_pool_match*0.30
+    fit          = best_experience*0.55 + keyword_coverage*0.45
     success_prob = seniority*0.60 + recency*0.40
     recency      = banded on hours since posted
     final        = fit*0.55 + success_prob*0.30 + recency*0.10 + project*0.05
     apply        = final >= 0.50
+
+``keyword_coverage`` replaced ``selected_summary*0.20 + avg_skill_pool_match*0.30``.
+Both of those measured cosine against content the Headless template does not put on
+the page — a summary paragraph and a skills list that no longer exist — so half the
+fit score was grading material no recruiter would read. Coverage instead measures
+the weighted fraction of the JD's own stated qualifications that the bullets we
+ACTUALLY SELECTED literally contain.
+
+Note the ordering that implies: selection runs first, and the score is computed on
+its output. The two numbers are therefore not independent, which is exactly why
+``scoring.apply_threshold`` has to be re-measured against a real corpus before it
+means anything (PIVOT_V3.md Stage 6).
 """
 
 from __future__ import annotations
@@ -24,17 +35,13 @@ from datetime import datetime, timezone
 
 from src.config import settings
 from src.reasons import LOW_SCORE
-from src.scorer.ordering import order_experiences, skills_before_projects
+from src.scorer.keywords import Keyword, coverage_of
+from src.scorer.ordering import order_entries
 from src.scorer.selector import (
     JDContext,
     Profile,
-    SelectedExperience,
-    SelectedProject,
-    SummaryCand,
-    select_experiences,
-    select_projects,
-    select_skill_candidates,
-    select_summary,
+    SelectedEntry,
+    select_entries,
 )
 
 
@@ -48,12 +55,17 @@ class SelectionResult:
     success_prob: float
     recency: float
     project_score: float
-    summary: SummaryCand | None
-    summary_score: float
-    experiences: list[SelectedExperience]
-    projects: list[SelectedProject]
-    skill_candidates: list[tuple[str, float]]
-    skills_before_projects: bool
+    #: Work entries then project entries, in render order.
+    entries: list[SelectedEntry]
+    work: list[SelectedEntry]
+    projects: list[SelectedEntry]
+    #: Weighted fraction of the JD checklist covered by the UNION of all entries.
+    keyword_coverage: float
+    #: The same for the first entry alone. This is the number the method actually
+    #: grades on — "the first entry must tick every box by itself" — because a
+    #: token in the last bullet of the last entry is a token nobody read.
+    lead_entry_coverage: float
+    jd_keywords: tuple[Keyword, ...] = ()
     reason_category: str | None = None
 
 
@@ -152,29 +164,40 @@ def recency_score(
 
 
 def evaluate(
-    profile: Profile, jd: JDContext, *, now: datetime | None = None
+    profile: Profile,
+    jd: JDContext,
+    *,
+    keywords: tuple[Keyword, ...] = (),
+    now: datetime | None = None,
 ) -> SelectionResult:
     """Score one job against the profile and decide build-or-skip."""
     now = now or datetime.now(timezone.utc)
 
-    experiences = order_experiences(select_experiences(profile.experiences, jd))
-    projects = select_projects(profile.projects, jd)
-    summary, summary_score = select_summary(profile.summaries, jd)
-    skill_candidates = select_skill_candidates(profile.skills, jd)
-
-    best_experience = max((e.score for e in experiences), default=0.0)
-    best_project = max((p.score for p in projects), default=0.0)
-    avg_skill = (
-        sum(s for _, s in skill_candidates) / len(skill_candidates)
-        if skill_candidates
-        else 0.0
+    work = order_entries(select_entries(profile.work, jd, keywords, kind="work", now=now))
+    projects = sorted(
+        select_entries(profile.projects, jd, keywords, kind="project", now=now),
+        key=lambda e: e.score,
+        reverse=True,
     )
+    # Fixed order: Work History, then Projects. The old variable Skills-vs-Projects
+    # ordering went with the Skills section.
+    entries = [*work, *projects]
+
+    best_experience = max((e.score for e in work), default=0.0)
+    best_project = max((e.score for e in projects), default=0.0)
+
+    # The union of the per-entry covered sets, not a re-scan of the text: an
+    # entry's set is by construction exactly what its SELECTED bullets hit, and
+    # re-deriving it here would be a second definition of "covered" to keep in
+    # step with the first.
+    union: set[str] = set().union(*(e.covered for e in entries)) if entries else set()
+    keyword_coverage = coverage_of(union, keywords)
+    lead_entry_coverage = entries[0].coverage if entries else 0.0
 
     fit_cfg = settings.scoring.fit
     fit = (
         fit_cfg.best_experience * best_experience
-        + fit_cfg.selected_summary * summary_score
-        + fit_cfg.avg_skill_pool_match * avg_skill
+        + fit_cfg.keyword_coverage * keyword_coverage
     )
 
     sp_cfg = settings.scoring.success_prob
@@ -205,11 +228,11 @@ def evaluate(
         success_prob=success_prob,
         recency=recency,
         project_score=best_project,
-        summary=summary,
-        summary_score=summary_score,
-        experiences=experiences,
+        entries=entries,
+        work=work,
         projects=projects,
-        skill_candidates=skill_candidates,
-        skills_before_projects=skills_before_projects(skill_candidates, projects),
+        keyword_coverage=keyword_coverage,
+        lead_entry_coverage=lead_entry_coverage,
+        jd_keywords=keywords,
         reason_category=None if apply else LOW_SCORE,
     )

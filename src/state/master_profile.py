@@ -41,20 +41,22 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from src.scorer.embeddings import Vector, embed
+import structlog
+
 from src.scorer.selector import (
     BulletCand,
-    ExperienceCand,
+    EntryCand,
     Profile,
-    ProjectCand,
+    RoleBlockCand,
     SkillCand,
-    SummaryCand,
 )
 from src.state.models import (
     MasterBullets,
     MasterMeta,
-    MasterSummaries,
     MasterTitleAliases,
 )
+
+log = structlog.get_logger(__name__)
 
 _ROOT = Path(__file__).resolve().parents[2]
 _YAML_PATH = _ROOT / "master_profile.yaml"
@@ -93,49 +95,113 @@ class Bullet(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
-class Summary(BaseModel):
-    id: str
-    text: str
-    tags: list[str] = Field(default_factory=list)
-    role_categories: list[str] = Field(default_factory=list)
+class RoleBlock(BaseModel):
+    """One role's worth of a job or project, as the bullet-extract skill writes it.
+
+    A block is a *complete, liftable job entry* aimed at one title family: its own
+    header, its own title aliases, its own ordered bullets. One entry may carry
+    several blocks (a job that honestly serves `data`, `backend` and `quant`), and
+    the bot renders that entry once, choosing the lead block per JD.
+
+    ``bullets`` is the extractor's audited render set: ordered, density-checked, no
+    repeated keyword within it, and ``bullets[0]`` is always the plain-language
+    summary bullet. ``extra_bullets`` is the recovery pool -- true statements about
+    real tools that this title's checklist happens not to name, plus the
+    cross-cutting skills (Docker, Git, SQL, CI/CD) that every block needs available
+    even when its own checklist omits them. Nothing in ``extra_bullets`` renders
+    unless a JD asks for its keyword; without it, a keyword cut at extraction time
+    is unrecoverable at selection time.
+    """
+
+    role: str
+    role_fit: str = "primary"  # primary | adjacent
+    entry_header: str
+    entry_dates: str | None = None  # absent for projects (method: projects have no dates)
+    checklist: list[str] = Field(default_factory=list)
+    market: str | None = None
+    target_titles: list[str] = Field(default_factory=list)
+    title_aliases: list[str] = Field(..., min_length=1)
+    bullets: list[Bullet] = Field(..., min_length=1)
+    extra_bullets: list[Bullet] = Field(default_factory=list)
+    covered: list[str] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    titles_dropped: list[dict[str, Any]] = Field(default_factory=list)
+    lead_pct: int = 0
+
+    @property
+    def summary_bullet_id(self) -> str:
+        """``bullets[0]`` is the summary bullet, by the extractor's contract."""
+        return self.bullets[0].id
+
+    @property
+    def all_bullets(self) -> list[Bullet]:
+        """Render set plus recovery pool -- what the selector may choose from."""
+        return [*self.bullets, *self.extra_bullets]
 
 
-class WorkExperience(BaseModel):
+class _Entry(BaseModel):
+    """Shared shape. A work entry and a project entry differ only in identity
+    fields and whether they carry dates; both render as one block of bullets under
+    one header, so the selector treats them identically."""
+
     id: str
+    role_blocks: list[RoleBlock] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def _unique_roles(self) -> "_Entry":
+        _require_unique([rb.role for rb in self.role_blocks], f"role in '{self.id}'")
+        return self
+
+
+class WorkExperience(_Entry):
     company: str
     actual_title: str
     safe_title_aliases: list[str]
-    start_date: str
-    end_date: str
+    start_date: str  # YYYY-MM — drives the tenure bullet cap
+    end_date: str  # YYYY-MM | present
     location: str | None = None
-    bullet_pool: list[Bullet]
 
     @model_validator(mode="after")
-    def _actual_title_in_aliases(self) -> WorkExperience:
-        # Hard rule #6: the LLM may only display a title from this allow-list,
-        # and the operator's real title must be one of the safe options.
+    def _check(self) -> WorkExperience:
+        # Hard rule #6: a rendered title may only come from this allow-list, and the
+        # operator's real title must be one of the safe options.
         if self.actual_title not in self.safe_title_aliases:
             raise ValueError(
                 f"work_experience '{self.id}': actual_title "
                 f"'{self.actual_title}' must be in safe_title_aliases"
             )
-        if not self.bullet_pool:
-            raise ValueError(f"work_experience '{self.id}': bullet_pool is empty")
+        # Every block alias is a title this entry may render under, so rule #6
+        # requires safe_title_aliases to be their union -- otherwise a block could
+        # put a title on the page that never passed the allow-list.
+        union = {a for rb in self.role_blocks for a in rb.title_aliases}
+        missing = sorted(union - set(self.safe_title_aliases))
+        if missing:
+            raise ValueError(
+                f"work_experience '{self.id}': role_block title_aliases {missing} "
+                "are not in safe_title_aliases (hard rule #6)"
+            )
+        for rb in self.role_blocks:
+            if not rb.entry_dates:
+                raise ValueError(
+                    f"work_experience '{self.id}' block '{rb.role}': entry_dates "
+                    "is required (the method: full-time work and internships must "
+                    "show months AND years)"
+                )
         return self
 
 
-class Project(BaseModel):
-    id: str
+class Project(_Entry):
     name: str
-    link: str
+    link: str = ""
     tags: list[str] = Field(default_factory=list)
-    bullet_pool: list[Bullet]
 
     @model_validator(mode="after")
-    def _min_two_bullets(self) -> Project:
-        # Projects show 2-3 bullets and are never hidden, so the pool needs >=2.
-        if len(self.bullet_pool) < 2:
-            raise ValueError(f"project '{self.id}': bullet_pool needs >= 2 bullets")
+    def _no_dates(self) -> Project:
+        for rb in self.role_blocks:
+            if rb.entry_dates:
+                raise ValueError(
+                    f"project '{self.id}' block '{rb.role}': projects carry no dates"
+                )
         return self
 
 
@@ -154,28 +220,48 @@ class Certification(BaseModel):
 
 
 class MasterProfile(BaseModel):
+    """The whole profile.
+
+    ``education`` and ``certifications`` are retained as the record of truth but
+    render nowhere: the Headless template puts Education & Certificates in a static
+    region the operator hand-writes into their template copy, capped at three lines
+    (PIVOT_V3.md D9). ``skills_pool`` and ``gap_skills`` are likewise machine input
+    only -- nothing in either appears on a resume; every keyword that matters must
+    also live inside a bullet.
+    """
+
     personal: PersonalInfo
-    summaries: list[Summary]
+    meta: dict[str, Any] = Field(default_factory=dict)
     work_experience: list[WorkExperience]
     projects: list[Project]
-    skills_pool: list[str]
+    skills_pool: list[str] = Field(default_factory=list)
+    gap_skills: list[dict[str, Any]] = Field(default_factory=list)
     education: list[Education] = Field(default_factory=list)
     certifications: list[Certification] = Field(default_factory=list)
+
+    @property
+    def entries(self) -> list[_Entry]:
+        return [*self.work_experience, *self.projects]
 
     @model_validator(mode="after")
     def _unique_ids(self) -> MasterProfile:
         _require_unique([e.id for e in self.work_experience], "work_experience id")
         _require_unique([p.id for p in self.projects], "project id")
-        _require_unique([s.id for s in self.summaries], "summary id")
-        # Bullet ids must be globally unique — they're the master_bullets PK.
-        bullet_ids = [
-            b.id
-            for parent in (*self.work_experience, *self.projects)
-            for b in parent.bullet_pool
-        ]
-        _require_unique(bullet_ids, "bullet id")
+        _require_unique(
+            [f"{e.id}::{rb.role}" for e in self.entries for rb in e.role_blocks],
+            "role_block id",
+        )
+        # Bullet ids are the master_bullets PK, so they must be globally unique
+        # across render sets AND recovery pools.
+        _require_unique(
+            [b.id for e in self.entries for rb in e.role_blocks for b in rb.all_bullets],
+            "bullet id",
+        )
         if not self.skills_pool:
-            raise ValueError("skills_pool is empty")
+            # A warning, not a raise. skills_pool renders nothing; it only feeds JD
+            # parse repair and the dashboard's gap list. A legitimate extractor run
+            # for a skill-less repo must still load.
+            log.warning("master_profile_empty_skills_pool")
         _require_unique(self.skills_pool, "skill")
         return self
 
@@ -196,36 +282,75 @@ def _require_unique(values: list[str], label: str) -> None:
 @dataclass(frozen=True)
 class _DesiredBullet:
     id: str
-    parent_id: str
-    parent_type: str  # experience | project | skill | project_name
+    parent_id: str  # the ENTRY id — unchanged semantics
+    parent_type: str  # experience | project | skill
     text: str
     tags: list[str]
+    block_id: str | None  # "{entry_id}::{role}"
+    role: str | None
+    bullet_index: int | None  # position within its block's render set
+    is_summary: bool  # bullets[0] of a block
+    is_extra: bool  # from extra_bullets — the recovery pool
 
 
 def desired_bullets(profile: MasterProfile) -> list[_DesiredBullet]:
-    """Every row master_bullets should hold (bullets + skills + project names)."""
+    """Every row master_bullets should hold (block bullets + the skills pool).
+
+    ``project_name`` rows are gone: project names fed the old name-cosine in
+    ``score_project``, and projects are now scored through their role_block title
+    aliases exactly like work entries.
+    """
     out: list[_DesiredBullet] = []
-    for exp in profile.work_experience:
-        for b in exp.bullet_pool:
-            out.append(_DesiredBullet(b.id, exp.id, "experience", b.text, b.tags))
-    for proj in profile.projects:
-        for b in proj.bullet_pool:
-            out.append(_DesiredBullet(b.id, proj.id, "project", b.text, b.tags))
-        out.append(
-            _DesiredBullet(f"projname::{proj.id}", proj.id, "project_name", proj.name, [])
-        )
+    for entries, ptype in (
+        (profile.work_experience, "experience"),
+        (profile.projects, "project"),
+    ):
+        for entry in entries:
+            for rb in entry.role_blocks:
+                block_id = f"{entry.id}::{rb.role}"
+                for i, b in enumerate(rb.bullets):
+                    out.append(
+                        _DesiredBullet(
+                            b.id, entry.id, ptype, b.text, b.tags,
+                            block_id, rb.role, i, i == 0, False,
+                        )
+                    )
+                for b in rb.extra_bullets:
+                    # No index and never a summary: the recovery pool is unordered
+                    # and never leads an entry.
+                    out.append(
+                        _DesiredBullet(
+                            b.id, entry.id, ptype, b.text, b.tags,
+                            block_id, rb.role, None, False, True,
+                        )
+                    )
     for skill in profile.skills_pool:
-        out.append(_DesiredBullet(f"skill::{skill}", SKILLS_PARENT, "skill", skill, []))
+        out.append(
+            _DesiredBullet(
+                f"skill::{skill}", SKILLS_PARENT, "skill", skill, [],
+                None, None, None, False, False,
+            )
+        )
     return out
 
 
-def desired_aliases(profile: MasterProfile) -> dict[str, tuple[str, str]]:
-    """alias_id -> (parent_id, alias_text). The id embeds the alias text, so a
-    changed alias is a remove+add (deactivate old, insert new)."""
-    out: dict[str, tuple[str, str]] = {}
-    for exp in profile.work_experience:
-        for alias in exp.safe_title_aliases:
-            out[f"{exp.id}::alias::{alias}"] = (exp.id, alias)
+def desired_aliases(profile: MasterProfile) -> dict[str, tuple[str, str, str]]:
+    """alias_id -> (parent_id, block_id, alias_text).
+
+    Aliases hang off the BLOCK now, not the entry: each block targets its own title
+    family, so the `data` block's aliases are not the `backend` block's. Projects
+    gain aliases too, which they never had -- they are scored the same way as work
+    entries now.
+
+    The id embeds the alias text, so an edited alias is a remove+add (deactivate
+    the old row, insert the new one) rather than an in-place update.
+    """
+    out: dict[str, tuple[str, str, str]] = {}
+    for entry in profile.entries:
+        for rb in entry.role_blocks:
+            block_id = f"{entry.id}::{rb.role}"
+            for alias in rb.title_aliases:
+                out[f"{block_id}::alias::{alias}"] = (entry.id, block_id, alias)
     return out
 
 
@@ -330,7 +455,6 @@ def rebuild(
 
     report = RebuildReport()
     _sync_bullets(session, profile, embed_fn, now, report)
-    _sync_summaries(session, profile, embed_fn, now, report)
     _sync_aliases(session, profile, embed_fn, report)
 
     _set_meta(session, _META_MTIME, mtime)
@@ -351,6 +475,8 @@ def _sync_bullets(session, profile, embed_fn, now, report) -> None:
             MasterBullets(
                 bullet_id=d.id, parent_id=d.parent_id, parent_type=d.parent_type,
                 text=d.text, tags=d.tags, embedding=embed_fn(d.text), is_active=True,
+                block_id=d.block_id, role=d.role, bullet_index=d.bullet_index,
+                is_summary=d.is_summary, is_extra=d.is_extra,
             )
         )
         report.bullets_inserted += 1
@@ -359,46 +485,23 @@ def _sync_bullets(session, profile, embed_fn, now, report) -> None:
         r.text = d.text
         r.embedding = embed_fn(d.text)
         r.parent_id, r.parent_type, r.tags = d.parent_id, d.parent_type, d.tags
+        r.block_id, r.role, r.bullet_index = d.block_id, d.role, d.bullet_index
+        r.is_summary, r.is_extra = d.is_summary, d.is_extra
         r.is_active, r.deactivated_at, r.updated_at = True, None, now
         report.bullets_updated += 1
     for bid in plan.to_reactivate:
-        r = rows[bid]
+        # Same text, previously deactivated. Its block metadata may still have
+        # moved (a bullet reassigned to another role_block keeps its id and its
+        # wording), so refresh those alongside the flag.
+        d, r = desired[bid], rows[bid]
+        r.block_id, r.role, r.bullet_index = d.block_id, d.role, d.bullet_index
+        r.is_summary, r.is_extra = d.is_summary, d.is_extra
         r.is_active, r.deactivated_at, r.updated_at = True, None, now
         report.bullets_reactivated += 1
     for bid in plan.to_deactivate:
         r = rows[bid]
         r.is_active, r.deactivated_at = False, now
         report.bullets_deactivated += 1
-
-
-def _sync_summaries(session, profile, embed_fn, now, report) -> None:
-    rows = {r.summary_id: r for r in session.scalars(select(MasterSummaries)).all()}
-    desired = {s.id: s for s in profile.summaries}
-    plan = plan_sync(
-        {sid: (r.text, r.is_active) for sid, r in rows.items()},
-        {s.id: s.text for s in desired.values()},
-    )
-    for sid in plan.to_insert:
-        s = desired[sid]
-        session.add(
-            MasterSummaries(
-                summary_id=s.id, text=s.text, tags=s.tags,
-                role_categories=s.role_categories, embedding=embed_fn(s.text),
-                is_active=True,
-            )
-        )
-        report.summaries_inserted += 1
-    for sid in plan.to_update:
-        s, r = desired[sid], rows[sid]
-        r.text, r.embedding = s.text, embed_fn(s.text)
-        r.tags, r.role_categories, r.is_active = s.tags, s.role_categories, True
-        report.summaries_updated += 1
-    for sid in plan.to_reactivate:
-        rows[sid].is_active = True
-        report.summaries_reactivated += 1
-    for sid in plan.to_deactivate:
-        rows[sid].is_active = False
-        report.summaries_deactivated += 1
 
 
 def _sync_aliases(session, profile, embed_fn, report) -> None:
@@ -411,10 +514,10 @@ def _sync_aliases(session, profile, embed_fn, report) -> None:
         {aid: aid for aid in desired},
     )
     for aid in plan.to_insert:
-        parent_id, alias = desired[aid]
+        parent_id, block_id, alias = desired[aid]
         session.add(
             MasterTitleAliases(
-                id=aid, parent_id=parent_id, alias=alias,
+                id=aid, parent_id=parent_id, block_id=block_id, alias=alias,
                 embedding=embed_fn(alias), is_active=True,
             )
         )
@@ -439,7 +542,13 @@ def _vec(value: Any) -> Vector:
 def load_profile(session: Session, *, json_path: Path | None = None) -> Profile:
     """Build the Layer-4 :class:`Profile` from the canonical JSON + DB rows.
 
-    Assumes :func:`rebuild` has run (the JSON exists and the DB reflects it).
+    Structure (headers, dates, which bullet sits in which block) comes from the
+    JSON; embeddings come from the DB, joined by id. Assumes :func:`rebuild` has
+    run.
+
+    Only ACTIVE bullets are loaded, so a bullet removed from the YAML disappears
+    from selection without ever being deleted — and any older ``selection_json``
+    that references it still resolves against the JSON structure.
     """
     path = json_path or _JSON_PATH
     if not path.exists():
@@ -448,61 +557,76 @@ def load_profile(session: Session, *, json_path: Path | None = None) -> Profile:
         )
     profile = MasterProfile.model_validate(json.loads(path.read_text()))
 
-    exp_bullets: dict[str, list[BulletCand]] = defaultdict(list)
-    proj_bullets: dict[str, list[BulletCand]] = defaultdict(list)
-    proj_name_emb: dict[str, Vector] = {}
+    rows: dict[str, MasterBullets] = {}
     skills: list[SkillCand] = []
     for b in session.scalars(
         select(MasterBullets).where(MasterBullets.is_active.is_(True))
     ).all():
-        if b.parent_type == "experience":
-            exp_bullets[b.parent_id].append(BulletCand(b.bullet_id, b.text, _vec(b.embedding)))
-        elif b.parent_type == "project":
-            proj_bullets[b.parent_id].append(BulletCand(b.bullet_id, b.text, _vec(b.embedding)))
-        elif b.parent_type == "skill":
+        if b.parent_type == "skill":
             skills.append(SkillCand(b.text, _vec(b.embedding)))
-        elif b.parent_type == "project_name":
-            proj_name_emb[b.parent_id] = _vec(b.embedding)
+        else:
+            rows[b.bullet_id] = b
 
-    aliases_by_parent: dict[str, list[MasterTitleAliases]] = defaultdict(list)
+    aliases_by_block: dict[str, list[MasterTitleAliases]] = defaultdict(list)
     for a in session.scalars(
         select(MasterTitleAliases).where(MasterTitleAliases.is_active.is_(True))
     ).all():
-        aliases_by_parent[a.parent_id].append(a)
+        aliases_by_block[a.block_id or a.parent_id].append(a)
 
-    experiences: list[ExperienceCand] = []
-    for exp in profile.work_experience:
-        arows = aliases_by_parent.get(exp.id, [])
-        if arows:
-            safe_aliases = [a.alias for a in arows]
-            alias_embs = [_vec(a.embedding) for a in arows]
-        else:  # DB not synced yet — structure only, no alias embeddings
-            safe_aliases, alias_embs = list(exp.safe_title_aliases), []
-        experiences.append(
-            ExperienceCand(
-                id=exp.id, company=exp.company, actual_title=exp.actual_title,
-                safe_title_aliases=safe_aliases, alias_embeddings=alias_embs,
-                end_date=exp.end_date, bullets=exp_bullets.get(exp.id, []),
+    def _blocks(entry) -> list[RoleBlockCand]:
+        out: list[RoleBlockCand] = []
+        for rb in entry.role_blocks:
+            block_id = f"{entry.id}::{rb.role}"
+            bullets: list[BulletCand] = []
+            for i, b in enumerate(rb.all_bullets):
+                row = rows.get(b.id)
+                if row is None:
+                    # Deactivated, or the DB is not synced yet. Skipping keeps
+                    # selection honest rather than scoring a zero vector as if it
+                    # were a genuine non-match.
+                    continue
+                bullets.append(
+                    BulletCand(
+                        id=b.id,
+                        text=b.text,
+                        embedding=_vec(row.embedding),
+                        block_id=block_id,
+                        role=rb.role,
+                        is_summary=(i == 0 and b.id == rb.summary_bullet_id),
+                        is_extra=i >= len(rb.bullets),
+                    )
+                )
+            arows = aliases_by_block.get(block_id, [])
+            out.append(
+                RoleBlockCand(
+                    block_id=block_id,
+                    role=rb.role,
+                    role_fit=rb.role_fit,
+                    entry_header=rb.entry_header,
+                    entry_dates=rb.entry_dates or "",
+                    checklist=tuple(rb.checklist),
+                    title_aliases=[a.alias for a in arows] or list(rb.title_aliases),
+                    alias_embeddings=[_vec(a.embedding) for a in arows],
+                    bullets=bullets,
+                )
             )
-        )
+        return out
 
-    projects = [
-        ProjectCand(
-            id=p.id, name=p.name, link=p.link,
-            name_embedding=proj_name_emb.get(p.id, []),
-            bullets=proj_bullets.get(p.id, []),
+    work = [
+        EntryCand(
+            id=e.id,
+            kind="work",
+            label=e.company,
+            blocks=_blocks(e),
+            actual_title=e.actual_title,
+            safe_title_aliases=list(e.safe_title_aliases),
+            start_date=e.start_date,
+            end_date=e.end_date,
         )
+        for e in profile.work_experience
+    ]
+    projects = [
+        EntryCand(id=p.id, kind="project", label=p.name, blocks=_blocks(p), link=p.link)
         for p in profile.projects
     ]
-
-    summaries = [
-        SummaryCand(s.summary_id, s.text, s.role_categories or [], _vec(s.embedding))
-        for s in session.scalars(
-            select(MasterSummaries).where(MasterSummaries.is_active.is_(True))
-        ).all()
-    ]
-
-    return Profile(
-        experiences=experiences, projects=projects,
-        summaries=summaries, skills=skills,
-    )
+    return Profile(work=work, projects=projects, skills=skills)

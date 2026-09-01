@@ -79,6 +79,7 @@ def backfill(limit: int | None = None, dry_run: bool = False) -> dict[str, int]:
     )
     from src.scraper import filters as job_filters
     from src.scorer.apply_decision import evaluate
+    from src.scorer.keywords import jd_keywords
     from src.scorer.selector import build_jd_context
     from src.state.db import session_scope
     from src.state.master_profile import load_profile
@@ -142,6 +143,7 @@ def backfill(limit: int | None = None, dry_run: bool = False) -> dict[str, int]:
                     posted_at=job.posted_at,
                     scraped_at=job.scraped_at,
                 ),
+                keywords=jd_keywords(parsed),
             )
             counts["scored"] += 1
 
