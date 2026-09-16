@@ -42,7 +42,7 @@ from src.config import settings
 from src.llm.schemas import JDParsed
 from src.scorer.embeddings import Vector, add, cosine, embed_batch
 from src.scorer.keywords import Keyword, covered_by, coverage_of, norm, weight_of
-from src.scorer.qualifications import canonical_overlap
+from src.scorer.qualifications import canonical_covered, canonical_overlap
 
 log = structlog.get_logger(__name__)
 
@@ -132,6 +132,13 @@ class SelectedBullet:
     #: auditable after the fact: `python -m src.cli.inspect` can show why each
     #: bullet earned its slot.
     new_keywords: list[str] = field(default_factory=list)
+    #: Which phase earned this slot — "jd" (this JD asked for it) or
+    #: "qualification" (the title's standing checklist did). A phase-2 bullet can
+    #: legitimately have an empty ``new_keywords``, so without this the audit trail
+    #: cannot tell "covered nothing" from "covered nothing THIS JD named".
+    via: str = "jd"
+    #: Canonical tokens this bullet added, for phase-2 bullets. Empty for phase 1.
+    new_canonical: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -178,39 +185,19 @@ def _force_min(passing: list, ranked: list, max_shown: int, min_shown: int) -> l
     return selected
 
 
-def _months_between(start: str, end: str, now: datetime) -> int:
-    """Whole months between two ``YYYY-MM`` strings; ``present`` means ``now``."""
-
-    def parse(value: str) -> tuple[int, int] | None:
-        v = (value or "").strip().lower()
-        if v in ("", "present", "current"):
-            return None
-        year, _, month = v.partition("-")
-        try:
-            return int(year), int(month or 1)
-        except ValueError:
-            return None
-
-    s = parse(start) or (now.year, now.month)
-    e = parse(end) or (now.year, now.month)
-    return max(0, (e[0] - s[0]) * 12 + (e[1] - s[1]))
-
-
 def bullet_cap(entry: EntryCand, now: datetime) -> int:
-    """How many bullets this entry may show.
+    """How many bullets this entry may show. One flat cap, for everything.
 
-    The method: minimum 3, maximum 8, "scaled to how long you were there — if
-    you've been here less than six months you need three, not five". Projects have
-    no dates, so they take a flat cap.
+    v3.1: the cap no longer scales by tenure or by kind. A job, a freelance
+    engagement and a project are selected by exactly the same method and compete for
+    exactly the same number of slots -- what an entry is has no say in how many
+    bullets it gets, only what it covers does.
+
+    ``entry`` and ``now`` stay in the signature: the cap is a per-entry policy
+    question, and inlining ``cfg.max_cap`` at the call site would remove the seam
+    that both the tests and ``SelectedEntry.cap`` are written against.
     """
-    cfg = settings.selection.bullets
-    if entry.kind == "project":
-        return int(cfg.project_cap)
-    months = _months_between(entry.start_date, entry.end_date, now)
-    for band in sorted(cfg.tenure_bands, key=lambda b: float(b["under_months"])):
-        if months < float(band["under_months"]):
-            return int(band["cap"])
-    return int(cfg.max_cap)
+    return int(settings.selection.bullets.max_cap)
 
 
 def _alias_score(block: RoleBlockCand, jd: JDContext) -> float:
@@ -319,13 +306,33 @@ def select_entry_bullets(
     *,
     now: datetime,
 ) -> SelectedEntry:
-    """Pin the summary bullet, then greedily cover this JD's checklist.
+    """Pin the summary bullet, then fill the entry in two greedy phases.
 
-    Precedence, when the three limits disagree: **cap > early-stop > floor.**
+    Phase 1 covers THIS JD. Phase 2, once JD gain is exhausted, covers what
+    recruiters for this title screen for whether or not this JD named it. Both
+    phases draw from the same cross-block pool, share the same ``chosen`` list and
+    stop the same way — at zero net gain — so neither can pad the entry.
+
+    Both phases score a candidate as::
+
+        net = new_weight * relevance - repeat_penalty * repeated_weight
+
+    The penalty is what keeps a keyword from rendering twice in one entry (Git in a
+    `data` bullet and again in a `devops` bullet, both true, both pooled). It sits
+    inside the gain rather than in the tie-break because a tie-break only fires on
+    exactly equal gain, which is never the case that produces the duplicate: a
+    denser bullet that happens to repeat one keyword would win outright.
+
+    Relevance scales the REWARD only, never the penalty. Scaling both would make an
+    off-role bullet (relevance as low as ``off_role_floor``) nearly exempt from the
+    penalty — and off-role bullets, pooled from other blocks, are exactly where the
+    duplicates come from.
+
+    Precedence, when the limits disagree: **cap > early-stop > floor.**
 
       * ``cap`` is a hard ceiling — it is what fits on the page.
-      * a zero-gain best candidate stops the fill early: a bullet that says nothing
-        new is exactly what the method says to delete.
+      * a zero-net-gain best candidate stops a phase: a bullet that says nothing new
+        is exactly what the method says to delete.
       * the floor overrides that early stop, because an entry showing one bullet is
         not a valid entry. Below the floor every gain is already 0, so those slots
         are filled by cosine.
@@ -333,12 +340,14 @@ def select_entry_bullets(
     cfg = settings.selection.bullets
     cap = bullet_cap(entry, now)
     floor = min(int(cfg.min_per_entry), cap)
+    lam = float(getattr(cfg, "repeat_penalty", 0.0))
 
     block = lead_block(entry, jd)
     block_scores = {rb.block_id: _alias_score(rb, jd) for rb in entry.blocks}
     pool = _entry_pool(entry, block.block_id)
 
     covered: set[str] = set()
+    covered_canon: set[str] = set()
     chosen: list[SelectedBullet] = []
 
     # --- 1. pin the summary bullet ----------------------------------------
@@ -356,8 +365,11 @@ def select_entry_bullets(
             )
         )
         covered |= gained
+        # The summary's canonical tokens count as said, so phase 2 does not repeat
+        # what the entry already opened with.
+        covered_canon |= canonical_covered(summary.norm_text, block.checklist)
 
-    # --- 2. greedy set-cover over the rest --------------------------------
+    # --- 2. phase 1: greedy set-cover over this JD ------------------------
     # Other blocks' summary bullets stay in the pool. They describe the same work
     # from another angle, and if one carries a keyword the pinned summary lacks it
     # earns a slot like any other bullet.
@@ -365,19 +377,21 @@ def select_entry_bullets(
     while len(chosen) < cap and remaining:
         best = None
         for b in remaining:
-            gained = covered_by(b.norm_text, keywords) - covered
+            hits = covered_by(b.norm_text, keywords)
+            gained = hits - covered
+            repeated = hits & covered
             gain = weight_of(gained, keywords) * _relevance(
                 block_scores, block.block_id, b.block_id
-            )
+            ) - lam * weight_of(repeated, keywords)
             sim = cosine(b.embedding, jd.vec_match)
-            # Tie-break on the role's canonical checklist (PIVOT_V3.md D12): when
-            # JD gain is equal, prefer the bullet that also covers more of what
-            # recruiters for this title screen for. It can only ever reorder
-            # candidates that already have equal, positive JD gain — a canonical
-            # token the JD never mentions cannot pull a bullet in, because the
-            # zero-gain stop below fires first.
+            # Tie-breaks, in order. (1) An audited render-set bullet beats a
+            # recovery-pool one at equal gain: `extra_bullets` are true, but they
+            # were not written to the method's density standard, so they should win
+            # on merit and never on a coin-flip. (2) The role's canonical checklist
+            # (PIVOT_V3.md D12) — prefer the bullet also covering more of what
+            # recruiters for this title screen for. (3) cosine.
             canon = canonical_overlap(b.norm_text, block.checklist)
-            key = (round(gain, 9), canon, sim)
+            key = (round(gain, 9), not b.is_extra, canon, sim)
             if best is None or key > best[0]:
                 best = (key, b, gained, gain, sim)
 
@@ -385,9 +399,50 @@ def select_entry_bullets(
         if gain <= 0.0 and len(chosen) >= floor:
             break
         chosen.append(
-            SelectedBullet(cand.id, cand.text, sim, False, sorted(gained))
+            SelectedBullet(cand.id, cand.text, sim, False, sorted(gained), via="jd")
         )
         covered |= gained
+        covered_canon |= canonical_covered(cand.norm_text, block.checklist)
+        remaining.remove(cand)
+
+    # --- 3. phase 2: fill the rest from the title's own qualification list --
+    # The JD has nothing left to ask for. The remaining slots go to what a recruiter
+    # screening this TITLE looks for — the JD is one lossy sample of that list, not
+    # the list itself. Unweighted: a canonical token carries no JD weight, so a
+    # second scale of weights here would be false precision.
+    while cfg.qualification_fill and len(chosen) < cap and remaining:
+        best = None
+        for b in remaining:
+            hits = canonical_covered(b.norm_text, block.checklist)
+            gained_c = hits - covered_canon
+            repeated_c = hits & covered_canon
+            gain_c = len(gained_c) * _relevance(
+                block_scores, block.block_id, b.block_id
+            ) - lam * len(repeated_c)
+            sim = cosine(b.embedding, jd.vec_match)
+            key = (round(gain_c, 9), not b.is_extra, sim)
+            if best is None or key > best[0]:
+                best = (key, b, gained_c, gain_c, sim)
+
+        _, cand, gained_c, gain_c, sim = best
+        if gain_c <= 0.0:
+            break
+        # A phase-2 bullet CAN still carry an uncovered JD keyword — phase 1 stops on
+        # NET gain, so a bullet with real new coverage and heavier repeats ends that
+        # phase without being taken. If such a bullet renders here, its keywords are
+        # genuinely on the page, so they join `covered`; excluding them would
+        # understate coverage. What never joins `covered` is a canonical token — the
+        # JD set stays the JD set, so `coverage_of` and the calibrated thresholds
+        # keep meaning exactly what they meant before.
+        chosen.append(
+            SelectedBullet(
+                cand.id, cand.text, sim, False,
+                sorted(covered_by(cand.norm_text, keywords) - covered),
+                via="qualification", new_canonical=sorted(gained_c),
+            )
+        )
+        covered |= covered_by(cand.norm_text, keywords) - covered
+        covered_canon |= gained_c
         remaining.remove(cand)
 
     return SelectedEntry(
