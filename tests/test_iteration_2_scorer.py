@@ -8,6 +8,7 @@ the early stop never firing below the floor.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -54,6 +55,30 @@ def _bullet(bid, text, *, vec=None, summary=False, block="e1::data", role="data"
             extra=False):
     return BulletCand(bid, text, vec or V, block_id=block, role=role,
                       is_summary=summary, is_extra=extra)
+
+
+@contextmanager
+def _cfg(**overrides):
+    """Temporarily override selection.bullets tunables.
+
+    ``Section`` is a read-only view with ``__slots__``, so the override goes into
+    its backing mapping rather than through setattr.
+    """
+    data = settings.selection.bullets._data
+    saved = {k: data[k] for k in overrides}
+    data.update(overrides)
+    try:
+        yield
+    finally:
+        data.update(saved)
+
+
+def _penalty(lam):
+    return _cfg(repeat_penalty=lam)
+
+
+def _no_qualification_fill():
+    return _cfg(qualification_fill=False)
 
 
 def _fake_canon(monkeypatch, mapping: dict[str, set[str]]) -> None:
@@ -315,6 +340,211 @@ def test_new_keywords_are_recorded_per_bullet_for_audit() -> None:
     )
     picked = next(b for b in out.bullets if b.id == "b1")
     assert picked.new_keywords == ["Python"]
+
+
+# ---------------------------------------------------------------------------
+# The repeat penalty — one keyword should not render twice in an entry
+# ---------------------------------------------------------------------------
+
+
+def test_a_denser_bullet_still_wins_despite_repeating_one_keyword() -> None:
+    """The penalty discourages repeats; it does not outlaw them.
+
+    Docker + CI/CD are new, Git is already on the page: two new keywords are worth
+    more than one repeat, so this bullet beats the clean single-keyword one.
+    """
+    bullets = [
+        _bullet("b0", "Summary using Git daily.", summary=True),
+        _bullet("b1", "Shipped with Docker and Git under CI/CD."),
+        _bullet("b2", "Wrote Terraform for the cluster."),
+    ]
+    out = select_entry_bullets(
+        _entry(blocks=[_block(bullets=bullets)]), _jd(),
+        _kw("Git", "Docker", "CI/CD", "Terraform"), now=NOW,
+    )
+    assert [b.id for b in out.bullets][:2] == ["b0", "b1"]
+
+
+def test_a_bullet_whose_repeats_outweigh_its_gain_is_not_selected() -> None:
+    """Two repeats at lambda 0.25 cost 0.5; one new keyword earns 1.0 * relevance.
+
+    Raising the penalty above that gain makes the bullet net-negative, and a
+    net-negative best candidate ends the phase rather than being taken.
+    """
+    bullets = [
+        _bullet("b0", "Summary with Python and SQL and Git.", summary=True),
+        _bullet("b1", "Used Python and SQL and Git and Rust here."),
+    ]
+    entry = _entry(blocks=[_block(bullets=bullets)])
+    kw = _kw("Python", "SQL", "Git", "Rust")
+
+    # min_per_entry=1 throughout: the floor outranks the early stop by design, so
+    # with it at 3 these two bullets would be taken whatever their gain. The floor
+    # has its own test; this one is about the penalty.
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(entry, _jd(), kw, now=NOW)
+        assert [b.id for b in out.bullets] == ["b0", "b1"]  # 1.0 - 0.5 > 0, taken
+
+        with _penalty(1.0):  # 1.0 - 2.0 < 0, no longer worth it
+            out = select_entry_bullets(entry, _jd(), kw, now=NOW)
+        assert [b.id for b in out.bullets] == ["b0"]
+
+
+def test_the_penalty_is_not_scaled_away_for_off_role_bullets() -> None:
+    """Relevance scales the reward, never the penalty.
+
+    An off-role bullet repeating a covered keyword must not escape the penalty just
+    because its block is barely related — off-role bullets are where cross-block
+    duplicates come from in the first place.
+    """
+    lead = _block(bullets=[
+        _bullet("b0", "Summary with Python.", summary=True),
+        _bullet("b1", "Used Rust in the core loop."),
+    ])
+    off = _block("e1::ml", "ml", bullets=[
+        _bullet("b2", "Used Python and Rust in the model.", block="e1::ml", role="ml"),
+    ], aliases=("ML Engineer",), alias_vecs=[W])
+    out = select_entry_bullets(
+        _entry(blocks=[lead, off]), _jd(), _kw("Python", "Rust"), now=NOW,
+    )
+    # b1 covers Rust cleanly on-role; b2 covers Rust too but repeats Python from an
+    # off-role block. b1 must come first.
+    assert [b.id for b in out.bullets][:2] == ["b0", "b1"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — the title's own qualification checklist
+# ---------------------------------------------------------------------------
+
+
+def test_phase_2_selects_a_bullet_the_JD_never_asked_for(monkeypatch) -> None:
+    """The headline change: a canonical token CAN now pull a bullet onto the page.
+
+    b2 has zero JD gain. Before v3.1 the entry stopped at b1; now b2 earns the next
+    slot because recruiters for this title screen for Kubernetes.
+    """
+    _fake_canon(monkeypatch, {"kubernetes": {"kubernetes"}})
+    # Three JD-covering bullets, so the floor (3) is satisfied by phase 1 alone and
+    # the Kubernetes bullet can only arrive through phase 2.
+    bullets = [
+        _bullet("b0", "Summary line.", summary=True),
+        _bullet("b1", "Built the service in Python."),
+        _bullet("b2", "Queried the warehouse in SQL."),
+        _bullet("bk", "Ran the fleet on Kubernetes for the ops team."),
+    ]
+    out = select_entry_bullets(
+        _entry(blocks=[_block(bullets=bullets, checklist=("Data Engineer",))]),
+        _jd(), _kw("Python", "SQL"), now=NOW,
+    )
+    picked = [b.id for b in out.bullets]
+    assert picked == ["b0", "b1", "b2", "bk"]
+    bk = out.bullets[-1]
+    assert bk.via == "qualification"
+    assert bk.new_keywords == []          # nothing this JD asked for
+    assert bk.new_canonical == ["kubernetes"]
+    assert all(b.via == "jd" for b in out.bullets[:3])
+
+
+def test_phase_2_stops_at_zero_canonical_gain_rather_than_padding(monkeypatch) -> None:
+    """Phase 2 ends the same way phase 1 does. An entry may finish under the cap."""
+    _fake_canon(monkeypatch, {"kubernetes": {"kubernetes"}})
+    bullets = [_bullet("b0", "Summary line.", summary=True)] + [
+        _bullet(f"b{i}", f"Did unrelated thing number {i} for the team.")
+        for i in range(1, 9)
+    ]
+    bullets.append(_bullet("bk", "Ran the fleet on Kubernetes for the ops team."))
+    out = select_entry_bullets(
+        _entry(blocks=[_block(bullets=bullets, checklist=("Data Engineer",))]),
+        _jd(), _kw("Python"), now=NOW,
+    )
+    # Floor fills to 3, Kubernetes earns a 4th, then nothing has canonical gain
+    # left — the entry stops well short of the cap of 8.
+    assert len(out.bullets) < 8
+    assert "bk" in [b.id for b in out.bullets]
+
+
+def test_phase_2_does_not_inflate_the_entrys_JD_coverage(monkeypatch) -> None:
+    """A canonical token is not a JD keyword; `coverage` must not move.
+
+    The calibrated thresholds are all defined against JD coverage, so phase 2
+    quietly widening it would invalidate every one of them.
+    """
+    _fake_canon(monkeypatch, {"kubernetes": {"kubernetes"}})
+    bullets = [
+        _bullet("b0", "Summary line.", summary=True),
+        _bullet("b1", "Built the service in Python."),
+        _bullet("b2", "Queried the warehouse in SQL."),
+        _bullet("bk", "Ran the fleet on Kubernetes for the ops team."),
+    ]
+    entry = _entry(blocks=[_block(bullets=bullets, checklist=("Data Engineer",))])
+    kw = _kw("Python", "SQL")
+    out = select_entry_bullets(entry, _jd(), kw, now=NOW)
+
+    with _no_qualification_fill():
+        base = select_entry_bullets(entry, _jd(), kw, now=NOW)
+
+    assert len(out.bullets) > len(base.bullets)     # phase 2 did add a bullet
+    assert out.coverage == base.coverage            # and coverage did not move
+    assert out.covered == base.covered
+
+
+def test_phase_2_can_be_turned_off(monkeypatch) -> None:
+    _fake_canon(monkeypatch, {"kubernetes": {"kubernetes"}})
+    bullets = [
+        _bullet("b0", "Summary line.", summary=True),
+        _bullet("b1", "Built the service in Python."),
+        _bullet("b2", "Ran the fleet on Kubernetes for the ops team."),
+    ]
+    entry = _entry(blocks=[_block(bullets=bullets, checklist=("Data Engineer",))])
+    with _no_qualification_fill():
+        out = select_entry_bullets(entry, _jd(), _kw("Python"), now=NOW)
+    assert all(b.via == "jd" for b in out.bullets)
+
+
+def test_the_summary_bullets_canonical_tokens_count_as_already_said(monkeypatch):
+    """Phase 2 must not repeat what the entry opened with."""
+    _fake_canon(monkeypatch, {"kubernetes": {"kubernetes"}})
+    bullets = [
+        _bullet("b0", "Summary running Kubernetes.", summary=True),
+        _bullet("b1", "Also ran the fleet on Kubernetes for the ops team."),
+    ]
+    out = select_entry_bullets(
+        _entry(blocks=[_block(bullets=bullets, checklist=("Data Engineer",))]),
+        _jd(), _kw("Python"), now=NOW,
+    )
+    # b1 is only reachable through the floor, never through phase 2 gain.
+    assert all(b.via == "jd" for b in out.bullets)
+
+
+# ---------------------------------------------------------------------------
+# The recovery pool (extra_bullets)
+# ---------------------------------------------------------------------------
+
+
+def test_an_audited_bullet_beats_an_extra_at_equal_gain() -> None:
+    bullets = [
+        _bullet("b0", "Summary line.", summary=True),
+        _bullet("x1", "Deployed Python services nightly.", extra=True),
+        _bullet("b1", "Built Python services for the desk."),
+    ]
+    out = select_entry_bullets(
+        _entry(blocks=[_block(bullets=bullets)]), _jd(), _kw("Python"), now=NOW,
+    )
+    assert [b.id for b in out.bullets][:2] == ["b0", "b1"]
+
+
+def test_an_extra_still_wins_when_it_covers_more() -> None:
+    """The recovery pool exists to recover keywords. Equal-gain ties are all it loses."""
+    bullets = [
+        _bullet("b0", "Summary line.", summary=True),
+        _bullet("b1", "Built Python services for the desk."),
+        _bullet("x1", "Built Python services on Kubernetes.", extra=True),
+    ]
+    out = select_entry_bullets(
+        _entry(blocks=[_block(bullets=bullets)]), _jd(),
+        _kw("Python", "Kubernetes"), now=NOW,
+    )
+    assert [b.id for b in out.bullets][:2] == ["b0", "x1"]
 
 
 # ---------------------------------------------------------------------------
