@@ -5,16 +5,22 @@ qualification sheet -- for each job title, the list of things a recruiter screen
 for. The bullet-extract skill writes bullets against it offline; this module lets
 Layer 4 consult it at selection time.
 
-Its role is deliberately small. The JD is what the operator is applying to, so JD
-keywords drive selection outright. The sheet only breaks ties: when two bullets
-cover exactly the same weight of JD keywords, the one that also covers more of the
-role's canonical tokens wins, on the reasoning that a Gemini parse of a JD is lossy
-and the sheet is what recruiters for that title actually screen for.
+The sheet has two jobs, and the JD always outranks it. Within phase 1 it only breaks
+ties: when two bullets cover exactly the same weight of JD keywords, the one that
+also covers more of the role's canonical tokens wins, on the reasoning that a Gemini
+parse of a JD is lossy and the sheet is what recruiters for that title actually
+screen for.
 
-A canonical token the JD never mentions can NEVER pull a bullet onto the resume. The
-greedy stops at zero JD gain, and the tie-break only reorders candidates that already
-have equal, positive JD gain. That is the whole guarantee, and
-``tests/test_keywords.py`` pins it.
+Phase 2 is where it selects on its own. Once JD gain is exhausted, the remaining
+slots up to the cap go to bullets covering canonical tokens this entry has not said
+yet -- what a recruiter for this title screens for whether or not this particular
+JD thought to name it. It can never outrank JD coverage, because it only runs after
+phase 1 has stopped; it can never pad an entry, because it stops at zero canonical
+gain exactly as phase 1 stops at zero JD gain.
+
+(Before v3.1 the sheet was a tie-break ONLY, and a canonical token the JD never
+mentioned could never pull a bullet onto the resume. Phase 2 replaced that
+guarantee deliberately -- see the plan in CHANGELOG [Unreleased].)
 
 Vendored rather than read from the guide directory so the GitHub Actions runner has
 it (hard rule #21: no operator-specific path in source). ``make refresh-quals``
@@ -30,7 +36,7 @@ from pathlib import Path
 import structlog
 
 from src.config import settings
-from src.scorer.keywords import norm, tokens_of
+from src.scorer.keywords import hit, norm, tokens_of
 
 log = structlog.get_logger(__name__)
 
@@ -104,13 +110,23 @@ def canonical_tokens(checklist: tuple[str, ...]) -> frozenset[str]:
     return frozenset(norm(t).strip() for t in tokens_of(lines) if norm(t).strip())
 
 
-def canonical_overlap(norm_text: str, checklist: tuple[str, ...]) -> int:
-    """How many of the role's canonical tokens appear in ``norm_text``.
+def canonical_covered(norm_text: str, checklist: tuple[str, ...]) -> frozenset[str]:
+    """Which of the role's canonical tokens appear in ``norm_text``.
 
-    The tie-break value. Plain count, not weighted: this never decides selection on
-    its own, so a second scale of weights would be false precision.
+    Matching is ``keywords.hit`` -- the same boundary rule the JD checklist uses --
+    so ``sql`` does not match "postgresql" and ``java`` does not match "javascript".
+    One definition of "covered" in the codebase, not two.
     """
     toks = canonical_tokens(checklist)
     if not toks:
-        return 0
-    return sum(1 for t in toks if t in norm_text)
+        return frozenset()
+    return frozenset(t for t in toks if hit(t, norm_text))
+
+
+def canonical_overlap(norm_text: str, checklist: tuple[str, ...]) -> int:
+    """How many of the role's canonical tokens appear in ``norm_text``.
+
+    The tie-break value. Plain count, not weighted: a canonical token never carries
+    JD weight, so a second scale of weights would be false precision.
+    """
+    return len(canonical_covered(norm_text, checklist))
