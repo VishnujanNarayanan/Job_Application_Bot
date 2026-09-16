@@ -17,6 +17,9 @@ and this project loosely tracks iterations rather than semver.
   held to it by parity tests, so the offline grader and the live selector agree
 - Layer 4: `src/scorer/qualifications.py` — the 128-title sheet, consulted as a
   phase-1 tie-break and as the phase-2 fill criterion
+- Profile: the `job_application_bot` project entry refreshed from a re-run of its
+  bullet-extract — 6 role blocks, 65 bullets (was 59), plus 28 skills and one gap
+  (Terraform) folded into the pools
 - Layer 4: `canonical_covered()` — the set of a title's canonical tokens present
   in a bullet, matched by `keywords.hit` so one definition of "covered" serves
   both the JD checklist and the sheet
