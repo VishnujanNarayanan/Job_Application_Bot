@@ -293,7 +293,9 @@ def _content_words(norm_text: str) -> list[str]:
     return [w for w in norm_text.split() if w]
 
 
-def _reads_as_repeat(norm_text: str, chosen_norm: list[str]) -> bool:
+def _reads_as_repeat(
+    norm_text: str, chosen_norm: list[str], *, jaccard: float | None = None
+) -> bool:
     """Would this bullet read as a restatement of one already chosen?
 
     Keyword arithmetic cannot see this. Two bullets can cover different keywords
@@ -309,7 +311,9 @@ def _reads_as_repeat(norm_text: str, chosen_norm: list[str]) -> bool:
     """
     cfg = settings.selection.bullets
     lead_n = int(getattr(cfg, "duplicate_prefix_words", 0) or 0)
-    jaccard_max = float(getattr(cfg, "duplicate_jaccard", 1.0))
+    jaccard_max = (
+        float(getattr(cfg, "duplicate_jaccard", 1.0)) if jaccard is None else jaccard
+    )
     min_words = int(getattr(cfg, "duplicate_min_words", 12))
     words = _content_words(norm_text)
     if not words:
@@ -366,6 +370,7 @@ def select_entry_bullets(
     *,
     now: datetime,
     rendered_norm: list[str] | None = None,
+    rendered_keywords: dict[str, int] | None = None,
 ) -> SelectedEntry:
     """Pin the summary bullet, then fill the entry in two greedy phases.
 
@@ -404,14 +409,36 @@ def select_entry_bullets(
     lam = float(getattr(cfg, "repeat_penalty", 0.0))
     across_cap = int(getattr(cfg, "max_repeats_across_entries", 0) or 0)
     require_unique_extras = bool(getattr(cfg, "extras_must_be_unique_source", True))
+    across_jaccard = float(getattr(cfg, "across_entry_jaccard", 0.33))
+    kw_cap = int(getattr(cfg, "max_keyword_renders", 0) or 0)
+    kw_seen = {} if rendered_keywords is None else rendered_keywords
     rendered = [] if rendered_norm is None else rendered_norm
+
+    def _spent(tokens: set[str]) -> set[str]:
+        """Drop tokens already claimed their maximum number of times on this page.
+
+        The method permits a keyword to repeat across entries, and that stays true
+        -- this is a ceiling, not a ban. Measured: "Agile" rendered in four of six
+        entries, each time in a genuinely different sentence, so no text-similarity
+        rule could see it. The repetition lives in the keyword, so the ceiling has
+        to live there too.
+        """
+        if not kw_cap:
+            return tokens
+        return {t for t in tokens if kw_seen.get(t, 0) < kw_cap}
 
     def _blocked(b: BulletCand, chosen_norm: list[str]) -> bool:
         """Barred within this entry, or already at its cross-entry ceiling."""
         if _reads_as_repeat(b.norm_text, chosen_norm):
             return True
+        # A LOOSER ratio than the within-entry bar. Within an entry a match is a
+        # ban, so it must be precise; across entries it only caps at N, so it can
+        # afford to group a family more generously. Measured on the AI-tooling
+        # family: 0.66 / 0.44 / 0.36 between its three renderings, so the strict
+        # 0.55 bar recognised only one of the three pairs.
         if across_cap and sum(
-            1 for t in rendered if _reads_as_repeat(b.norm_text, [t])
+            1 for t in rendered
+            if _reads_as_repeat(b.norm_text, [t], jaccard=across_jaccard)
         ) >= across_cap:
             return True
         # The recovery pool is for RECOVERY. An extra may render only when it is the
@@ -476,7 +503,7 @@ def select_entry_bullets(
             if _blocked(b, chosen_norm):
                 continue
             hits = covered_by(b.norm_text, keywords)
-            gained = hits - covered
+            gained = _spent(hits - covered)
             repeated = hits & covered
             gain = weight_of(gained, keywords) * _relevance(
                 block_scores, block.block_id, b.block_id
@@ -504,6 +531,8 @@ def select_entry_bullets(
         covered |= gained
         covered_canon |= canonical_covered(cand.norm_text, block.checklist)
         chosen_norm.append(cand.norm_text)
+        for tok in covered_by(cand.norm_text, keywords):
+            kw_seen[tok] = kw_seen.get(tok, 0) + 1
         remaining.remove(cand)
 
     # --- 3. phase 2: fill the rest from the title's own qualification list --
@@ -555,6 +584,8 @@ def select_entry_bullets(
         covered |= covered_by(cand.norm_text, keywords) - covered
         covered_canon |= gained_c
         chosen_norm.append(cand.norm_text)
+        for tok in covered_by(cand.norm_text, keywords):
+            kw_seen[tok] = kw_seen.get(tok, 0) + 1
         remaining.remove(cand)
 
     right_text, right_link = _header_right(entry, block)
