@@ -17,6 +17,8 @@ and this project loosely tracks iterations rather than semver.
   held to it by parity tests, so the offline grader and the live selector agree
 - Layer 4: `src/scorer/qualifications.py` — the 128-title sheet, consulted as a
   phase-1 tie-break and as the phase-2 fill criterion
+- Profile: the mql5 entry's link cleared — the repo is private, so "View Code"
+  handed a recruiter a 404. Its slot now renders "Freelance" alone
 - Profile: the `job_application_bot` project entry refreshed from a re-run of its
   bullet-extract — 6 role blocks, 65 bullets (was 59), plus 28 skills and one gap
   (Terraform) folded into the pools
