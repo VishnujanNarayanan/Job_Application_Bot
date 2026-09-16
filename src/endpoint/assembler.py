@@ -75,10 +75,27 @@ _SECTION_HEADING = str(
     getattr(settings.endpoint.render, "section_heading", "Work & Projects")
 )
 
-#: What a project's repo link reads as. Short by necessity — see _set_hyperlink.
-_LINK_TEXT = str(
-    getattr(settings.endpoint.render, "link_text", "View Demo \u2192")
+#: What the right-slot link reads as. Short by necessity — see _set_hyperlink.
+#: The label follows the URL: a source host gets "View Code", anything else is a
+#: running deployment and gets "View Demo". Telling a recruiter "View Demo" and
+#: landing them in a source tree is worse than saying nothing.
+_LINK_TEXT_DEMO = str(
+    getattr(settings.endpoint.render, "link_text_demo", "View\u00a0Demo\u00a0\u2192")
 )
+_LINK_TEXT_CODE = str(
+    getattr(settings.endpoint.render, "link_text_code", "View\u00a0Code\u00a0\u2192")
+)
+#: Hosts that serve source, not a running thing.
+_CODE_HOSTS = tuple(
+    getattr(settings.endpoint.render, "code_hosts", None)
+    or ("github.com", "gitlab.com", "bitbucket.org")
+)
+
+
+def link_label(url: str) -> str:
+    """"View Code" for a source host, "View Demo" for a live deployment."""
+    host = url.split("//", 1)[-1].split("/", 1)[0].lower()
+    return _LINK_TEXT_CODE if any(h in host for h in _CODE_HOSTS) else _LINK_TEXT_DEMO
 
 #: Character style that makes LibreOffice emit a PDF link annotation.
 _LINK_STYLE = "Hyperlink"
@@ -388,7 +405,7 @@ def _set_hyperlink(doc, p_elem, text: str, url: str, prefix: str = "") -> None:
         for existing in label.findall(qn("w:t")):
             label.remove(existing)
         lt = OxmlElement("w:t")
-        lt.text = f"{prefix}  "
+        lt.text = f"{prefix}\u00a0\u00a0"
         lt.set(qn("xml:space"), "preserve")
         label.append(lt)
         p_elem.append(label)
@@ -522,7 +539,7 @@ def assemble_docx(
                 # shows the link alone.
                 _set_entry_line(line, entry.header_left, "")
                 _set_hyperlink(
-                    doc, line, _LINK_TEXT, link, prefix=entry.header_right
+                    doc, line, link_label(link), link, prefix=entry.header_right
                 )
             else:
                 _set_entry_line(line, entry.header_left, entry.header_right)
