@@ -103,6 +103,7 @@ def build(
                 title_alias=choose_title_alias(aliases, jd_role_vec, fallback=fallback),
                 header_left=se.header_left,
                 header_right=se.header_right,
+                header_link=se.header_link,
                 bullet_ids=[b.id for b in se.bullets],
                 covered=sorted(se.covered),
                 coverage=se.coverage,

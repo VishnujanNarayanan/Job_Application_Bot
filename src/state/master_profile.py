@@ -160,6 +160,10 @@ class WorkExperience(_Entry):
     start_date: str  # YYYY-MM — drives the tenure bullet cap
     end_date: str  # YYYY-MM | present
     location: str | None = None
+    #: Live demo where one exists, else the repo. Rendered in the entry line's
+    #: right slot for FREELANCE entries only -- salaried work has no public
+    #: artifact to link, so that slot shows dates instead (v3.2).
+    link: str = ""
     #: ``employment`` entries are the operator's actual jobs and are
     #: force-included: a resume without them is not a resume. ``freelance``
     #: entries are separate engagements that compete on merit like projects do —
@@ -629,6 +633,7 @@ def load_profile(session: Session, *, json_path: Path | None = None) -> Profile:
             start_date=e.start_date,
             end_date=e.end_date,
             employment_type=e.employment_type,
+            link=e.link,
         )
         for e in profile.work_experience
     ]

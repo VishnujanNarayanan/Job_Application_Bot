@@ -73,6 +73,27 @@ def _cfg(**overrides):
         data.update(saved)
 
 
+_FILLERS = [
+    "Documented the handover notes so the next reader started without a meeting.",
+    "Sat with the operations desk each Friday to hear what broke that week.",
+    "Rewrote the onboarding checklist after watching a new joiner stumble twice.",
+    "Cut a weekly summary for the client so nobody chased status by email.",
+    "Kept a decision log that let anyone see why a choice had been made.",
+    "Ran a short retrospective after each release and acted on one item.",
+    "Answered support questions in a shared channel rather than by direct message.",
+]
+
+
+def _filler(i: int) -> str:
+    """Distinct, keyword-free prose.
+
+    These must not read as rewords of each other: v3.2 bars a restatement inside
+    an entry, so seven variations on one sentence would be blocked by that rule
+    and the test would pass for the wrong reason.
+    """
+    return _FILLERS[(i - 1) % len(_FILLERS)]
+
+
 def _penalty(lam):
     return _cfg(repeat_penalty=lam)
 
@@ -127,21 +148,29 @@ def _entry(eid="e1", kind="work", *, blocks, start="2024-01", end="present", lin
 
 
 @pytest.mark.parametrize("kind,start,end", [
-    ("work", "2026-02", "2026-06"),      # 4 months
-    ("work", "2025-06", "2026-06"),      # 12 months
-    ("work", "2023-12", "2026-06"),      # 30 months
-    ("work", "2026-03", "present"),      # open-ended, 3 months as of NOW
+    ("work", "2026-02", "2026-06"),       # 4 months
+    ("work", "2025-06", "2026-06"),       # 12 months
+    ("work", "2023-12", "2026-06"),       # 30 months
+    ("work", "2026-03", "present"),       # open-ended, 3 months as of NOW
     ("freelance", "2026-05", "2026-06"),  # 1 month
-    ("project", "", ""),                  # no dates at all
 ])
-def test_cap_is_flat_for_every_kind_and_tenure(kind, start, end) -> None:
-    """v3.1: neither tenure nor kind has any say in the cap.
+def test_tenure_never_changes_the_cap(kind, start, end) -> None:
+    """A four-month job and a three-year job get the same ceiling.
 
-    A four-month job, a ten-year job, a one-month gig and an undated project all
-    get the same 8 slots; what an entry covers decides its length, not what it is.
+    What an entry covers decides its length, not how long it lasted.
     """
     e = _entry("e1", kind, blocks=[_block(bullets=[])], start=start, end=end)
     assert bullet_cap(e, NOW) == int(settings.selection.bullets.max_cap) == 8
+
+
+def test_projects_take_a_lower_cap_than_work() -> None:
+    """Measured: with a flat 8, every project ran to 8 while jobs stopped at 4-6 —
+    the cap was setting project length and the last slots filled with restatement."""
+    proj = _entry("p1", "project", blocks=[_block(bullets=[])], start="", end="")
+    assert bullet_cap(proj, NOW) == int(settings.selection.bullets.project_cap) == 5
+    assert bullet_cap(proj, NOW) < bullet_cap(
+        _entry("e1", "work", blocks=[_block(bullets=[])]), NOW
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +322,7 @@ def test_zero_gain_stops_the_fill_above_the_floor() -> None:
     bullets = [_bullet("b0", "Summary with Python.", summary=True)] + [
         # Distinct wording: identical text is deduped out of the pool, which
         # would make this test pass for the wrong reason.
-        _bullet(f"b{i}", f"Did unrelated thing number {i} for the team.")
+        _bullet(f"b{i}", _filler(i))
         for i in range(1, 8)
     ]
     out = select_entry_bullets(
@@ -371,23 +400,30 @@ def test_a_bullet_whose_repeats_outweigh_its_gain_is_not_selected() -> None:
     Raising the penalty above that gain makes the bullet net-negative, and a
     net-negative best candidate ends the phase rather than being taken.
     """
-    bullets = [
-        _bullet("b0", "Summary with Python and SQL and Git.", summary=True),
-        _bullet("b1", "Used Python and SQL and Git and Rust here."),
-    ]
-    entry = _entry(blocks=[_block(bullets=bullets)])
+    # min_per_entry=1 throughout: the floor outranks the early stop by design, so
+    # at 3 these bullets would be taken whatever their gain. The floor has its own
+    # test; this one is about the penalty curve.
     kw = _kw("Python", "SQL", "Git", "Rust")
 
-    # min_per_entry=1 throughout: the floor outranks the early stop by design, so
-    # with it at 3 these two bullets would be taken whatever their gain. The floor
-    # has its own test; this one is about the penalty.
+    # ONE repeat (weight 1.0) against one new keyword: 1.0 - 0.25*1^2 = 0.75 > 0.
+    one = _entry(blocks=[_block(bullets=[
+        _bullet("b0", "Summary with Python.", summary=True),
+        _bullet("b1", "Used Python and Rust in the core loop here."),
+    ])])
     with _cfg(min_per_entry=1):
-        out = select_entry_bullets(entry, _jd(), kw, now=NOW)
-        assert [b.id for b in out.bullets] == ["b0", "b1"]  # 1.0 - 0.5 > 0, taken
+        out = select_entry_bullets(one, _jd(), kw, now=NOW)
+    assert [b.id for b in out.bullets] == ["b0", "b1"], "one repeat stays affordable"
 
-        with _penalty(1.0):  # 1.0 - 2.0 < 0, no longer worth it
-            out = select_entry_bullets(entry, _jd(), kw, now=NOW)
-        assert [b.id for b in out.bullets] == ["b0"]
+    # THREE repeats (weight 3.0) against one new keyword: squaring makes the cost
+    # 0.25*9 = 2.25, which swamps the 1.0 gain. Linearly it would be only 0.75 and
+    # the restatement would still be taken — this is the curve doing the work.
+    many = _entry(blocks=[_block(bullets=[
+        _bullet("b0", "Summary with Python and SQL and Git.", summary=True),
+        _bullet("b1", "Used Python and SQL and Git and Rust here."),
+    ])])
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(many, _jd(), kw, now=NOW)
+    assert [b.id for b in out.bullets] == ["b0"], "three repeats are not affordable"
 
 
 def test_the_penalty_is_not_scaled_away_for_off_role_bullets() -> None:
@@ -612,13 +648,41 @@ def test_a_primary_block_wins_a_tie_against_an_adjacent_one() -> None:
     assert out.header_left == "PRI"
 
 
-def test_a_project_puts_its_link_in_the_header_right_slot() -> None:
+def test_a_project_puts_its_link_in_the_header_link_slot() -> None:
     entry = _entry("p1", "project", link="https://github.com/x/y", blocks=[
         _block("p1::backend", "backend", dates="",
                bullets=[_bullet("p0", "S.", summary=True, block="p1::backend")]),
     ])
     out = select_entry_bullets(entry, _jd(), _kw(), now=NOW)
-    assert out.header_right == "https://github.com/x/y"
+    # v3.2 split the slot: text and link are separate, because a freelance entry
+    # shows BOTH. A project has no label text, only the link.
+    assert out.header_link == "https://github.com/x/y"
+    assert out.header_right == ""
+
+
+def test_salaried_work_shows_dates_and_no_link() -> None:
+    """There is no public artifact for salaried work — it belongs to the employer."""
+    entry = _entry("e1", "work", link="https://example.com/ignored", blocks=[
+        _block(dates="Jan 2024 to current",
+               bullets=[_bullet("b0", "S.", summary=True)]),
+    ])
+    out = select_entry_bullets(entry, _jd(), _kw(), now=NOW)
+    assert out.header_right == "Jan 2024 to current"
+    assert out.header_link == ""
+
+
+def test_freelance_shows_its_label_and_link_but_no_dates() -> None:
+    """A short engagement's value is that the result is live and clickable; its
+    two-month span invites the wrong question."""
+    entry = _entry("e1", "work", link="https://client.example/site", blocks=[
+        _block(dates="Dec 2025 to Jan 2026",
+               bullets=[_bullet("b0", "S.", summary=True)]),
+    ])
+    entry.employment_type = "freelance"
+    out = select_entry_bullets(entry, _jd(), _kw(), now=NOW)
+    assert out.header_right == settings.selection.freelance.label
+    assert out.header_link == "https://client.example/site"
+    assert "2025" not in out.header_right
 
 
 # ---------------------------------------------------------------------------
@@ -659,19 +723,43 @@ def test_order_entries_best_match_first_when_gap_large() -> None:
     assert order_entries([sb, sa])[0] is sa
 
 
-def test_order_entries_recency_when_gap_small() -> None:
-    """Derived from the configured gap, not a literal — recalibration moves it.
+def test_order_is_by_match_not_recency() -> None:
+    """v3.2: one merged section ordered purely on match. Recency decides nothing.
 
-    Stage 6 measured the real best-second gap at p50=0.015 and set the config to
-    the p90 (0.047). A hardcoded 0.05 was "small" against the old inert 0.20 and
-    is large against the measured value, so the literal tested the opposite of
-    its own name."""
-    gap = float(settings.selection.work.match_then_recency_gap)
+    An older entry that fits this JD better now leads an entry that merely ended
+    more recently — the page is arranged for the reader's twenty seconds, not
+    chronologically.
+    """
     a, b = _simple_entry("e1", "x", end="2020-01"), _simple_entry("e2", "y")
     sa = select_entries([a], _jd(), _kw(), kind="work", now=NOW)[0]
     sb = select_entries([b], _jd(), _kw(), kind="work", now=NOW)[0]
-    sa.score, sb.score = 0.50 + gap / 2, 0.50
-    assert order_entries([sa, sb])[0] is sb  # "present" is newest
+    sa.score, sb.score = 0.60, 0.50
+    assert order_entries([sa, sb])[0] is sa  # better match, despite being older
+
+
+def test_a_project_may_lead_the_page() -> None:
+    p = _simple_entry("p1", "x")
+    w = _simple_entry("e1", "y")
+    sp = select_entries([p], _jd(), _kw(), kind="project", now=NOW)[0]
+    sw = select_entries([w], _jd(), _kw(), kind="work", now=NOW)[0]
+    sp.kind, sw.kind = "project", "work"
+    sp.score, sw.score = 0.70, 0.40
+    assert [e.id for e in order_entries([sw, sp])] == ["p1", "e1"]
+
+
+def test_a_job_is_pulled_into_the_top_two_when_projects_sweep_them() -> None:
+    """The one guard on pure match order: a resume never opens with two projects."""
+    p1, p2 = _simple_entry("p1", "x"), _simple_entry("p2", "y")
+    w = _simple_entry("e1", "z")
+    sp1 = select_entries([p1], _jd(), _kw(), kind="project", now=NOW)[0]
+    sp2 = select_entries([p2], _jd(), _kw(), kind="project", now=NOW)[0]
+    sw = select_entries([w], _jd(), _kw(), kind="work", now=NOW)[0]
+    sp1.kind = sp2.kind = "project"
+    sw.kind = "work"
+    sp1.score, sp2.score, sw.score = 0.90, 0.80, 0.20
+    out = order_entries([sp1, sp2, sw])
+    assert [e.id for e in out] == ["p1", "e1", "p2"]
+    assert out[0].kind == "project", "the best match still leads"
 
 
 def test_recency_key_present_sorts_newest() -> None:
