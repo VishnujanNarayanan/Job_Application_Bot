@@ -207,6 +207,7 @@ def evaluate(
     if across:
         by_id = {e.id: e for e in (*profile.work, *profile.projects)}
         ledger: list[str] = []
+        kw_ledger: dict[str, int] = {}
         rebuilt: list[SelectedEntry] = []
         for se in entries:
             cand = by_id.get(se.id)
@@ -214,7 +215,8 @@ def evaluate(
                 rebuilt.append(se)
                 continue
             fresh = select_entry_bullets(
-                cand, jd, keywords, now=now, rendered_norm=ledger
+                cand, jd, keywords, now=now,
+                rendered_norm=ledger, rendered_keywords=kw_ledger,
             )
             # Keep the ranking decided above; only the bullets are re-picked.
             fresh.score, fresh.similarity = se.score, se.similarity

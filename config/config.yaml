@@ -236,6 +236,16 @@ selection:
     # entries of one run, each time earning its slot on the single spurious
     # keyword "modules" (the JD meant ES modules; the bullet meant order modules).
     max_repeats_across_entries: 2
+    # Looser than duplicate_jaccard on purpose: within an entry a match BANS the
+    # bullet, so it must be precise; across entries it only caps at N, so it can
+    # group a family more generously. The AI-tooling family scored 0.66 / 0.44 /
+    # 0.36 between its three renderings — the strict bar caught one pair of three.
+    across_entry_jaccard: 0.33
+    # Ceiling on how many entries may claim the SAME keyword. Text similarity
+    # cannot catch this: "Agile" rendered in four of six entries in four
+    # genuinely different sentences. The repetition lives in the keyword, so the
+    # ceiling does too. 0 disables it and restores unlimited cross-entry repeats.
+    max_keyword_renders: 2
     # The recovery pool is for recovery. An `extra` bullet may render only when it
     # is the ONLY bullet in its entry able to claim something the JD (or the
     # title's checklist) asked for. Enforces the contract RoleBlock.extra_bullets
