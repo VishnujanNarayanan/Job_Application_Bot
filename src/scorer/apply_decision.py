@@ -37,11 +37,13 @@ from src.config import settings
 from src.reasons import LOW_SCORE
 from src.scorer.keywords import Keyword, coverage_of
 from src.scorer.ordering import order_entries
+from src.scorer.keywords import norm as _norm_text
 from src.scorer.selector import (
     JDContext,
     Profile,
     SelectedEntry,
     select_entries,
+    select_entry_bullets,
 )
 
 
@@ -188,13 +190,41 @@ def evaluate(
         key=lambda e: e.score,
         reverse=True,
     )
-    # Employment and freelance are selected against different bars -- a job is
-    # force-included, a gig has to earn its slot -- but once selected they are
-    # ORDERED together on merit. Employment is not pinned to the top: if a
-    # freelance engagement matches this JD better, it leads, and the job moves
-    # down. Recency still breaks near-ties (order_entries).
-    work = order_entries([*jobs, *gigs])
-    entries = [*work, *projects]
+    # v3.2: one merged section. Work, freelance and projects render under a single
+    # heading, ordered purely on how well each matches this JD -- a project that
+    # fits better than a job appears above it. The one guard: a job or gig must
+    # hold one of the top two slots, so a resume never opens with two unpaid
+    # projects. Recency no longer orders anything; match does.
+    work = [*jobs, *gigs]
+    entries = order_entries([*work, *projects])
+
+    # The cross-entry repeat ceiling applies to what actually RENDERS, so it runs
+    # here rather than inside scoring: entries were ranked on their own merits,
+    # and only now is it known which ones survived and in what order. Re-selecting
+    # in render order means the best-placed entry keeps a contested bullet and
+    # later entries give it up.
+    across = int(getattr(settings.selection.bullets, "max_repeats_across_entries", 0) or 0)
+    if across:
+        by_id = {e.id: e for e in (*profile.work, *profile.projects)}
+        ledger: list[str] = []
+        kw_ledger: dict[str, int] = {}
+        rebuilt: list[SelectedEntry] = []
+        for se in entries:
+            cand = by_id.get(se.id)
+            if cand is None:
+                rebuilt.append(se)
+                continue
+            fresh = select_entry_bullets(
+                cand, jd, keywords, now=now,
+                rendered_norm=ledger, rendered_keywords=kw_ledger,
+            )
+            # Keep the ranking decided above; only the bullets are re-picked.
+            fresh.score, fresh.similarity = se.score, se.similarity
+            ledger.extend(_norm_text(b.text) for b in fresh.bullets)
+            rebuilt.append(fresh)
+        entries = rebuilt
+        work = [e for e in entries if e.kind != "project"]
+        projects = [e for e in entries if e.kind == "project"]
 
     # Only real employment sets the experience score. A freelance engagement that
     # happens to match well should not stand in for having held the job.
