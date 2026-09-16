@@ -785,10 +785,16 @@ endpoint:
     # than by kind. Two headings forced every project below every job regardless
     # of fit.
     section_heading: "Work & Projects"
-    # What the right-slot link reads as. A live demo beats a repo for a reader
-    # with twenty seconds, and master_profile links now point at demos where one
-    # exists, falling back to the repo where none does.
-    link_text: "View Demo \u2192"
+    # What the right-slot link reads as. The label follows the URL rather than
+    # being fixed: master_profile links point at a live demo where one exists and
+    # fall back to the repo where none does, and promising a demo that turns out
+    # to be a source tree is worse than promising nothing.
+    #
+    # The gap before the arrow is U+00A0. At the right-aligned tab stop Word
+    # breaks a normal space, which dropped the arrow onto its own line.
+    link_text_demo: "View\u00a0Demo\u00a0\u2192"
+    link_text_code: "View\u00a0Code\u00a0\u2192"
+    code_hosts: ["github.com", "gitlab.com", "bitbucket.org"]
     bullet_num_id: "1"          # numbering.xml: entry bullets, 1.5 line spacing
     education_num_id: "2"       # numbering.xml: Education & Certificates lines
     education_max_lines: 3      # the method's hard cap on that section
