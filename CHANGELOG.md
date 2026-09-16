@@ -16,8 +16,10 @@ and this project loosely tracks iterations rather than semver.
   matcher that defines "covered". A port of `resume guide/score_coverage.py`,
   held to it by parity tests, so the offline grader and the live selector agree
 - Layer 4: `src/scorer/qualifications.py` — the 128-title sheet, consulted as a
-  selection tie-break only. A canonical token the JD never mentions can never
-  pull a bullet onto the resume
+  phase-1 tie-break and as the phase-2 fill criterion
+- Layer 4: `canonical_covered()` — the set of a title's canonical tokens present
+  in a bullet, matched by `keywords.hit` so one definition of "covered" serves
+  both the JD checklist and the sheet
 - `data/job_qualifications.md` vendored into the repo (with `make refresh-quals`
   / `make check-quals`) so the GitHub Actions runner has the sheet
 - Layer 7: `master_bullets.block_id/role/bullet_index/is_summary/is_extra` and
@@ -31,8 +33,25 @@ and this project loosely tracks iterations rather than semver.
   cosine. Each entry takes the bullet adding the most uncovered JD keyword
   weight, stopping when nothing new is left to say. The covered set resets per
   entry, so the first entry is free to clear the whole checklist alone
-- Layer 4: bullets per entry are tenure-capped (3 under 6 months, 6 under 18,
-  else 8; projects 5) rather than exactly 3
+- Layer 4: one flat bullet cap of 8 for every entry. Tenure and entry kind have
+  no say in how many bullets an entry gets — a job, a freelance engagement and a
+  project are selected by the same method and compete for the same slots
+- Layer 4: bullet selection runs in two phases. Phase 1 covers this JD as before;
+  phase 2 then fills the remaining slots from the lead block's own qualification
+  checklist, so a keyword recruiters for that title screen for can earn a slot
+  even when this JD never named it. Phase 2 stops at zero canonical gain, never
+  pads to the cap, and never widens the entry's JD coverage
+- Layer 4: candidates are scored on NET gain —
+  `new_weight * relevance - repeat_penalty * repeated_weight` — so a keyword no
+  longer renders twice in one entry now that bullets are pooled across blocks.
+  Relevance scales the reward only, never the penalty
+- Layer 4: audited render-set bullets beat recovery-pool (`is_extra`) bullets on
+  ties. `is_extra` was written to the DB in `0009_role_blocks` and never read
+  until now
+- Layer 4: canonical token matching respects alphanumeric boundaries, so `sql`
+  no longer counts inside "postgresql" nor `java` inside "javascript"
+- Layer 4: `SelectedBullet` carries `via` (`jd` | `qualification`) and
+  `new_canonical`, so `cli.inspect` can show which phase earned each slot
 - Layer 4: bullets are pooled across all of an entry's `role_blocks`, with an
   off-role bullet's gain scaled by its block's JD relevance — so it wins only
   when nothing on-role covers that keyword
@@ -164,6 +183,8 @@ and this project loosely tracks iterations rather than semver.
 
 ### Removed
 
+- Layer 4: `selection.bullets.tenure_bands` and `selection.bullets.project_cap`
+  config, and the `_months_between` helper they drove — superseded by the flat cap
 - Layer 4: `select_summary`, `select_skill_candidates`, `score_experience`,
   `score_project`, `skills_before_projects` — the Skills and Summary sections
   they served are gone from the template
