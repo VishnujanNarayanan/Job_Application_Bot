@@ -108,7 +108,8 @@ def minimal_selection():
                 kind="project", entry_id="proj1", block_id="proj1::ml",
                 title_alias="Machine Learning Engineer",
                 header_left="Stock Prediction Engine",
-                header_right="https://github.com/user/stock",
+                header_right="",
+                header_link="https://github.com/user/stock",
                 bullet_ids=["pb1", "pb2"], cap=5,
             ),
         ],
@@ -123,31 +124,46 @@ def _assemble(profile, selection, tmp_path):
     return Document(str(out))
 
 
-def test_assemble_docx_renders_both_sections(minimal_profile, minimal_selection, tmp_path):
+def test_assemble_docx_renders_one_merged_section(minimal_profile, minimal_selection, tmp_path):
     doc = _assemble(minimal_profile, minimal_selection, tmp_path)
     text = [p.text for p in doc.paragraphs]
 
-    # The template ships ONE section heading; the assembler mints the second.
-    assert "Work History" in text
-    assert "Projects" in text
-    assert text.index("Work History") < text.index("Projects")
+    # v3.2: ONE heading, not two. Work, freelance and projects share a section so
+    # the best-matching entry leads the page whatever kind it is. The template
+    # ships a single heading and the assembler no longer mints a second.
+    from src.config import settings
+
+    heading = settings.endpoint.render.section_heading
+    assert text.count(heading) == 1
+    assert "Work History" not in text and "Projects" not in text
+    # Both kinds render under it, in the order Layer 4 ranked them.
+    assert text.index("Backend Engineer at TechCorp, Pune\tJanuary 2024 to current") > \
+        text.index(heading)
+    assert text.index("Stock Prediction Engine\t"
+                      f"{settings.endpoint.render.link_text}") > text.index(heading)
 
     assert "Backend Engineer at TechCorp, Pune\tJanuary 2024 to current" in text
     assert "Built APIs serving 10k requests." in text
     assert "Ran services in Docker to cut setup time." in text, (
         "an extra_bullet selected by the greedy must render like any other"
     )
-    assert "Stock Prediction Engine\tCode \u2192" in text
+    from src.config import settings
+
+    assert (
+        f"Stock Prediction Engine\t{settings.endpoint.render.link_text}" in text
+    )
 
 
-def test_a_project_entry_shows_a_short_hyperlink_where_a_job_shows_dates(
+def test_a_project_entry_shows_a_short_hyperlink_where_a_job_shows_dates(  # noqa: E501
     minimal_profile, minimal_selection, tmp_path
 ):
     """The full URL overflows the line — measured at 112 chars against an ~89-char
     budget at Arial 10.5 across 6.5in — so the slot carries a short link instead."""
+    from src.config import settings
+
     doc = _assemble(minimal_profile, minimal_selection, tmp_path)
     line = next(p for p in doc.paragraphs if p.text.startswith("Stock Prediction"))
-    assert line.text.endswith("Code \u2192")
+    assert line.text.endswith(settings.endpoint.render.link_text)
     assert len(line.text.replace("\t", "")) < 89
 
     rid = line._p.find(qn("w:hyperlink")).get(qn("r:id"))

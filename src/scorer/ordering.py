@@ -38,14 +38,32 @@ def _recency_key(end_date: str) -> tuple[int, int]:
 def order_entries(
     selected: list[SelectedEntry],
 ) -> list[SelectedEntry]:
-    """Order selected work entries by match-then-recency."""
+    """Order every entry — work, freelance and project — by match, best first.
+
+    v3.2 merged the two sections into one, so this now orders the whole page
+    rather than just the work half, and recency no longer decides anything: the
+    entry that matches this JD best leads, whatever kind it is. A project CAN open
+    the resume if it fits better than any job.
+
+    One guard. A job or freelance engagement must hold one of the first two slots,
+    so the page never opens with two unpaid projects — the top of a resume is where
+    a recruiter looks for employment, and a reader who finds none there stops
+    reading. If the top two are both projects, the best-matching non-project is
+    lifted into slot 2; everything else keeps its order.
+    """
     if len(selected) <= 1:
         return list(selected)
-    by_score = sorted(selected, key=lambda x: x.score, reverse=True)
-    by_recency = sorted(selected, key=lambda x: _recency_key(x.end_date), reverse=True)
-    gap = by_score[0].score - by_score[1].score
-    if gap > settings.selection.work.match_then_recency_gap:
-        best = by_score[0]
-        rest = [x for x in by_recency if x.id != best.id]
-        return [best, *rest]
-    return by_recency
+
+    ordered = sorted(selected, key=lambda x: x.score, reverse=True)
+
+    top_n = int(getattr(settings.selection.entry, "job_within_top", 2) or 0)
+    if not top_n:
+        return ordered
+    head = ordered[:top_n]
+    if any(e.kind != "project" for e in head):
+        return ordered
+    promoted = next((e for e in ordered if e.kind != "project"), None)
+    if promoted is None:  # no job selected at all — nothing to guarantee
+        return ordered
+    rest = [e for e in ordered if e.id != promoted.id]
+    return [rest[0], promoted, *rest[1:]]

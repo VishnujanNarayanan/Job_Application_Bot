@@ -443,7 +443,14 @@ class SelectedEntryOut(BaseModel):
         ..., description="e.g. 'Data Engineer at CiteSert, Mumbai'."
     )
     header_right: str = Field(
-        "", description="Dates for work; the repo URL for a project; may be empty."
+        "",
+        description="Right-slot TEXT: dates for salaried work, the freelance "
+        "label for a gig, empty for a project.",
+    )
+    header_link: str = Field(
+        "",
+        description="Right-slot URL: a live demo where one exists, else the repo. "
+        "Empty for salaried employment, which has no public artifact.",
     )
     bullet_ids: list[str] = Field(
         ..., description="Ordered; [0] is the entry's summary bullet."
