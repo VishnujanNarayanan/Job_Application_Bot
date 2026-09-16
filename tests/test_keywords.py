@@ -256,6 +256,35 @@ def test_canonical_overlap_counts_present_tokens():
     assert q.canonical_overlap(kw.norm("baked bread"), ("Python SWE",)) == 0
 
 
+def test_canonical_covered_returns_the_set_not_just_a_count():
+    """Phase 2 set-covers over canonical tokens, so it needs the tokens themselves."""
+    from src.scorer import qualifications as q
+
+    text = kw.norm("built REST APIs in python with docker and git")
+    covered = q.canonical_covered(text, ("Python SWE",))
+    assert "python" in covered
+    assert q.canonical_overlap(text, ("Python SWE",)) == len(covered)
+
+
+def test_canonical_matching_respects_alphanumeric_boundaries():
+    """Same rule as the JD checklist: `sql` is not inside "postgresql".
+
+    Before v3.1 canonical_overlap used a raw substring test, so a bullet naming
+    PostgreSQL scored a point for SQL and one naming JavaScript scored for Java.
+    """
+    from src.scorer import qualifications as q
+
+    toks = q.canonical_tokens(("Python SWE",))
+    if "sql" in toks:
+        assert "sql" not in q.canonical_covered(kw.norm("ran postgresql nightly"),
+                                                ("Python SWE",))
+    if "java" in toks:
+        assert "java" not in q.canonical_covered(kw.norm("wrote javascript"),
+                                                 ("Python SWE",))
+    # The positive case still fires.
+    assert "python" in q.canonical_covered(kw.norm("wrote python"), ("Python SWE",))
+
+
 def test_unknown_title_contributes_nothing_and_does_not_raise():
     from src.scorer import qualifications as q
 
