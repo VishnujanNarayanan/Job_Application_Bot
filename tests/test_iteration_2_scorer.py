@@ -50,8 +50,31 @@ def _jd(vec_role=None, vec_match=None, **kw) -> JDContext:
     )
 
 
-def _bullet(bid, text, *, vec=None, summary=False, block="e1::data", role="data"):
-    return BulletCand(bid, text, vec or V, block_id=block, role=role, is_summary=summary)
+def _bullet(bid, text, *, vec=None, summary=False, block="e1::data", role="data",
+            extra=False):
+    return BulletCand(bid, text, vec or V, block_id=block, role=role,
+                      is_summary=summary, is_extra=extra)
+
+
+def _fake_canon(monkeypatch, mapping: dict[str, set[str]]) -> None:
+    """Pin the qualification sheet for a test: bullet text -> canonical tokens.
+
+    The real sheet is a 44 KB vendored file whose contents would make these tests
+    assert on data rather than on logic. Both names are patched where the selector
+    imported them, not at their source module.
+    """
+    monkeypatch.setattr(
+        "src.scorer.selector.canonical_covered",
+        lambda norm_text, checklist: frozenset(
+            tok for text, toks in mapping.items() if text in norm_text for tok in toks
+        ),
+    )
+    monkeypatch.setattr(
+        "src.scorer.selector.canonical_overlap",
+        lambda norm_text, checklist: len(
+            {tok for text, toks in mapping.items() if text in norm_text for tok in toks}
+        ),
+    )
 
 
 def _block(block_id="e1::data", role="data", *, bullets, aliases=("Data Engineer",),
@@ -78,25 +101,22 @@ def _entry(eid="e1", kind="work", *, blocks, start="2024-01", end="present", lin
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("start,end,expected", [
-    ("2026-02", "2026-06", 3),    # 4 months  -> under 6
-    ("2025-06", "2026-06", 6),    # 12 months -> under 18
-    ("2023-12", "2026-06", 8),    # 30 months -> the max
+@pytest.mark.parametrize("kind,start,end", [
+    ("work", "2026-02", "2026-06"),      # 4 months
+    ("work", "2025-06", "2026-06"),      # 12 months
+    ("work", "2023-12", "2026-06"),      # 30 months
+    ("work", "2026-03", "present"),      # open-ended, 3 months as of NOW
+    ("freelance", "2026-05", "2026-06"),  # 1 month
+    ("project", "", ""),                  # no dates at all
 ])
-def test_tenure_bands(start, end, expected) -> None:
-    """The method: "less than six months? you need three, not five"."""
-    e = _entry(blocks=[_block(bullets=[])], start=start, end=end)
-    assert bullet_cap(e, NOW) == expected
+def test_cap_is_flat_for_every_kind_and_tenure(kind, start, end) -> None:
+    """v3.1: neither tenure nor kind has any say in the cap.
 
-
-def test_present_end_date_is_measured_against_now() -> None:
-    e = _entry(blocks=[_block(bullets=[])], start="2026-03", end="present")
-    assert bullet_cap(e, NOW) == 3  # 3 months as of NOW
-
-
-def test_projects_take_a_flat_cap_having_no_dates() -> None:
-    e = _entry("p1", "project", blocks=[_block(bullets=[])], start="", end="")
-    assert bullet_cap(e, NOW) == int(settings.selection.bullets.project_cap)
+    A four-month job, a ten-year job, a one-month gig and an undated project all
+    get the same 8 slots; what an entry covers decides its length, not what it is.
+    """
+    e = _entry("e1", kind, blocks=[_block(bullets=[])], start=start, end=end)
+    assert bullet_cap(e, NOW) == int(settings.selection.bullets.max_cap) == 8
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +250,7 @@ def test_the_covered_set_RESETS_for_every_entry() -> None:
 
 
 def test_cap_beats_gain() -> None:
-    """A four-month job shows three bullets no matter how much it could cover."""
+    """An entry stops at the cap no matter how much more it could still cover."""
     bullets = [_bullet("b0", "Summary.", summary=True)] + [
         _bullet(f"b{i}", f"Used Tool{i} in production.") for i in range(1, 20)
     ]
@@ -238,7 +258,10 @@ def test_cap_beats_gain() -> None:
         _entry(blocks=[_block(bullets=bullets)], start="2026-02", end="2026-06"),
         _jd(), _kw(*[f"Tool{i}" for i in range(1, 20)]), now=NOW,
     )
-    assert len(out.bullets) == 3
+    assert len(out.bullets) == 8
+    # 19 keywords were available and every remaining bullet still had gain — the
+    # cap, not the early stop, is what ended this fill.
+    assert out.coverage < 1.0
 
 
 def test_zero_gain_stops_the_fill_above_the_floor() -> None:

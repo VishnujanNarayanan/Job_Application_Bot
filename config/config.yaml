@@ -200,11 +200,18 @@ selection:
   # there — under 6 months you need three, not five".
   bullets:
     min_per_entry: 3
+    # One flat cap for everything. A job, a freelance engagement and a project are
+    # selected by the same method and compete for the same slots — what an entry IS
+    # has no say in how many bullets it gets, only what it covers does. (v3.1
+    # replaced the tenure bands and the separate project cap.)
     max_cap: 8
-    project_cap: 5        # projects carry no dates, so no tenure to scale by
-    tenure_bands:
-      - {under_months: 6,  cap: 3}
-      - {under_months: 18, cap: 6}
+    # Lambda on already-covered keyword weight, subtracted from a candidate's gain.
+    # Stops one keyword rendering twice in an entry when bullets are pooled across
+    # blocks. 0.0 disables it and restores pure set-cover.
+    repeat_penalty: 0.25
+    # Phase 2: after JD gain is exhausted, fill the remaining slots from the title's
+    # own qualification checklist. Stops at zero canonical gain, never pads to cap.
+    qualification_fill: true
 
   # --- Entry scoring ---------------------------------------------------------
   entry:
