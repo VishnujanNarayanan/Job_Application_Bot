@@ -410,6 +410,7 @@ def select_entry_bullets(
     across_cap = int(getattr(cfg, "max_repeats_across_entries", 0) or 0)
     require_unique_extras = bool(getattr(cfg, "extras_must_be_unique_source", True))
     across_jaccard = float(getattr(cfg, "across_entry_jaccard", 0.33))
+    repeat_ratio = float(getattr(cfg, "repeat_requires_ratio", 1.0))
     kw_cap = int(getattr(cfg, "max_keyword_renders", 0) or 0)
     kw_seen = {} if rendered_keywords is None else rendered_keywords
     rendered = [] if rendered_norm is None else rendered_norm
@@ -498,31 +499,72 @@ def select_entry_bullets(
     chosen_norm = [summary.norm_text] if summary is not None else []
     remaining = [b for b in pool if summary is None or b.id != summary.id]
     while len(chosen) < cap and remaining:
-        best = None
+        # Score every candidate, then choose in TWO passes: bullets that repeat
+        # nothing are considered first, and a repeating bullet is reached only when
+        # no clean bullet can supply what this JD still needs. That is the operator's
+        # rule stated exactly: a repetition is allowed only when it is unavoidable —
+        # when the keyword it brings exists on no other bullet.
+        #
+        # A scalar penalty could not express this. However steep it was, it only
+        # traded repetition off against coverage; it could never say "prefer the
+        # clean bullet when a clean bullet exists, and accept the repeat when none
+        # does".
+        scored = []
         for b in remaining:
             if _blocked(b, chosen_norm):
                 continue
             hits = covered_by(b.norm_text, keywords)
             gained = _spent(hits - covered)
             repeated = hits & covered
-            gain = weight_of(gained, keywords) * _relevance(
+            new_w = weight_of(gained, keywords) * _relevance(
                 block_scores, block.block_id, b.block_id
-            ) - lam * weight_of(repeated, keywords) ** 2
+            )
+            rep_w = weight_of(repeated, keywords)
             sim = cosine(b.embedding, jd.vec_match)
-            # Tie-breaks, in order. (1) An audited render-set bullet beats a
-            # recovery-pool one at equal gain: `extra_bullets` are true, but they
-            # were not written to the method's density standard, so they should win
-            # on merit and never on a coin-flip. (2) The role's canonical checklist
-            # (PIVOT_V3.md D12) — prefer the bullet also covering more of what
-            # recruiters for this title screen for. (3) cosine.
+            # Within a pass, order lexicographically rather than by a weighted sum:
+            # (1) JD coverage first — the JD outranks the canonical sheet, always.
+            # (2) then fewer repeats. (3) then the DENSER bullet, because when two
+            # bullets bring the same new keyword the one carrying more of the
+            # checklist is the better use of the line. (4) audited before recovery
+            # pool. (5) canonical overlap. (6) cosine.
             canon = canonical_overlap(b.norm_text, block.checklist)
-            key = (round(gain, 9), not b.is_extra, canon, sim)
-            if best is None or key > best[0]:
-                best = (key, b, gained, gain, sim)
+            key = (
+                round(new_w, 9),
+                -round(rep_w, 9),
+                len(hits),
+                not b.is_extra,
+                canon,
+                sim,
+            )
+            # raw_w is the unscaled new weight. The affordability gate compares it
+            # against rep_w, which is also unscaled — scaling only one side made an
+            # off-role bullet fail a trade an on-role bullet would pass, which is an
+            # ordering concern leaking into an eligibility test.
+            raw_w = weight_of(gained, keywords)
+            scored.append((key, b, gained, new_w, rep_w, sim, raw_w))
 
-        if best is None:  # everything left reads as a repeat
+        clean = [s for s in scored if s[4] <= 0.0 and s[3] > 0.0]
+        # A repeating bullet must PAY FOR ITSELF: what it newly covers has to be
+        # worth at least `repeat_ratio` times what it restates. Without this the
+        # greedy kept buying one new keyword at the price of two or three repeats
+        # — measured on the Citesert entry, where the eighth slot went to a bullet
+        # bringing "Time Series" while saying Python and SQL for the third time.
+        # Unavoidability alone is not enough of a justification; the trade has to
+        # be worth the line.
+        priced = [
+            s for s in scored
+            if s[3] > 0.0 and (s[4] <= 0.0 or s[6] >= repeat_ratio * s[4])
+        ]
+        # The unpriced fallback exists ONLY to satisfy the floor. Above the floor,
+        # "nothing left is worth a line" must end the phase rather than quietly
+        # spending the remaining slots on restatement — which is what an `or scored`
+        # fallback did: it re-admitted every bullet the gate had just rejected.
+        pool_now = clean or priced or (scored if len(chosen) < floor else [])
+        best = max(pool_now, key=lambda s: s[0], default=None)
+
+        if best is None:  # everything left is blocked
             break
-        _, cand, gained, gain, sim = best
+        _, cand, gained, gain, rep_w, sim, _raw = best
         if gain <= 0.0 and len(chosen) >= floor:
             break
         chosen.append(
@@ -548,14 +590,17 @@ def select_entry_bullets(
             hits = canonical_covered(b.norm_text, block.checklist)
             gained_c = hits - covered_canon
             repeated_c = hits & covered_canon
-            # Phase 2 pays for repeating JD keywords too, not only canonical ones.
-            # Without that term a filler bullet could restate Git and CI/CD freely,
-            # because its gain is measured on a different vocabulary entirely.
             jd_repeat = weight_of(covered_by(b.norm_text, keywords) & covered, keywords)
-            gain_c = (
-                len(gained_c) * _relevance(block_scores, block.block_id, b.block_id)
-                - lam * len(repeated_c) ** 2
-                - lam * jd_repeat ** 2
+            # Phase 2 may not repeat AT ALL. It runs only after this JD has nothing
+            # left to ask for, so a phase-2 bullet's entire claim on the line is a
+            # canonical token the entry has not said. One that also restates
+            # something already on the page is buying a repetition with the weakest
+            # currency there is — measured: a bullet earning its slot on the single
+            # token "git" while restating CI/CD from the entry's own DevOps bullet.
+            if repeated_c or jd_repeat > 0.0:
+                continue
+            gain_c = len(gained_c) * _relevance(
+                block_scores, block.block_id, b.block_id
             )
             sim = cosine(b.embedding, jd.vec_match)
             key = (round(gain_c, 9), not b.is_extra, sim)

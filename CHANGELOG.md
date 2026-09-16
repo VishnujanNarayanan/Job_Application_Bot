@@ -53,9 +53,18 @@ and this project loosely tracks iterations rather than semver.
 - Layer 6: the label's gaps are U+00A0, so it can never break across lines. At
   the right-aligned tab stop Word split the space before the arrow and dropped
   the arrow onto its own line
-- Layer 4: repeat cost is squared (`repeat_penalty * repeated_weight ** 2`), so
-  one repeat stays affordable and a restatement carrying three covered keywords
-  costs 9x
+- Layer 4: repetition inside an entry is now governed by two rules instead of a
+  penalty. (1) Candidates that repeat nothing are considered in a separate first
+  pass, so a repeat is reachable only when nothing clean supplies the keyword.
+  (2) A repeating bullet must pay for itself — its new keyword weight must be at
+  least `repeat_requires_ratio` (1.0) times what it restates. Ordering within a
+  pass is lexicographic: JD coverage, then fewest repeats, then the denser bullet
+- Layer 4: the unpriced fallback now serves only the floor. Above it, "nothing
+  left is worth a line" ends the phase instead of spending the remaining slots on
+  restatement
+- Layer 4: phase 2 may not repeat at all — it runs only once the JD has nothing
+  left to ask for, so a bullet that restates something already on the page is
+  buying a repetition with the weakest currency available
 - Layer 4: a bullet that READS as a restatement of one already chosen in the same
   entry is blocked outright, by shared opening words or word-overlap ratio
 - Layer 4: cross-entry ceilings — a bullet family may render at most
