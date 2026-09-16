@@ -71,11 +71,14 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 _XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
-_WORK_HEADING = "Work History"
-_PROJECTS_HEADING = "Projects"
+_SECTION_HEADING = str(
+    getattr(settings.endpoint.render, "section_heading", "Work & Projects")
+)
 
 #: What a project's repo link reads as. Short by necessity — see _set_hyperlink.
-_LINK_TEXT = "Code \u2192"
+_LINK_TEXT = str(
+    getattr(settings.endpoint.render, "link_text", "View Demo \u2192")
+)
 
 #: Character style that makes LibreOffice emit a PDF link annotation.
 _LINK_STYLE = "Hyperlink"
@@ -350,8 +353,13 @@ def _set_keep(p_elem, *, keep_next: bool, keep_lines: bool = True) -> None:
         pPr.insert(0, el)
 
 
-def _set_hyperlink(doc, p_elem, text: str, url: str) -> None:
+def _set_hyperlink(doc, p_elem, text: str, url: str, prefix: str = "") -> None:
     """Replace everything right of the tab with a hyperlinked ``text``.
+
+    ``prefix`` is plain text kept to the LEFT of the link inside the same slot,
+    for a freelance entry that shows its label and its link together
+    ("Freelance   View Demo"). It is re-added as its own run because this
+    function removes every run right of the tab before building the link.
 
     The relationship is minted through python-docx's own ``part.relate_to``,
     which writes a correct entry into ``word/_rels/document.xml.rels``. That
@@ -374,6 +382,16 @@ def _set_hyperlink(doc, p_elem, text: str, url: str) -> None:
     proto = runs[tab_idx + 1]
     for r in runs[tab_idx + 1:]:
         p_elem.remove(r)
+
+    if prefix:
+        label = copy.deepcopy(proto)
+        for existing in label.findall(qn("w:t")):
+            label.remove(existing)
+        lt = OxmlElement("w:t")
+        lt.text = f"{prefix}  "
+        lt.set(qn("xml:space"), "preserve")
+        label.append(lt)
+        p_elem.append(label)
 
     run = copy.deepcopy(proto)
     for existing in run.findall(qn("w:t")):
@@ -481,10 +499,12 @@ def assemble_docx(
     protos = _capture_prototypes(body, start)
 
     new_elems: list = []
-    sections = (
-        (_WORK_HEADING, selection.work_entries()),
-        (_PROJECTS_HEADING, selection.project_entries()),
-    )
+    # v3.2: ONE section, not two. Work, freelance and projects render under a
+    # single heading in the order Layer 4 ranked them, so the best-matching entry
+    # leads the page whatever kind it is. Splitting them forced every project below
+    # every job regardless of fit — which buried the strongest evidence on exactly
+    # the JDs where a project was the strongest evidence.
+    sections = ((_SECTION_HEADING, list(selection.entries)),)
     for heading, entries in sections:
         if not entries:
             continue
@@ -493,14 +513,17 @@ def assemble_docx(
         new_elems.append(h)
         for entry in entries:
             line = copy.deepcopy(protos["entry_line"])
-            link = entry.header_right if entry.kind == "project" else ""
+            link = getattr(entry, "header_link", "") or ""
             if link.startswith(("http://", "https://")):
-                # A project's slot holds a repo URL where a job holds dates. The
-                # full URL overflows the line (measured: 112 chars against a
+                # The full URL overflows the line (measured: 112 chars against a
                 # ~89-char budget at Arial 10.5 across 6.5in), so it renders as a
-                # short hyperlink instead.
+                # short hyperlink. A freelance entry puts its label in the slot too
+                # ("Freelance   View Demo"); a project has label text of "" and
+                # shows the link alone.
                 _set_entry_line(line, entry.header_left, "")
-                _set_hyperlink(doc, line, _LINK_TEXT, link)
+                _set_hyperlink(
+                    doc, line, _LINK_TEXT, link, prefix=entry.header_right
+                )
             else:
                 _set_entry_line(line, entry.header_left, entry.header_right)
             new_elems.append(line)

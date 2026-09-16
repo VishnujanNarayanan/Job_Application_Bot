@@ -155,6 +155,9 @@ class SelectedEntry:
     similarity: float
     score: float
     cap: int
+    #: URL for the right slot, or "". Separate from ``header_right`` because a
+    #: freelance entry shows BOTH a label and a link in that slot.
+    header_link: str = ""
     title_alias: str = ""
     link: str = ""
     end_date: str = ""
@@ -186,18 +189,22 @@ def _force_min(passing: list, ranked: list, max_shown: int, min_shown: int) -> l
 
 
 def bullet_cap(entry: EntryCand, now: datetime) -> int:
-    """How many bullets this entry may show. One flat cap, for everything.
+    """How many bullets this entry may show.
 
-    v3.1: the cap no longer scales by tenure or by kind. A job, a freelance
-    engagement and a project are selected by exactly the same method and compete for
-    exactly the same number of slots -- what an entry is has no say in how many
-    bullets it gets, only what it covers does.
+    No tenure scaling: a four-month job and a three-year job get the same ceiling,
+    because what an entry covers decides its length, not how long it lasted.
 
-    ``entry`` and ``now`` stay in the signature: the cap is a per-entry policy
-    question, and inlining ``cfg.max_cap`` at the call site would remove the seam
-    that both the tests and ``SelectedEntry.cap`` are written against.
+    Projects take a lower cap than work. Measured on a real run (v3.1): every
+    project ran to the full 8 while the jobs stopped at 4-6, because a project's
+    pooled blocks carry more near-equivalent material -- so the cap, not coverage,
+    was setting project length, and the last slots filled with restatement. A job
+    is what a recruiter reads; a project is supporting evidence, and 5 is where it
+    stops earning its space.
     """
-    return int(settings.selection.bullets.max_cap)
+    cfg = settings.selection.bullets
+    if entry.kind == "project":
+        return int(cfg.project_cap)
+    return int(cfg.max_cap)
 
 
 def _alias_score(block: RoleBlockCand, jd: JDContext) -> float:
@@ -257,20 +264,77 @@ def _text_key(norm_text: str) -> str:
     return " ".join(norm_text.split())
 
 
-def _header_right(entry: EntryCand, block: RoleBlockCand) -> str:
-    """What sits right of the tab: dates for a job, the repo URL for a project.
+def _header_right(entry: EntryCand, block: RoleBlockCand) -> tuple[str, str]:
+    """What sits right of the tab, as ``(text, link)``.
 
-    A freelance engagement is labelled as such in that slot rather than in the
-    title, so the reader sees at a glance that it was contract work without the
-    entry pretending to be a staff job. The prefix is applied here rather than
-    baked into the profile so the label cannot drift between entries.
+    Three cases, deliberately different, because the slot answers a different
+    question for each:
+
+    * **Salaried employment** — dates, and nothing else. There is no public
+      artifact to show: the work belongs to the employer. Dates are the thing a
+      recruiter checks.
+    * **Freelance** — the ``Freelance`` label and a link to the delivered site.
+      No dates. A short engagement's value is that the result is live and can be
+      clicked; its two-month span invites the wrong question.
+    * **Project** — the link alone. Projects carry no dates by the method.
+
+    The link prefers a live demo over a repo: a recruiter with twenty seconds
+    opens a working site, not a source tree. ``entry.link`` holds the demo where
+    one exists and falls back to the repo where it does not.
     """
     if entry.kind != "work":
-        return entry.link
-    dates = block.entry_dates
-    if entry.employment_type == "freelance" and dates:
-        return f"{settings.selection.freelance.label} · {dates}"
-    return dates
+        return "", entry.link
+    if entry.employment_type == "freelance":
+        return settings.selection.freelance.label, entry.link
+    return block.entry_dates, ""
+
+
+def _content_words(norm_text: str) -> list[str]:
+    return [w for w in norm_text.split() if w]
+
+
+def _reads_as_repeat(
+    norm_text: str, chosen_norm: list[str], *, jaccard: float | None = None
+) -> bool:
+    """Would this bullet read as a restatement of one already chosen?
+
+    Keyword arithmetic cannot see this. Two bullets can cover different keywords
+    and still open with the same six words -- measured on a real run, one entry
+    rendered "Worked to an Agile practice of small pull requests in Git..." and
+    "Worked to an Agile practice, reviewing each change..." because the second
+    brought one new token and paid only one repeat. On the page that is one claim
+    made twice.
+
+    Two cheap lexical tests, no embeddings: a shared opening (what the eye catches
+    scanning a bullet list) or heavy word overlap (a genuine reword). Both run on
+    text already normalised for keyword matching.
+    """
+    cfg = settings.selection.bullets
+    lead_n = int(getattr(cfg, "duplicate_prefix_words", 0) or 0)
+    jaccard_max = (
+        float(getattr(cfg, "duplicate_jaccard", 1.0)) if jaccard is None else jaccard
+    )
+    min_words = int(getattr(cfg, "duplicate_min_words", 12))
+    words = _content_words(norm_text)
+    if not words:
+        return False
+    head = words[:lead_n]
+    bag = set(words)
+    for other in chosen_norm:
+        o_words = _content_words(other)
+        if lead_n and len(head) == lead_n and o_words[:lead_n] == head:
+            return True
+        o_bag = set(o_words)
+        # Word overlap only means something once there are enough words for the
+        # ratio to be informative. Two five-word sentences differing in one noun
+        # score 0.6 while saying entirely different things; a real bullet is
+        # 20-28 words by the method, where 0.55 is a genuine reword.
+        if min(len(words), len(o_words)) < min_words:
+            continue
+        union = bag | o_bag
+        if union and len(bag & o_bag) / len(union) >= jaccard_max:
+            return True
+    return False
 
 
 def _relevance(block_scores: dict[str, float], lead_id: str, block_id: str) -> float:
@@ -305,6 +369,8 @@ def select_entry_bullets(
     keywords: tuple[Keyword, ...],
     *,
     now: datetime,
+    rendered_norm: list[str] | None = None,
+    rendered_keywords: dict[str, int] | None = None,
 ) -> SelectedEntry:
     """Pin the summary bullet, then fill the entry in two greedy phases.
 
@@ -341,10 +407,66 @@ def select_entry_bullets(
     cap = bullet_cap(entry, now)
     floor = min(int(cfg.min_per_entry), cap)
     lam = float(getattr(cfg, "repeat_penalty", 0.0))
+    across_cap = int(getattr(cfg, "max_repeats_across_entries", 0) or 0)
+    require_unique_extras = bool(getattr(cfg, "extras_must_be_unique_source", True))
+    across_jaccard = float(getattr(cfg, "across_entry_jaccard", 0.33))
+    kw_cap = int(getattr(cfg, "max_keyword_renders", 0) or 0)
+    kw_seen = {} if rendered_keywords is None else rendered_keywords
+    rendered = [] if rendered_norm is None else rendered_norm
+
+    def _spent(tokens: set[str]) -> set[str]:
+        """Drop tokens already claimed their maximum number of times on this page.
+
+        The method permits a keyword to repeat across entries, and that stays true
+        -- this is a ceiling, not a ban. Measured: "Agile" rendered in four of six
+        entries, each time in a genuinely different sentence, so no text-similarity
+        rule could see it. The repetition lives in the keyword, so the ceiling has
+        to live there too.
+        """
+        if not kw_cap:
+            return tokens
+        return {t for t in tokens if kw_seen.get(t, 0) < kw_cap}
+
+    def _blocked(b: BulletCand, chosen_norm: list[str]) -> bool:
+        """Barred within this entry, or already at its cross-entry ceiling."""
+        if _reads_as_repeat(b.norm_text, chosen_norm):
+            return True
+        # A LOOSER ratio than the within-entry bar. Within an entry a match is a
+        # ban, so it must be precise; across entries it only caps at N, so it can
+        # afford to group a family more generously. Measured on the AI-tooling
+        # family: 0.66 / 0.44 / 0.36 between its three renderings, so the strict
+        # 0.55 bar recognised only one of the three pairs.
+        if across_cap and sum(
+            1 for t in rendered
+            if _reads_as_repeat(b.norm_text, [t], jaccard=across_jaccard)
+        ) >= across_cap:
+            return True
+        # The recovery pool is for RECOVERY. An extra may render only when it is the
+        # only bullet in this entry that can claim something the JD asked for --
+        # which is the contract RoleBlock.extra_bullets already states: "nothing in
+        # extra_bullets renders unless a JD asks for its keyword". Until now that
+        # was enforced only incidentally, and an extra whose subject the JD never
+        # mentions (the AI-tooling bullets) could win a slot on one incidental word
+        # it happened to share with the checklist.
+        if b.is_extra and require_unique_extras:
+            mine = covered_by(b.norm_text, keywords) | canonical_covered(
+                b.norm_text, block.checklist
+            )
+            if not (mine - coverable_by_render_set):
+                return True
+        return False
 
     block = lead_block(entry, jd)
     block_scores = {rb.block_id: _alias_score(rb, jd) for rb in entry.blocks}
     pool = _entry_pool(entry, block.block_id)
+
+    # Everything the AUDITED bullets of this entry could claim. An extra that adds
+    # nothing outside this set is not recovering anything.
+    coverable_by_render_set: set[str] = set()
+    for b in pool:
+        if not b.is_extra:
+            coverable_by_render_set |= covered_by(b.norm_text, keywords)
+            coverable_by_render_set |= canonical_covered(b.norm_text, block.checklist)
 
     covered: set[str] = set()
     covered_canon: set[str] = set()
@@ -373,16 +495,19 @@ def select_entry_bullets(
     # Other blocks' summary bullets stay in the pool. They describe the same work
     # from another angle, and if one carries a keyword the pinned summary lacks it
     # earns a slot like any other bullet.
+    chosen_norm = [summary.norm_text] if summary is not None else []
     remaining = [b for b in pool if summary is None or b.id != summary.id]
     while len(chosen) < cap and remaining:
         best = None
         for b in remaining:
+            if _blocked(b, chosen_norm):
+                continue
             hits = covered_by(b.norm_text, keywords)
-            gained = hits - covered
+            gained = _spent(hits - covered)
             repeated = hits & covered
             gain = weight_of(gained, keywords) * _relevance(
                 block_scores, block.block_id, b.block_id
-            ) - lam * weight_of(repeated, keywords)
+            ) - lam * weight_of(repeated, keywords) ** 2
             sim = cosine(b.embedding, jd.vec_match)
             # Tie-breaks, in order. (1) An audited render-set bullet beats a
             # recovery-pool one at equal gain: `extra_bullets` are true, but they
@@ -395,6 +520,8 @@ def select_entry_bullets(
             if best is None or key > best[0]:
                 best = (key, b, gained, gain, sim)
 
+        if best is None:  # everything left reads as a repeat
+            break
         _, cand, gained, gain, sim = best
         if gain <= 0.0 and len(chosen) >= floor:
             break
@@ -403,6 +530,9 @@ def select_entry_bullets(
         )
         covered |= gained
         covered_canon |= canonical_covered(cand.norm_text, block.checklist)
+        chosen_norm.append(cand.norm_text)
+        for tok in covered_by(cand.norm_text, keywords):
+            kw_seen[tok] = kw_seen.get(tok, 0) + 1
         remaining.remove(cand)
 
     # --- 3. phase 2: fill the rest from the title's own qualification list --
@@ -413,17 +543,27 @@ def select_entry_bullets(
     while cfg.qualification_fill and len(chosen) < cap and remaining:
         best = None
         for b in remaining:
+            if _blocked(b, chosen_norm):
+                continue
             hits = canonical_covered(b.norm_text, block.checklist)
             gained_c = hits - covered_canon
             repeated_c = hits & covered_canon
-            gain_c = len(gained_c) * _relevance(
-                block_scores, block.block_id, b.block_id
-            ) - lam * len(repeated_c)
+            # Phase 2 pays for repeating JD keywords too, not only canonical ones.
+            # Without that term a filler bullet could restate Git and CI/CD freely,
+            # because its gain is measured on a different vocabulary entirely.
+            jd_repeat = weight_of(covered_by(b.norm_text, keywords) & covered, keywords)
+            gain_c = (
+                len(gained_c) * _relevance(block_scores, block.block_id, b.block_id)
+                - lam * len(repeated_c) ** 2
+                - lam * jd_repeat ** 2
+            )
             sim = cosine(b.embedding, jd.vec_match)
             key = (round(gain_c, 9), not b.is_extra, sim)
             if best is None or key > best[0]:
                 best = (key, b, gained_c, gain_c, sim)
 
+        if best is None:
+            break
         _, cand, gained_c, gain_c, sim = best
         if gain_c <= 0.0:
             break
@@ -443,15 +583,20 @@ def select_entry_bullets(
         )
         covered |= covered_by(cand.norm_text, keywords) - covered
         covered_canon |= gained_c
+        chosen_norm.append(cand.norm_text)
+        for tok in covered_by(cand.norm_text, keywords):
+            kw_seen[tok] = kw_seen.get(tok, 0) + 1
         remaining.remove(cand)
 
+    right_text, right_link = _header_right(entry, block)
     return SelectedEntry(
         id=entry.id,
         kind=entry.kind,
         block_id=block.block_id,
         label=entry.label,
         header_left=block.entry_header,
-        header_right=_header_right(entry, block),
+        header_right=right_text,
+        header_link=right_link,
         bullets=chosen,
         covered=covered,
         coverage=coverage_of(covered, keywords),

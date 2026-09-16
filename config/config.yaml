@@ -205,13 +205,52 @@ selection:
     # has no say in how many bullets it gets, only what it covers does. (v3.1
     # replaced the tenure bands and the separate project cap.)
     max_cap: 8
-    # Lambda on already-covered keyword weight, subtracted from a candidate's gain.
-    # Stops one keyword rendering twice in an entry when bullets are pooled across
-    # blocks. 0.0 disables it and restores pure set-cover.
+    # Projects stop earning space sooner than jobs. Measured: with a flat 8, every
+    # project ran to 8 while jobs stopped at 4-6 — the cap was setting project
+    # length, and the last slots filled with restatement.
+    project_cap: 5
+    # Cost of saying a keyword twice in one entry:
+    #     penalty = repeat_penalty * repeated_weight ** 2
+    # Squared, so one repeat stays cheap (a bullet with real new coverage still
+    # wins) while a restatement carrying three covered keywords costs 9x and is
+    # effectively barred. 0.0 disables it and restores pure set-cover.
     repeat_penalty: 0.25
     # Phase 2: after JD gain is exhausted, fill the remaining slots from the title's
     # own qualification checklist. Stops at zero canonical gain, never pads to cap.
     qualification_fill: true
+
+    # --- Restatement control -------------------------------------------------
+    # Keyword arithmetic cannot see that two bullets say the same thing in
+    # different words. These catch it lexically, on text already normalised for
+    # keyword matching.
+    #
+    # Within ONE entry a restatement is barred outright (the method: no keyword
+    # repeats inside a job/project entry). Two tests, either is enough:
+    duplicate_prefix_words: 4    # same opening N words = the eye reads a repeat
+    duplicate_jaccard: 0.55      # word-overlap ratio that counts as a reword
+    duplicate_min_words: 12      # below this, overlap ratio is noise, not signal
+    #
+    # ACROSS entries the method explicitly permits repetition, so this is a
+    # ceiling rather than a ban: a bullet family may render at most this many
+    # times on one resume. Measured: the AI-tooling bullet appeared in all six
+    # entries of one run, each time earning its slot on the single spurious
+    # keyword "modules" (the JD meant ES modules; the bullet meant order modules).
+    max_repeats_across_entries: 2
+    # Looser than duplicate_jaccard on purpose: within an entry a match BANS the
+    # bullet, so it must be precise; across entries it only caps at N, so it can
+    # group a family more generously. The AI-tooling family scored 0.66 / 0.44 /
+    # 0.36 between its three renderings — the strict bar caught one pair of three.
+    across_entry_jaccard: 0.33
+    # Ceiling on how many entries may claim the SAME keyword. Text similarity
+    # cannot catch this: "Agile" rendered in four of six entries in four
+    # genuinely different sentences. The repetition lives in the keyword, so the
+    # ceiling does too. 0 disables it and restores unlimited cross-entry repeats.
+    max_keyword_renders: 2
+    # The recovery pool is for recovery. An `extra` bullet may render only when it
+    # is the ONLY bullet in its entry able to claim something the JD (or the
+    # title's checklist) asked for. Enforces the contract RoleBlock.extra_bullets
+    # already states, which until v3.2 held only by accident.
+    extras_must_be_unique_source: true
 
   # --- Entry scoring ---------------------------------------------------------
   entry:
@@ -230,6 +269,11 @@ selection:
     # off-role bullet then wins only when nothing on-role covers that keyword.
     off_role_scaling: true
     off_role_floor: 0.05  # relevance never scales fully to zero
+    # v3.2 merged Work History and Projects into one section ordered purely by
+    # match. This is the single guard: a job or freelance engagement must hold one
+    # of the first N slots, so the page never opens with two unpaid projects.
+    # 0 disables the guard and lets score alone decide every position.
+    job_within_top: 2
 
   # STAGE 6, measured 2026-09-01 over all 767 parsed all_jobs rows.
   # Provisional: the profile behind these numbers is the OLD flat bullet pool
@@ -737,6 +781,14 @@ endpoint:
   # style names: the assembler detects structure, never text (the template ships
   # placeholder headings).
   render:
+    # v3.2: ONE section for work, freelance and projects, ordered by match rather
+    # than by kind. Two headings forced every project below every job regardless
+    # of fit.
+    section_heading: "Work & Projects"
+    # What the right-slot link reads as. A live demo beats a repo for a reader
+    # with twenty seconds, and master_profile links now point at demos where one
+    # exists, falling back to the repo where none does.
+    link_text: "View Demo \u2192"
     bullet_num_id: "1"          # numbering.xml: entry bullets, 1.5 line spacing
     education_num_id: "2"       # numbering.xml: Education & Certificates lines
     education_max_lines: 3      # the method's hard cap on that section

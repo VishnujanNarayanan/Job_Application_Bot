@@ -33,9 +33,27 @@ and this project loosely tracks iterations rather than semver.
   cosine. Each entry takes the bullet adding the most uncovered JD keyword
   weight, stopping when nothing new is left to say. The covered set resets per
   entry, so the first entry is free to clear the whole checklist alone
-- Layer 4: one flat bullet cap of 8 for every entry. Tenure and entry kind have
-  no say in how many bullets an entry gets — a job, a freelance engagement and a
-  project are selected by the same method and compete for the same slots
+- Layer 4: no tenure scaling on the bullet cap — work and freelance take 8,
+  projects 5. Measured: at a flat 8 every project ran to 8 while jobs stopped at
+  4-6, so the cap rather than coverage was setting project length
+- Layer 4/6: ONE section, "Work & Projects", replacing Work History + Projects.
+  Entries order by match, best first; recency no longer orders anything. A job
+  or freelance engagement must hold a top-2 slot (`selection.entry.job_within_top`)
+- Layer 4: the entry header's right slot splits into text + link — salaried work
+  shows dates and no link, freelance shows its label and a link but no dates, a
+  project shows the link alone. Links prefer a live demo over a repo
+- Layer 4: repeat cost is squared (`repeat_penalty * repeated_weight ** 2`), so
+  one repeat stays affordable and a restatement carrying three covered keywords
+  costs 9x
+- Layer 4: a bullet that READS as a restatement of one already chosen in the same
+  entry is blocked outright, by shared opening words or word-overlap ratio
+- Layer 4: cross-entry ceilings — a bullet family may render at most
+  `max_repeats_across_entries` (2) times, and at most `max_keyword_renders` (2)
+  entries may claim the same keyword. The method permits cross-entry repetition;
+  these make it bounded rather than unlimited
+- Layer 4: `extras_must_be_unique_source` — an `is_extra` bullet renders only when
+  it is the only bullet in its entry able to claim something asked for, which is
+  the contract `RoleBlock.extra_bullets` stated and nothing enforced
 - Layer 4: bullet selection runs in two phases. Phase 1 covers this JD as before;
   phase 2 then fills the remaining slots from the lead block's own qualification
   checklist, so a keyword recruiters for that title screen for can earn a slot
@@ -183,8 +201,10 @@ and this project loosely tracks iterations rather than semver.
 
 ### Removed
 
-- Layer 4: `selection.bullets.tenure_bands` and `selection.bullets.project_cap`
-  config, and the `_months_between` helper they drove — superseded by the flat cap
+- Layer 4: `selection.bullets.tenure_bands` and the `_months_between` helper it
+  drove — the cap no longer scales by tenure
+- Layer 6: the separate "Work History" and "Projects" headings — one merged
+  section replaces them
 - Layer 4: `select_summary`, `select_skill_candidates`, `score_experience`,
   `score_project`, `skills_before_projects` — the Skills and Summary sections
   they served are gone from the template
