@@ -42,6 +42,12 @@ and this project loosely tracks iterations rather than semver.
 - Layer 4: the entry header's right slot splits into text + link — salaried work
   shows dates and no link, freelance shows its label and a link but no dates, a
   project shows the link alone. Links prefer a live demo over a repo
+- Layer 6: the link label follows the URL — "View Code" for a source host,
+  "View Demo" for a live deployment — instead of a fixed string that promised a
+  demo and delivered a source tree
+- Layer 6: the label's gaps are U+00A0, so it can never break across lines. At
+  the right-aligned tab stop Word split the space before the arrow and dropped
+  the arrow onto its own line
 - Layer 4: repeat cost is squared (`repeat_penalty * repeated_weight ** 2`), so
   one repeat stays affordable and a restatement carrying three covered keywords
   costs 9x
