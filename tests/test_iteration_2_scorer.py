@@ -376,11 +376,12 @@ def test_new_keywords_are_recorded_per_bullet_for_audit() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_denser_bullet_still_wins_despite_repeating_one_keyword() -> None:
-    """The penalty discourages repeats; it does not outlaw them.
+def test_a_clean_bullet_is_taken_before_a_repeating_one() -> None:
+    """A repetition is allowed only when it is unavoidable.
 
-    Docker + CI/CD are new, Git is already on the page: two new keywords are worth
-    more than one repeat, so this bullet beats the clean single-keyword one.
+    b1 is denser — Docker and CI/CD are both new — but it repeats Git. b2 brings
+    one new keyword and repeats nothing, so it goes first. b1 still renders: its
+    keywords exist nowhere else, which is what makes its repeat unavoidable.
     """
     bullets = [
         _bullet("b0", "Summary using Git daily.", summary=True),
@@ -391,39 +392,66 @@ def test_a_denser_bullet_still_wins_despite_repeating_one_keyword() -> None:
         _entry(blocks=[_block(bullets=bullets)]), _jd(),
         _kw("Git", "Docker", "CI/CD", "Terraform"), now=NOW,
     )
-    assert [b.id for b in out.bullets][:2] == ["b0", "b1"]
+    ids = [b.id for b in out.bullets]
+    assert ids[:2] == ["b0", "b2"], "the clean bullet is reached first"
+    assert "b1" in ids, "an unavoidable repeat is still taken"
 
 
-def test_a_bullet_whose_repeats_outweigh_its_gain_is_not_selected() -> None:
-    """Two repeats at lambda 0.25 cost 0.5; one new keyword earns 1.0 * relevance.
+def test_a_repeat_is_skipped_when_a_clean_bullet_covers_the_same_ground() -> None:
+    """Both bullets bring Docker; only one of them also restates Git."""
+    bullets = [
+        _bullet("b0", "Summary using Git daily.", summary=True),
+        _bullet("b1", "Shipped with Docker and Git again here."),
+        _bullet("b2", "Shipped the service with Docker."),
+    ]
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(
+            _entry(blocks=[_block(bullets=bullets)]), _jd(),
+            _kw("Git", "Docker"), now=NOW,
+        )
+    assert [b.id for b in out.bullets] == ["b0", "b2"]
+    assert "b1" not in [b.id for b in out.bullets]
 
-    Raising the penalty above that gain makes the bullet net-negative, and a
-    net-negative best candidate ends the phase rather than being taken.
+
+def test_an_unavoidable_repeat_is_taken_only_if_it_pays_for_itself() -> None:
+    """Two rules together, and both are needed.
+
+    A repeat is reachable only when nothing clean supplies the keyword. Even then
+    the bullet must trade up: its new coverage must be worth at least as much as
+    what it restates. One new keyword bought with three repeats is a bad line, and
+    the greedy used to keep buying them until it hit the cap.
     """
     # min_per_entry=1 throughout: the floor outranks the early stop by design, so
-    # at 3 these bullets would be taken whatever their gain. The floor has its own
-    # test; this one is about the penalty curve.
+    # at 3 these bullets would be taken whatever their gain.
     kw = _kw("Python", "SQL", "Git", "Rust")
 
-    # ONE repeat (weight 1.0) against one new keyword: 1.0 - 0.25*1^2 = 0.75 > 0.
-    one = _entry(blocks=[_block(bullets=[
-        _bullet("b0", "Summary with Python.", summary=True),
-        _bullet("b1", "Used Python and Rust in the core loop here."),
+    # An EVEN trade: one new keyword for one repeat. Unavoidable and affordable.
+    even = _entry(blocks=[_block(bullets=[
+        _bullet("b0", "Summary with Python only.", summary=True),
+        _bullet("b1", "Used Python and Rust in the core loop."),
     ])])
     with _cfg(min_per_entry=1):
-        out = select_entry_bullets(one, _jd(), kw, now=NOW)
-    assert [b.id for b in out.bullets] == ["b0", "b1"], "one repeat stays affordable"
+        out = select_entry_bullets(even, _jd(), kw, now=NOW)
+    assert [b.id for b in out.bullets] == ["b0", "b1"], "1-for-1 is worth the line"
 
-    # THREE repeats (weight 3.0) against one new keyword: squaring makes the cost
-    # 0.25*9 = 2.25, which swamps the 1.0 gain. Linearly it would be only 0.75 and
-    # the restatement would still be taken — this is the curve doing the work.
-    many = _entry(blocks=[_block(bullets=[
+    # A BAD trade: one new keyword for three repeats. Unavoidable, unaffordable.
+    lopsided = _entry(blocks=[_block(bullets=[
         _bullet("b0", "Summary with Python and SQL and Git.", summary=True),
         _bullet("b1", "Used Python and SQL and Git and Rust here."),
     ])])
     with _cfg(min_per_entry=1):
-        out = select_entry_bullets(many, _jd(), kw, now=NOW)
-    assert [b.id for b in out.bullets] == ["b0"], "three repeats are not affordable"
+        out = select_entry_bullets(lopsided, _jd(), kw, now=NOW)
+    assert [b.id for b in out.bullets] == ["b0"], "Rust is not worth three repeats"
+
+    # Give Rust a clean home and the restating bullet loses its only justification.
+    clean = _entry(blocks=[_block(bullets=[
+        _bullet("b0", "Summary with Python and SQL and Git.", summary=True),
+        _bullet("b1", "Used Python and SQL and Git and Rust here."),
+        _bullet("b2", "Ported the core loop to Rust."),
+    ])])
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(clean, _jd(), kw, now=NOW)
+    assert [b.id for b in out.bullets] == ["b0", "b2"]
 
 
 def test_the_penalty_is_not_scaled_away_for_off_role_bullets() -> None:
