@@ -139,8 +139,11 @@ def test_assemble_docx_renders_one_merged_section(minimal_profile, minimal_selec
     # Both kinds render under it, in the order Layer 4 ranked them.
     assert text.index("Backend Engineer at TechCorp, Pune\tJanuary 2024 to current") > \
         text.index(heading)
-    assert text.index("Stock Prediction Engine\t"
-                      f"{settings.endpoint.render.link_text}") > text.index(heading)
+    from src.endpoint.assembler import link_label
+
+    assert text.index(
+        "Stock Prediction Engine\t" + link_label("https://github.com/user/stock")
+    ) > text.index(heading)
 
     assert "Backend Engineer at TechCorp, Pune\tJanuary 2024 to current" in text
     assert "Built APIs serving 10k requests." in text
@@ -149,8 +152,11 @@ def test_assemble_docx_renders_one_merged_section(minimal_profile, minimal_selec
     )
     from src.config import settings
 
+    from src.endpoint.assembler import link_label
+
     assert (
-        f"Stock Prediction Engine\t{settings.endpoint.render.link_text}" in text
+        "Stock Prediction Engine\t"
+        f"{link_label('https://github.com/user/stock')}" in text
     )
 
 
@@ -163,7 +169,13 @@ def test_a_project_entry_shows_a_short_hyperlink_where_a_job_shows_dates(  # noq
 
     doc = _assemble(minimal_profile, minimal_selection, tmp_path)
     line = next(p for p in doc.paragraphs if p.text.startswith("Stock Prediction"))
-    assert line.text.endswith(settings.endpoint.render.link_text)
+    from src.endpoint.assembler import link_label
+
+    # A github URL is source, so the label says Code, not Demo.
+    assert line.text.endswith(link_label("https://github.com/user/stock"))
+    assert "Code" in line.text and "Demo" not in line.text
+    # The label must never break across lines at the right tab stop.
+    assert " " not in line.text.split("\t")[-1].replace("\u00a0", "")
     assert len(line.text.replace("\t", "")) < 89
 
     rid = line._p.find(qn("w:hyperlink")).get(qn("r:id"))
@@ -489,3 +501,34 @@ def test_every_bullet_keeps_its_own_lines_together(
         assert el is not None and el.get(_qn("w:val")) in ("1", "true"), (
             f"bullet may split across pages: {p.text[:40]!r}"
         )
+
+
+def test_link_label_follows_the_url_not_a_fixed_string():
+    """Promising a demo and landing the reader in a source tree is worse than
+    promising nothing, so the label is derived from the host."""
+    from src.endpoint.assembler import link_label
+
+    for repo in (
+        "https://github.com/VishnujanNarayanan/minute-level-stock-prediction",
+        "https://gitlab.com/x/y",
+        "https://bitbucket.org/x/y",
+    ):
+        assert "Code" in link_label(repo)
+
+    for demo in (
+        "https://product-explorer-two.vercel.app",
+        "https://quotes-demo.streamlit.app/",
+        "https://huggingface.co/spaces/Vishnujann/nn-from-scratch-breast-cancer",
+        "https://www.smartnperfectlegal.legal/",
+    ):
+        assert "Demo" in link_label(demo)
+
+
+def test_the_link_label_can_never_break_across_lines():
+    """It did: at the right-aligned tab stop Word broke the space before the arrow
+    and dropped the arrow onto its own line."""
+    from src.endpoint.assembler import link_label
+
+    for url in ("https://github.com/x/y", "https://x.vercel.app"):
+        assert " " not in link_label(url), "every gap must be U+00A0"
+        assert " " in link_label(url)
