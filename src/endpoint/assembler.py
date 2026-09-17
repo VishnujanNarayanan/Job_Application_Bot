@@ -449,6 +449,52 @@ def _set_hyperlink(doc, p_elem, text: str, url: str, prefix: str = "") -> None:
     p_elem.append(link)
 
 
+def _usable_width_twips(doc) -> int:
+    """Width of the text column, in twips, from the document's own section.
+
+    Derived, never hardcoded (hard rule #21): an operator's template may use any
+    page size or margins.
+    """
+    sec = doc.sections[0]
+    return int(sec.page_width.twips) - int(sec.left_margin.twips) - int(sec.right_margin.twips)
+
+
+def _force_right_tab(p_elem, pos_twips: int) -> None:
+    """Give this entry line ONE right-aligned tab stop, at the right margin.
+
+    The Headless template ships three stops on the entry line -- left@7110,
+    center@9806, right@10800 -- and the line contains a single tab character. A tab
+    advances to the NEXT stop, so the right-hand slot landed on the LEFT stop at
+    7110 twips (4.94in) and then flowed rightward into a 6.5in column: only
+    9360-7110 = 2250 twips of room, about 25 characters. Two of the template's own
+    stops (9806, 10800) sit BEYOND the 9360-twip margin and are unreachable.
+
+    A project slot ("View Demo ->", ~12 chars) fit in that gap. A freelance slot
+    ("Freelance  View Demo ->", ~21 chars) did not, so it wrapped onto its own line
+    and then broke again at the arrow -- which is exactly the reported symptom, and
+    why it only ever happened to freelance entries.
+
+    Right-ALIGNED is what the method asks for anyway ("employment dates
+    right-aligned"): the slot ends at the margin and grows leftward, so it cannot
+    wrap while it fits between the title and the margin. Non-breaking spaces inside
+    the label keep it whole; this keeps it on the line.
+    """
+    pPr = p_elem.find(qn("w:pPr"))
+    if pPr is None:
+        pPr = OxmlElement("w:pPr")
+        p_elem.insert(0, pPr)
+    for old in pPr.findall(qn("w:tabs")):
+        pPr.remove(old)
+    tabs = OxmlElement("w:tabs")
+    tab = OxmlElement("w:tab")
+    tab.set(qn("w:val"), "right")
+    tab.set(qn("w:pos"), str(pos_twips))
+    tabs.append(tab)
+    # w:tabs follows pStyle in the schema's ordering.
+    style = pPr.find(qn("w:pStyle"))
+    pPr.insert(list(pPr).index(style) + 1 if style is not None else 0, tabs)
+
+
 def _set_entry_line(p_elem, left: str, right: str) -> None:
     """Left of the tab := ``left``; right of the tab := ``right``.
 
@@ -510,6 +556,7 @@ def assemble_docx(
     doc = Document(str(template_path))
     body = doc.element.body
 
+    right_tab = _usable_width_twips(doc)
     start = _tailored_start(body)
     frozen_before = _frozen_canonical(body, start)
     _assert_education_within_cap(body, start, Path(template_path).name)
@@ -530,6 +577,7 @@ def assemble_docx(
         new_elems.append(h)
         for entry in entries:
             line = copy.deepcopy(protos["entry_line"])
+            _force_right_tab(line, right_tab)
             link = getattr(entry, "header_link", "") or ""
             if link.startswith(("http://", "https://")):
                 # The full URL overflows the line (measured: 112 chars against a
