@@ -979,3 +979,41 @@ def test_build_jd_context_makes_three_embeds_not_three_plus_skills() -> None:
     ctx = build_jd_context(parsed, embed_batch_fn=fake_batch)
     assert len(calls[0]) == 3, "one embed per JD skill was removed with the Skills section"
     assert ctx.vec_role == [1.0, 1.0]
+
+
+def test_a_clean_extra_is_admitted_even_when_it_is_not_the_unique_source() -> None:
+    """The unique-source test was manufacturing the repetition it sat beside.
+
+    "Regression" is reachable two ways: from an audited bullet that also restates
+    SQL, and from an extra that repeats nothing. Requiring the extra to be the ONLY
+    source blocked the clean route and forced the repeat. A zero-repeat extra is
+    admitted regardless; an extra that would itself repeat still has to be unique.
+    """
+    bullets = [
+        _bullet("b0", "Summary with Python and SQL.", summary=True),
+        _bullet("b1", "Ran SQL checks and Regression tests on the warehouse."),
+        _bullet("x1", "Kept a Regression suite on every branch.", extra=True),
+    ]
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(
+            _entry(blocks=[_block(bullets=bullets)]), _jd(),
+            _kw("Python", "SQL", "Regression"), now=NOW,
+        )
+    ids = [b.id for b in out.bullets]
+    assert "x1" in ids, "the clean extra supplies Regression without repeating SQL"
+    assert "b1" not in ids, "the repeating audited bullet is no longer needed"
+
+
+def test_a_repeating_extra_still_needs_to_be_the_unique_source() -> None:
+    """The relaxation is only for extras that repeat nothing."""
+    bullets = [
+        _bullet("b0", "Summary with Python and SQL.", summary=True),
+        _bullet("b1", "Built Regression checks in the pipeline."),
+        _bullet("x1", "Ran SQL and Python and Regression in one go.", extra=True),
+    ]
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(
+            _entry(blocks=[_block(bullets=bullets)]), _jd(),
+            _kw("Python", "SQL", "Regression"), now=NOW,
+        )
+    assert "x1" not in [b.id for b in out.bullets]
