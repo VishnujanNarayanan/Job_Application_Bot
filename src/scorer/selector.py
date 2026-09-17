@@ -450,10 +450,17 @@ def select_entry_bullets(
         # mentions (the AI-tooling bullets) could win a slot on one incidental word
         # it happened to share with the checklist.
         if b.is_extra and require_unique_extras:
-            mine = covered_by(b.norm_text, keywords) | canonical_covered(
-                b.norm_text, block.checklist
-            )
-            if not (mine - coverable_by_render_set):
+            jd_hits = covered_by(b.norm_text, keywords)
+            mine = jd_hits | canonical_covered(b.norm_text, block.checklist)
+            unique = bool(mine - coverable_by_render_set)
+            # A zero-repeat extra is admitted even when it is not the unique source.
+            # Measured: the unique-source test was blocking the CLEANER route to a
+            # keyword — "Regression" was reachable both from an audited bullet that
+            # also restates SQL and from an extra that repeats nothing. Blocking the
+            # extra forced the repeat, so a rule meant to protect the render set was
+            # manufacturing the repetition it exists alongside.
+            clean_here = not (jd_hits & covered)
+            if not unique and not clean_here:
                 return True
         return False
 
