@@ -73,7 +73,10 @@ and this project loosely tracks iterations rather than semver.
   these make it bounded rather than unlimited
 - Layer 4: `extras_must_be_unique_source` — an `is_extra` bullet renders only when
   it is the only bullet in its entry able to claim something asked for, which is
-  the contract `RoleBlock.extra_bullets` stated and nothing enforced
+  the contract `RoleBlock.extra_bullets` stated and nothing enforced. A zero-repeat
+  extra is exempt: the unique-source test was blocking the CLEANER route to a
+  keyword and forcing the repeat it sat beside. Measured on one entry, redundant
+  keyword renders across a whole resume fell 4 -> 1 at unchanged coverage
 - Layer 4: bullet selection runs in two phases. Phase 1 covers this JD as before;
   phase 2 then fills the remaining slots from the lead block's own qualification
   checklist, so a keyword recruiters for that title screen for can earn a slot
