@@ -22,6 +22,13 @@ and this project loosely tracks iterations rather than semver.
 - Profile: the `job_application_bot` project entry refreshed from a re-run of its
   bullet-extract — 6 role blocks, 65 bullets (was 59), plus 28 skills and one gap
   (Terraform) folded into the pools
+- `tools/calibrate.py` — runs Layer 4 selection over every parsed job and reports the
+  distributions the thresholds are percentiles of (entry scores per kind, keyword
+  coverage, lead coverage, fit, final_score, best-second gap, entries and bullets per
+  resume), writing `data/reports/calibration.json`. It existed only in a session
+  scratchpad before, so the numbers behind every threshold in `config.yaml` were not
+  reproducible. Ported to `load_profile()` — the original hand-built its own candidate
+  objects because migration `0009_role_blocks` had not been applied when it was written
 - Layer 4: `canonical_covered()` — the set of a title's canonical tokens present
   in a bullet, matched by `keywords.hit` so one definition of "covered" serves
   both the JD checklist and the sheet
