@@ -192,9 +192,11 @@ def evaluate(
     )
     # v3.2: one merged section. Work, freelance and projects render under a single
     # heading, ordered purely on how well each matches this JD -- a project that
-    # fits better than a job appears above it. The one guard: a job or gig must
-    # hold one of the top two slots, so a resume never opens with two unpaid
-    # projects. Recency no longer orders anything; match does.
+    # fits better than a job appears above it. The one guard: the salaried
+    # employment entry must hold one of the top two slots, so a resume never opens
+    # without the operator's actual job in view. A gig does not count for that --
+    # it competes on merit here exactly as it does above. Recency no longer orders
+    # anything; match does.
     work = [*jobs, *gigs]
     entries = order_entries([*work, *projects])
 
