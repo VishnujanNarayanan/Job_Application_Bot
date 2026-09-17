@@ -53,6 +53,20 @@ and this project loosely tracks iterations rather than semver.
 - Layer 6: the label's gaps are U+00A0, so it can never break across lines. At
   the right-aligned tab stop Word split the space before the arrow and dropped
   the arrow onto its own line
+- Layer 4: phase 1 is a BEAM SEARCH over bullet sets, not a greedy walk. Greedy
+  took the best single bullet each step and never reconsidered, which is myopic on
+  a set-cover: an early pick consumes a common keyword another bullet would have
+  supplied alongside a rare one. Measured on one entry, a set existed with
+  identical coverage and half the repeats that greedy could not reach. Every rule
+  below stays a hard constraint — the beam only searches better inside them.
+  Objective is lexicographic: covered weight, fewest repeats, fewest recovery-pool
+  bullets, cosine. Width 20 (`selection.bullets.beam_width`) reaches the same
+  optimum as 200, and the beam is faster than the greedy it replaced because hit
+  sets are computed once rather than per candidate per iteration
+- Layer 4: the rendered order of an entry's bullets is now density-first (then
+  audited before recovery pool, then cosine) rather than pick order, which was an
+  artifact of the search. `new_keywords` is replayed in reading order, so it says
+  what each bullet adds as the reader meets it
 - Layer 4: repetition inside an entry is now governed by two rules instead of a
   penalty. (1) Candidates that repeat nothing are considered in a separate first
   pass, so a repeat is reachable only when nothing clean supplies the keyword.
