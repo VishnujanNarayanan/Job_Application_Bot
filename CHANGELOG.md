@@ -51,6 +51,12 @@ and this project loosely tracks iterations rather than semver.
 - Layer 4/6: ONE section, "Work & Projects", replacing Work History + Projects.
   Entries order by match, best first; recency no longer orders anything. A job
   or freelance engagement must hold a top-2 slot (`selection.entry.job_within_top`)
+- Layer 4: `selection.entry.job_within_top` now guards the SALARIED employment
+  entry only. Freelance loads as `kind="work"`, so a gig used to satisfy the
+  top-2 rule and leave the actual job below it; the test keys off
+  `employment_type` instead, and freelance now competes on match like a project.
+  Position 1 still goes to whatever matches best; the job takes position 2 when
+  it does not win it outright
 - Layer 4: the entry header's right slot splits into text + link — salaried work
   shows dates and no link, freelance shows its label and a link but no dates, a
   project shows the link alone. Links prefer a live demo over a repo
