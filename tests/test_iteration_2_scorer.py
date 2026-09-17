@@ -376,12 +376,14 @@ def test_new_keywords_are_recorded_per_bullet_for_audit() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_clean_bullet_is_taken_before_a_repeating_one() -> None:
-    """A repetition is allowed only when it is unavoidable.
+def test_an_unavoidable_repeat_is_admitted_alongside_the_clean_bullet() -> None:
+    """b1 is denser — Docker and CI/CD are new — but it repeats Git. b2 brings one
+    new keyword and repeats nothing. Both belong on the page: b1's keywords exist
+    nowhere else, which is what makes its repeat unavoidable.
 
-    b1 is denser — Docker and CI/CD are both new — but it repeats Git. b2 brings
-    one new keyword and repeats nothing, so it goes first. b1 still renders: its
-    keywords exist nowhere else, which is what makes its repeat unavoidable.
+    Order is no longer pick order. The beam chooses a SET, then the set is sorted
+    for reading — densest first — so the summary is followed by the strongest
+    sentence rather than by whichever bullet the search happened to reach first.
     """
     bullets = [
         _bullet("b0", "Summary using Git daily.", summary=True),
@@ -393,8 +395,9 @@ def test_a_clean_bullet_is_taken_before_a_repeating_one() -> None:
         _kw("Git", "Docker", "CI/CD", "Terraform"), now=NOW,
     )
     ids = [b.id for b in out.bullets]
-    assert ids[:2] == ["b0", "b2"], "the clean bullet is reached first"
-    assert "b1" in ids, "an unavoidable repeat is still taken"
+    assert ids[0] == "b0", "the summary stays pinned"
+    assert set(ids) == {"b0", "b1", "b2"}
+    assert ids[1] == "b1", "densest bullet reads first after the summary"
 
 
 def test_a_repeat_is_skipped_when_a_clean_bullet_covers_the_same_ground() -> None:

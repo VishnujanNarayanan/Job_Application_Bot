@@ -499,90 +499,170 @@ def select_entry_bullets(
         # what the entry already opened with.
         covered_canon |= canonical_covered(summary.norm_text, block.checklist)
 
-    # --- 2. phase 1: greedy set-cover over this JD ------------------------
-    # Other blocks' summary bullets stay in the pool. They describe the same work
-    # from another angle, and if one carries a keyword the pinned summary lacks it
-    # earns a slot like any other bullet.
+    # --- 2. phase 1: beam search over this JD's checklist -----------------
+    # Greedy took the single best bullet at each step and never reconsidered, which
+    # is myopic on a set-cover: an early pick can consume a common keyword that
+    # another bullet would have supplied ALONGSIDE a rare one, so the rare keyword
+    # then needs a worse bullet. Measured on one entry, that cost a whole repeat —
+    # a set existed with identical coverage and half the repetition, and greedy
+    # could not reach it.
+    #
+    # The beam keeps `beam_width` partial sets alive and re-ranks after each
+    # expansion, so a bullet that looks worse now can be taken when the set it
+    # leads to is better. Every rule stays a HARD CONSTRAINT: a candidate must pass
+    # `_blocked` (restatement, cross-entry family ceiling, extras) and the
+    # affordability gate before it may extend any beam. The search only chooses
+    # better among sets that were already legal.
+    #
+    # Objective, lexicographic: covered WEIGHT first, then fewest repeats, then the
+    # existing per-bullet tie-breaks. Coverage never loses to tidiness; tidiness
+    # decides between sets that cover the same thing.
     chosen_norm = [summary.norm_text] if summary is not None else []
     remaining = [b for b in pool if summary is None or b.id != summary.id]
-    while len(chosen) < cap and remaining:
-        # Score every candidate, then choose in TWO passes: bullets that repeat
-        # nothing are considered first, and a repeating bullet is reached only when
-        # no clean bullet can supply what this JD still needs. That is the operator's
-        # rule stated exactly: a repetition is allowed only when it is unavoidable —
-        # when the keyword it brings exists on no other bullet.
-        #
-        # A scalar penalty could not express this. However steep it was, it only
-        # traded repetition off against coverage; it could never say "prefer the
-        # clean bullet when a clean bullet exists, and accept the repeat when none
-        # does".
-        scored = []
-        for b in remaining:
-            if _blocked(b, chosen_norm):
+
+    # Hit sets are computed ONCE here rather than per candidate per iteration, which
+    # is also why the beam runs faster than the greedy it replaces.
+    hits_of = {b.id: covered_by(b.norm_text, keywords) for b in remaining}
+    canon_of = {
+        b.id: canonical_covered(b.norm_text, block.checklist) for b in remaining
+    }
+    sim_of = {b.id: cosine(b.embedding, jd.vec_match) for b in remaining}
+    rel_of = {
+        b.id: _relevance(block_scores, block.block_id, b.block_id) for b in remaining
+    }
+
+    @dataclass
+    class _Beam:
+        ids: tuple[str, ...]
+        covered: frozenset
+        covered_canon: frozenset
+        norms: tuple[str, ...]
+        repeats: int
+        extras: int
+        sim_sum: float
+        picks: tuple  # (bullet, gained) in path order
+
+        @property
+        def rank(self) -> tuple:
+            # Set-level objective. The per-bullet tie-breaks the greedy applied one
+            # step at a time have to be expressed here instead, or they vanish: two
+            # sets covering the same keywords with the same repetition are still not
+            # equally good, and an audited set beats one leaning on the recovery
+            # pool. Coverage first, always.
+            return (
+                round(weight_of(set(self.covered), keywords), 9),
+                -self.repeats,
+                -self.extras,
+                round(self.sim_sum, 9),
+            )
+
+    seed = _Beam(
+        ids=(), covered=frozenset(covered), covered_canon=frozenset(covered_canon),
+        norms=tuple(chosen_norm), repeats=0, extras=0, sim_sum=0.0, picks=(),
+    )
+    beams = [seed]
+    finished: list[_Beam] = []
+    width = max(1, int(getattr(cfg, "beam_width", 20)))
+    slots = cap - len(chosen)
+
+    for _ in range(max(0, slots)):
+        nxt: list[_Beam] = []
+        for st in beams:
+            grew = False
+            for b in remaining:
+                if b.id in st.ids:
+                    continue
+                if _blocked(b, list(st.norms)):
+                    continue
+                hits = hits_of[b.id]
+                gained = _spent(hits - st.covered)
+                if not gained:
+                    continue
+                repeated = hits & st.covered
+                raw_w = weight_of(gained, keywords)
+                rep_w = weight_of(repeated, keywords)
+                # The affordability gate, unchanged: a repeating bullet's new
+                # coverage must be worth at least `repeat_ratio` times what it
+                # restates. Clean bullets skip the test entirely.
+                if rep_w > 0.0 and raw_w < repeat_ratio * rep_w:
+                    continue
+                grew = True
+                nxt.append(_Beam(
+                    ids=st.ids + (b.id,),
+                    covered=st.covered | gained,
+                    covered_canon=st.covered_canon | canon_of[b.id],
+                    norms=st.norms + (b.norm_text,),
+                    repeats=st.repeats + (1 if repeated else 0),
+                    extras=st.extras + (1 if b.is_extra else 0),
+                    sim_sum=st.sim_sum + sim_of[b.id],
+                    picks=st.picks + ((b, gained),),
+                ))
+            if not grew:
+                finished.append(st)
+        if not nxt:
+            break
+        # Deduplicate on the SET, not the path: two orders of the same bullets are
+        # the same resume entry and must not both occupy the beam.
+        seen_sets: set = set()
+        ranked = sorted(nxt, key=lambda st: st.rank, reverse=True)
+        beams = []
+        for st in ranked:
+            key = frozenset(st.ids)
+            if key in seen_sets:
                 continue
-            hits = covered_by(b.norm_text, keywords)
-            gained = _spent(hits - covered)
-            repeated = hits & covered
-            new_w = weight_of(gained, keywords) * _relevance(
-                block_scores, block.block_id, b.block_id
-            )
-            rep_w = weight_of(repeated, keywords)
-            sim = cosine(b.embedding, jd.vec_match)
-            # Within a pass, order lexicographically rather than by a weighted sum:
-            # (1) JD coverage first — the JD outranks the canonical sheet, always.
-            # (2) then fewer repeats. (3) then the DENSER bullet, because when two
-            # bullets bring the same new keyword the one carrying more of the
-            # checklist is the better use of the line. (4) audited before recovery
-            # pool. (5) canonical overlap. (6) cosine.
-            canon = canonical_overlap(b.norm_text, block.checklist)
-            key = (
-                round(new_w, 9),
-                -round(rep_w, 9),
-                len(hits),
-                not b.is_extra,
-                canon,
-                sim,
-            )
-            # raw_w is the unscaled new weight. The affordability gate compares it
-            # against rep_w, which is also unscaled — scaling only one side made an
-            # off-role bullet fail a trade an on-role bullet would pass, which is an
-            # ordering concern leaking into an eligibility test.
-            raw_w = weight_of(gained, keywords)
-            scored.append((key, b, gained, new_w, rep_w, sim, raw_w))
+            seen_sets.add(key)
+            beams.append(st)
+            if len(beams) >= width:
+                break
 
-        clean = [s for s in scored if s[4] <= 0.0 and s[3] > 0.0]
-        # A repeating bullet must PAY FOR ITSELF: what it newly covers has to be
-        # worth at least `repeat_ratio` times what it restates. Without this the
-        # greedy kept buying one new keyword at the price of two or three repeats
-        # — measured on the Citesert entry, where the eighth slot went to a bullet
-        # bringing "Time Series" while saying Python and SQL for the third time.
-        # Unavoidability alone is not enough of a justification; the trade has to
-        # be worth the line.
-        priced = [
-            s for s in scored
-            if s[3] > 0.0 and (s[4] <= 0.0 or s[6] >= repeat_ratio * s[4])
-        ]
-        # The unpriced fallback exists ONLY to satisfy the floor. Above the floor,
-        # "nothing left is worth a line" must end the phase rather than quietly
-        # spending the remaining slots on restatement — which is what an `or scored`
-        # fallback did: it re-admitted every bullet the gate had just rejected.
-        pool_now = clean or priced or (scored if len(chosen) < floor else [])
-        best = max(pool_now, key=lambda s: s[0], default=None)
+    best = max([*beams, *finished], key=lambda st: st.rank, default=seed)
 
-        if best is None:  # everything left is blocked
-            break
-        _, cand, gained, gain, rep_w, sim, _raw = best
-        if gain <= 0.0 and len(chosen) >= floor:
-            break
+    # The beam chose a SET; the order it happened to build that set in is an
+    # artifact of the search, not a reading order. Sort for the page instead —
+    # densest first, audited before recovery pool, then cosine — so the strongest
+    # sentence sits directly under the pinned summary where the twenty-second scan
+    # lands. Attribution is then replayed in THIS order, so `new_keywords` says what
+    # each bullet adds as the reader meets it rather than as the search found it.
+    ordered = sorted(
+        (b for b, _ in best.picks),
+        key=lambda b: (
+            round(weight_of(hits_of[b.id], keywords), 9),
+            not b.is_extra,
+            sim_of[b.id],
+        ),
+        reverse=True,
+    )
+    for b in ordered:
+        gained = hits_of[b.id] - covered
         chosen.append(
-            SelectedBullet(cand.id, cand.text, sim, False, sorted(gained), via="jd")
+            SelectedBullet(
+                b.id, b.text, sim_of[b.id], False, sorted(gained), via="jd"
+            )
         )
         covered |= gained
-        covered_canon |= canonical_covered(cand.norm_text, block.checklist)
-        chosen_norm.append(cand.norm_text)
-        for tok in covered_by(cand.norm_text, keywords):
+        covered_canon |= canon_of[b.id]
+        chosen_norm.append(b.norm_text)
+        for tok in hits_of[b.id]:
             kw_seen[tok] = kw_seen.get(tok, 0) + 1
-        remaining.remove(cand)
+        remaining.remove(b)
+
+    # The floor still outranks the early stop: an entry showing one bullet is not a
+    # valid entry, so if the beam ran dry below it, fill by cosine.
+    while len(chosen) < floor and remaining:
+        b = max(
+            (x for x in remaining if not _blocked(x, chosen_norm)),
+            key=lambda x: sim_of[x.id], default=None,
+        )
+        if b is None:
+            break
+        gained = _spent(hits_of[b.id] - covered)
+        chosen.append(
+            SelectedBullet(b.id, b.text, sim_of[b.id], False, sorted(gained), via="jd")
+        )
+        covered |= gained
+        covered_canon |= canon_of[b.id]
+        chosen_norm.append(b.norm_text)
+        remaining.remove(b)
 
     # --- 3. phase 2: fill the rest from the title's own qualification list --
     # The JD has nothing left to ask for. The remaining slots go to what a recruiter
