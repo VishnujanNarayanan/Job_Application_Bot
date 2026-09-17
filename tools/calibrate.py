@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import statistics as st
 from datetime import datetime, timezone
 from pathlib import Path
@@ -75,6 +76,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", type=Path, default=_DEFAULT_OUT)
     ap.add_argument("--limit", type=int, default=0, help="score only the first N jobs")
+    ap.add_argument(
+        "--sample", type=int, default=0,
+        help="score a random sample of N jobs (percentiles converge long before the "
+             "full corpus does; 250 is plenty and ~3x faster)",
+    )
+    ap.add_argument("--seed", type=int, default=7, help="sample seed, for reproducibility")
     args = ap.parse_args()
 
     # The scorer logs per-job at INFO; over several hundred jobs that is noise.
@@ -96,7 +103,16 @@ def main() -> int:
             ).where(AllJobs.role_summary.isnot(None))
         ).all()
 
-    if args.limit:
+    # Scoring is quadratic-ish in corpus size: every job runs a beam search per
+    # entry TWICE -- once for the per-kind threshold distributions, once inside
+    # evaluate(). At 767 jobs x 18 entries that is ~27,600 searches and a full pass
+    # did not finish in 50 minutes. Percentiles converge long before the corpus is
+    # exhausted, so sample rather than truncate: --limit takes the FIRST N, which is
+    # insertion order and therefore biased by when each source was scraped.
+    if args.sample and args.sample < len(rows):
+        random.Random(args.seed).shuffle(rows)
+        rows = rows[: args.sample]
+    elif args.limit:
         rows = rows[: args.limit]
 
     employment = [e for e in profile.work if e.employment_type != "freelance"]
@@ -172,6 +188,7 @@ def main() -> int:
     args.out.write_text(json.dumps({
         "generated_at": now.isoformat(),
         "jobs": len(rows),
+        "sampled": bool(args.sample),
         "employment": E, "freelance": F, "project": P,
         "coverage": COV, "lead": LEAD, "fit": FIT, "final": FINAL,
         "gaps": GAPS, "entries": ENTRIES, "bullets": BULLETS,
