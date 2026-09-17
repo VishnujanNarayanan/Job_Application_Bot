@@ -57,6 +57,14 @@ and this project loosely tracks iterations rather than semver.
 - Layer 6: the link label follows the URL — "View Code" for a source host,
   "View Demo" for a live deployment — instead of a fixed string that promised a
   demo and delivered a source tree
+- Layer 6: every entry line gets ONE right-aligned tab stop at the text column's right
+  edge, derived from the document's own section. The template ships the entry line with
+  Word's inherited `left@7110, center@9806, right@10800` and a single tab character, so
+  the right slot landed on the LEFT stop at 4.94in and flowed rightward into a 6.5in
+  column — 2250 twips of room. A project slot fit; a freelance slot ("Freelance  View
+  Demo →") did not, and wrapped onto its own line and then broke again at the arrow. The
+  template's own Education lines already use a single right stop at 9360, so entry lines
+  now match what the template proves works
 - Layer 6: the label's gaps are U+00A0, so it can never break across lines. At
   the right-aligned tab stop Word split the space before the arrow and dropped
   the arrow onto its own line
