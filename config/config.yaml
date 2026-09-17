@@ -219,6 +219,10 @@ selection:
     # means an even trade is acceptable; 1.5 demands the new outweigh the old.
     # Repetition is otherwise allowed only when nothing clean can supply the
     # keyword at all (selector.py picks clean candidates in a separate first pass).
+    # Beam width for phase 1. Measured: 20 already reaches the same optimum as 200
+    # on a 50-bullet pool, and the whole beam runs faster than the greedy it
+    # replaced because hit sets are computed once instead of per iteration.
+    beam_width: 20
     repeat_requires_ratio: 1.0
     repeat_penalty: 0.25
     # Phase 2: after JD gain is exhausted, fill the remaining slots from the title's
