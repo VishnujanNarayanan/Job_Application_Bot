@@ -21,6 +21,11 @@ master_resume_extract.yaml
 # and this repo is public — master_profile_old.yaml (2,705 lines) was sitting
 # untracked and would have been swept into a "commit everything".
 master_profile_*.yaml
+# ...and any backup of one. `master_profile_*.yaml` missed
+# master_profile_prev3.yaml.bak, which sat untracked in a public repo carrying
+# the operator's name, phone and email — one `git add -A` from being committed.
+master_profile*
+*.bak
 # Generated resume material (bullets, skills pool) — personal content.
 bullet_extract*.yaml
 resume_extract*.yaml
