@@ -778,19 +778,61 @@ def test_a_project_may_lead_the_page() -> None:
     assert [e.id for e in order_entries([sw, sp])] == ["p1", "e1"]
 
 
-def test_a_job_is_pulled_into_the_top_two_when_projects_sweep_them() -> None:
-    """The one guard on pure match order: a resume never opens with two projects."""
-    p1, p2 = _simple_entry("p1", "x"), _simple_entry("p2", "y")
-    w = _simple_entry("e1", "z")
-    sp1 = select_entries([p1], _jd(), _kw(), kind="project", now=NOW)[0]
-    sp2 = select_entries([p2], _jd(), _kw(), kind="project", now=NOW)[0]
-    sw = select_entries([w], _jd(), _kw(), kind="work", now=NOW)[0]
-    sp1.kind = sp2.kind = "project"
-    sw.kind = "work"
-    sp1.score, sp2.score, sw.score = 0.90, 0.80, 0.20
+def _ordering_entry(eid, *, kind, score, employment_type="employment"):
+    """A scored entry shaped only for ordering: kind, employment_type, score."""
+    selected = select_entries(
+        [_simple_entry(eid, "x")], _jd(), _kw(), kind="work", now=NOW,
+    )[0]
+    selected.kind, selected.employment_type, selected.score = (
+        kind, employment_type, score,
+    )
+    return selected
+
+
+def test_the_salaried_job_is_pulled_into_the_top_two_when_projects_sweep_them() -> None:
+    """The one guard on pure match order: the salaried job stays in view."""
+    sp1 = _ordering_entry("p1", kind="project", score=0.90)
+    sp2 = _ordering_entry("p2", kind="project", score=0.80)
+    sw = _ordering_entry("e1", kind="work", score=0.20)
     out = order_entries([sp1, sp2, sw])
     assert [e.id for e in out] == ["p1", "e1", "p2"]
     assert out[0].kind == "project", "the best match still leads"
+
+
+def test_a_freelance_entry_does_not_satisfy_the_guard() -> None:
+    """The bug this rule was written to fix.
+
+    Freelance loads as ``kind="work"``, so the old ``kind != "project"`` test read
+    a gig as employment and left the salaried job below the fold. Only
+    ``employment_type == "employment"`` counts now.
+    """
+    sf = _ordering_entry("f1", kind="work", score=0.90, employment_type="freelance")
+    sp = _ordering_entry("p1", kind="project", score=0.80)
+    sw = _ordering_entry("e1", kind="work", score=0.20)
+    out = order_entries([sf, sp, sw])
+    assert [e.id for e in out] == ["f1", "e1", "p1"]
+
+
+def test_the_salaried_job_keeps_slot_one_when_it_matches_best() -> None:
+    sw = _ordering_entry("e1", kind="work", score=0.90)
+    sf = _ordering_entry("f1", kind="work", score=0.50, employment_type="freelance")
+    sp = _ordering_entry("p1", kind="project", score=0.30)
+    assert [e.id for e in order_entries([sp, sf, sw])] == ["e1", "f1", "p1"]
+
+
+def test_the_salaried_job_drops_to_slot_two_when_something_matches_better() -> None:
+    sp = _ordering_entry("p1", kind="project", score=0.95)
+    sw = _ordering_entry("e1", kind="work", score=0.60)
+    sf = _ordering_entry("f1", kind="work", score=0.70, employment_type="freelance")
+    # Match order alone would read p1, f1, e1; the guard lifts the job to slot 2.
+    assert [e.id for e in order_entries([sp, sf, sw])] == ["p1", "e1", "f1"]
+
+
+def test_no_salaried_entry_leaves_pure_match_order() -> None:
+    sf = _ordering_entry("f1", kind="work", score=0.40, employment_type="freelance")
+    sp1 = _ordering_entry("p1", kind="project", score=0.90)
+    sp2 = _ordering_entry("p2", kind="project", score=0.80)
+    assert [e.id for e in order_entries([sf, sp1, sp2])] == ["p1", "p2", "f1"]
 
 
 def test_recency_key_present_sorts_newest() -> None:
