@@ -280,8 +280,10 @@ selection:
     off_role_scaling: true
     off_role_floor: 0.05  # relevance never scales fully to zero
     # v3.2 merged Work History and Projects into one section ordered purely by
-    # match. This is the single guard: a job or freelance engagement must hold one
-    # of the first N slots, so the page never opens with two unpaid projects.
+    # match. This is the single guard: the salaried employment entry
+    # (employment_type: employment) must appear within the first N positions, so
+    # the page never opens without the operator's actual job in view. Freelance
+    # does not satisfy it -- a gig competes on merit like a project.
     # 0 disables the guard and lets score alone decide every position.
     job_within_top: 2
 

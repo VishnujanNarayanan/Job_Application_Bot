@@ -51,12 +51,26 @@ and this project loosely tracks iterations rather than semver.
 - Layer 4/6: ONE section, "Work & Projects", replacing Work History + Projects.
   Entries order by match, best first; recency no longer orders anything. A job
   or freelance engagement must hold a top-2 slot (`selection.entry.job_within_top`)
+- Layer 4: `selection.entry.job_within_top` now guards the SALARIED employment
+  entry only. Freelance loads as `kind="work"`, so a gig used to satisfy the
+  top-2 rule and leave the actual job below it; the test keys off
+  `employment_type` instead, and freelance now competes on match like a project.
+  Position 1 still goes to whatever matches best; the job takes position 2 when
+  it does not win it outright
 - Layer 4: the entry header's right slot splits into text + link — salaried work
   shows dates and no link, freelance shows its label and a link but no dates, a
   project shows the link alone. Links prefer a live demo over a repo
 - Layer 6: the link label follows the URL — "View Code" for a source host,
   "View Demo" for a live deployment — instead of a fixed string that promised a
   demo and delivered a source tree
+- Layer 6: every entry line gets ONE right-aligned tab stop at the text column's right
+  edge, derived from the document's own section. The template ships the entry line with
+  Word's inherited `left@7110, center@9806, right@10800` and a single tab character, so
+  the right slot landed on the LEFT stop at 4.94in and flowed rightward into a 6.5in
+  column — 2250 twips of room. A project slot fit; a freelance slot ("Freelance  View
+  Demo →") did not, and wrapped onto its own line and then broke again at the arrow. The
+  template's own Education lines already use a single right stop at 9360, so entry lines
+  now match what the template proves works
 - Layer 6: the label's gaps are U+00A0, so it can never break across lines. At
   the right-aligned tab stop Word split the space before the arrow and dropped
   the arrow onto its own line

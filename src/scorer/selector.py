@@ -161,6 +161,11 @@ class SelectedEntry:
     title_alias: str = ""
     link: str = ""
     end_date: str = ""
+    #: Carried through from :class:`EntryCand` — "employment" | "freelance", and
+    #: left at "employment" for projects, which have no such attribute. Ordering
+    #: needs it: ``kind`` cannot tell a salaried job from a freelance gig, since
+    #: both load as ``kind="work"``.
+    employment_type: str = "employment"
 
 
 @dataclass(frozen=True)
@@ -737,6 +742,7 @@ def select_entry_bullets(
         cap=cap,
         link=entry.link,
         end_date=entry.end_date,
+        employment_type=entry.employment_type,
     )
 
 
