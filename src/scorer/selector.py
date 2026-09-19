@@ -226,17 +226,60 @@ def _alias_score(block: RoleBlockCand, jd: JDContext) -> float:
     return max((cosine(e, jd.vec_role) for e in block.alias_embeddings), default=0.0)
 
 
-def lead_block(entry: EntryCand, jd: JDContext) -> RoleBlockCand:
-    """The block that supplies the header, dates and title alias.
+def _render_set(block: RoleBlockCand) -> list[BulletCand]:
+    """The block's AUDITED bullets — its recovery pool is not part of what it is."""
+    return [b for b in block.bullets if not b.is_extra]
 
-    Best title-alias cosine to the JD role, preferring a ``primary`` block on a
-    tie: an ``adjacent`` block is, by the extractor's own admission, a stretch, so
-    it should not get to name the entry when a primary block matches as well.
+
+def block_coverage(
+    block: RoleBlockCand, keywords: tuple[Keyword, ...]
+) -> tuple[float, set[str]]:
+    """What this block's render set covers of the JD checklist, and which tokens.
+
+    Render set only. ``extra_bullets`` are a recovery pool the ENTRY may reach into
+    once a lead is chosen — they belong to no block's identity, and counting them
+    would let a block win the lead on material it would not render.
     """
-    return max(
-        entry.blocks,
-        key=lambda rb: (_alias_score(rb, jd), rb.role_fit == "primary"),
-    )
+    hits: set[str] = set()
+    for b in _render_set(block):
+        hits |= covered_by(b.norm_text, keywords)
+    return weight_of(hits, keywords), hits
+
+
+def lead_block(
+    entry: EntryCand, jd: JDContext, keywords: tuple[Keyword, ...] = ()
+) -> RoleBlockCand:
+    """The block that supplies the render set, the header, the dates and the title.
+
+    Chosen on WHAT ITS BULLETS COVER of this JD's checklist — not on its title
+    aliases (v3.3). An alias list is an arbitrary label the extractor attached to a
+    block; two blocks of one project can carry near-identical alias lists, and a
+    project needs no title at all, since the entry line shows the project's name.
+    Picking the lead by alias cosine meant a label decided which bullets a
+    recruiter reads, which is backwards: the block that can answer this advert is
+    the one whose sentences contain the answers.
+
+    Tie-breaks, in order, and both are still about content:
+
+      * ``primary`` over ``adjacent`` — an adjacent block is, by the extractor's
+        own admission, a stretch, so it should not name the entry when a primary
+        block covers as much.
+      * mean cosine of the render set to the JD — "is this the same kind of work",
+        the question coverage arithmetic cannot answer.
+
+    With no checklist (a JD that parsed to nothing) every block covers 0.0 and the
+    tie-breaks decide alone, which is the right degradation: content, then content.
+    """
+    def key(rb: RoleBlockCand) -> tuple[float, bool, float]:
+        weight, _ = block_coverage(rb, keywords)
+        bullets = _render_set(rb)
+        sim = (
+            sum(cosine(b.embedding, jd.vec_match) for b in bullets) / len(bullets)
+            if bullets else 0.0
+        )
+        return (round(weight, 9), rb.role_fit == "primary", sim)
+
+    return max(entry.blocks, key=key)
 
 
 def _entry_pool(entry: EntryCand, lead_id: str = "") -> list[BulletCand]:
@@ -317,14 +360,17 @@ def _header_right(entry: EntryCand, block: RoleBlockCand) -> tuple[str, str]:
 
 
 def _relevance(block_scores: dict[str, float], lead_id: str, block_id: str) -> float:
-    """How much an off-role bullet's coverage gain counts.
+    """How much an off-role EXTRA's coverage gain counts.
 
-    1.0 for the lead block. For any other block, its alias cosine relative to the
-    lead's — so a bullet from a barely-related block must cover something genuinely
-    unclaimed to beat an on-role bullet, but is never excluded outright. Excluding
-    it wholesale (a hard floor) would drop keywords the operator really has, which
-    is the more expensive mistake: not having a keyword costs the match, repeating
-    one costs a line.
+    1.0 for the lead block. For any other block, what its render set covers of this
+    JD relative to what the lead's covers — so an extra from a barely-related block
+    must cover something genuinely unclaimed to beat an on-role one, but is never
+    excluded outright. Excluding it wholesale (a hard floor) would drop keywords the
+    operator really has, which is the more expensive mistake: not having a keyword
+    costs the match, repeating one costs a line.
+
+    Measured on the same signal the lead is chosen with (v3.3). It used to be alias
+    cosine, which made a label decide how much a sentence counted for.
     """
     if block_id == lead_id:
         return 1.0
@@ -406,8 +452,10 @@ def select_entry_bullets(
             return tokens
         return {t for t in tokens if kw_seen.get(t, 0) < kw_cap}
 
-    block = lead_block(entry, jd)
-    block_scores = {rb.block_id: _alias_score(rb, jd) for rb in entry.blocks}
+    block = lead_block(entry, jd, keywords)
+    block_scores = {
+        rb.block_id: block_coverage(rb, keywords)[0] for rb in entry.blocks
+    }
     pool = _entry_pool(entry, block.block_id)
 
     covered: set[str] = set()
@@ -693,19 +741,30 @@ def score_entry(
     twenty seconds; ``similarity`` is the calibrated embedding score with a year of
     measured thresholds behind it. Scoring on coverage alone would rank a
     keyword-dense but off-topic entry above a well-matched one — which is precisely
-    the "hot dog" failure the method warns about.
+    the "hot dog" failure the method warns about — and it is also why the lead block
+    is now picked on coverage while the ENTRY is still ranked on both.
+
+    The alias term applies to work and freelance only (v3.3). A job has a real
+    title, and how close it sits to the advertised one is information. A project
+    does not: the entry line shows the project's NAME, its alias list is a label the
+    extractor attached for machine matching, and letting an arbitrary label carry
+    30% of a project's similarity is the same mistake the lead-block choice just
+    stopped making. For a project the bullets carry the whole similarity.
     """
     cfg = settings.selection.entry
     selected = select_entry_bullets(entry, jd, keywords, now=now)
     block = next(b for b in entry.blocks if b.block_id == selected.block_id)
 
-    alias = _alias_score(block, jd)
     bullet_avg = (
         sum(b.score for b in selected.bullets) / len(selected.bullets)
         if selected.bullets
         else 0.0
     )
-    selected.similarity = cfg.weight_alias * alias + cfg.weight_bullets * bullet_avg
+    if entry.kind == "project":
+        selected.similarity = bullet_avg
+    else:
+        alias = _alias_score(block, jd)
+        selected.similarity = cfg.weight_alias * alias + cfg.weight_bullets * bullet_avg
     selected.score = (
         cfg.weight_similarity * selected.similarity
         + cfg.weight_coverage * selected.coverage

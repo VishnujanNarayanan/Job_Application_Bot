@@ -258,21 +258,24 @@ def test_the_same_sentence_is_never_rendered_twice_in_one_entry() -> None:
 
 
 def test_the_lead_blocks_wording_wins_a_text_collision() -> None:
-    """When two blocks say the same thing, keep the one aimed at this JD."""
-    twin = "Built ingestion jobs for the trading desk."
+    """When the lead's render set and another block's recovery pool say the same
+    thing, only one of them reaches the page — the lead's wording, which is the
+    sentence aimed at this JD."""
+    twin = "Built ingestion jobs in Python for the trading desk."
     entry = _entry(blocks=[
-        _block("e1::data", "data", alias_vecs=[W], bullets=[
+        _block("e1::data", "data", bullets=[
             _bullet("d0", "S.", summary=True, block="e1::data"),
             _bullet("d1", twin, block="e1::data"),
         ]),
-        _block("e1::backend", "backend", alias_vecs=[V], bullets=[
+        _block("e1::backend", "backend", bullets=[
             _bullet("k0", "S.", summary=True, block="e1::backend", role="backend"),
-            _bullet("k1", twin, block="e1::backend", role="backend"),
+            _bullet("x1", twin, block="e1::backend", role="backend", extra=True),
         ]),
     ])
-    out = select_entry_bullets(entry, _jd(vec_role=V), _kw(), now=NOW)
-    assert out.block_id == "e1::backend"
-    assert "d1" not in [b.id for b in out.bullets]
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(entry, _jd(), _kw("Python"), now=NOW)
+    assert out.block_id == "e1::data"
+    assert [b.id for b in out.bullets] == ["d0", "d1"]
 
 
 def test_the_covered_set_RESETS_for_every_entry() -> None:
@@ -693,16 +696,69 @@ def test_an_on_role_extra_wins_a_tie_against_an_off_role_one() -> None:
 
 def test_the_lead_block_supplies_the_header_and_dates() -> None:
     entry = _entry(blocks=[
-        _block("e1::data", "data", alias_vecs=[W], header="Data Engineer at Acme, Pune",
-               bullets=[_bullet("d0", "S.", summary=True, block="e1::data")]),
-        _block("e1::backend", "backend", alias_vecs=[V],
+        _block("e1::data", "data", header="Data Engineer at Acme, Pune",
+               bullets=[_bullet("d0", "Modelled the warehouse.", summary=True,
+                                block="e1::data")]),
+        _block("e1::backend", "backend",
                header="Backend Developer at Acme, Pune",
-               bullets=[_bullet("k0", "S.", summary=True, block="e1::backend",
-                                role="backend")]),
+               bullets=[_bullet("k0", "Built the service in Python.", summary=True,
+                                block="e1::backend", role="backend")]),
     ])
-    out = select_entry_bullets(entry, _jd(vec_role=V), _kw(), now=NOW)
+    out = select_entry_bullets(entry, _jd(), _kw("Python"), now=NOW)
     assert out.header_left == "Backend Developer at Acme, Pune"
     assert out.block_id == "e1::backend"
+
+
+def test_the_lead_block_is_chosen_on_coverage_not_on_title_aliases() -> None:
+    """v3.3, and it reverses the old behaviour outright.
+
+    The `data` block carries the alias list that matches this JD's role text
+    exactly; the `backend` block's aliases are orthogonal to it. On alias cosine
+    `data` led every time. But `backend` is the block whose BULLETS answer the
+    advert — Python and Docker, both on the checklist, neither one said by `data`.
+    An alias is a label the extractor attached; the bullets are the evidence.
+    """
+    entry = _entry(blocks=[
+        _block("e1::data", "data", alias_vecs=[V], header="DATA",
+               bullets=[
+                   _bullet("d0", "Modelled the warehouse tables.", summary=True,
+                           block="e1::data"),
+                   _bullet("d1", "Wrote the nightly load.", block="e1::data"),
+               ]),
+        _block("e1::backend", "backend", fit="adjacent", alias_vecs=[W],
+               header="BACKEND",
+               bullets=[
+                   _bullet("k0", "Built the service in Python.", summary=True,
+                           block="e1::backend", role="backend"),
+                   _bullet("k1", "Shipped it in Docker.", block="e1::backend",
+                           role="backend"),
+               ]),
+    ])
+    out = select_entry_bullets(entry, _jd(vec_role=V), _kw("Python", "Docker"), now=NOW)
+    assert out.block_id == "e1::backend", "coverage decides, not the alias list"
+    assert out.header_left == "BACKEND"
+    assert out.coverage == pytest.approx(1.0)
+
+
+def test_extras_do_not_count_toward_which_block_leads() -> None:
+    """A block cannot win the lead on material it would not render. The recovery
+    pool belongs to the entry once a lead is picked, not to a block's identity."""
+    entry = _entry(blocks=[
+        _block("e1::data", "data", header="DATA",
+               bullets=[
+                   _bullet("d0", "Built the service in Python.", summary=True,
+                           block="e1::data"),
+               ]),
+        _block("e1::backend", "backend", header="BACKEND",
+               bullets=[
+                   _bullet("k0", "Modelled the warehouse tables.", summary=True,
+                           block="e1::backend", role="backend"),
+                   _bullet("x1", "Shipped Python services in Docker.",
+                           block="e1::backend", role="backend", extra=True),
+               ]),
+    ])
+    out = select_entry_bullets(entry, _jd(), _kw("Python", "Docker"), now=NOW)
+    assert out.block_id == "e1::data", "the backend block's two keywords are extras"
 
 
 def test_a_primary_block_wins_a_tie_against_an_adjacent_one() -> None:
