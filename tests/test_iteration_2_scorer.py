@@ -87,15 +87,11 @@ _FILLERS = [
 def _filler(i: int) -> str:
     """Distinct, keyword-free prose.
 
-    These must not read as rewords of each other: v3.2 bars a restatement inside
-    an entry, so seven variations on one sentence would be blocked by that rule
-    and the test would pass for the wrong reason.
+    These must not read as rewords of each other. They are keyword-free, so what
+    keeps them apart has to be the prose itself — seven variations on one sentence
+    would make a test about cap or floor pass for the wrong reason.
     """
     return _FILLERS[(i - 1) % len(_FILLERS)]
-
-
-def _penalty(lam):
-    return _cfg(repeat_penalty=lam)
 
 
 def _no_qualification_fill():
@@ -372,32 +368,34 @@ def test_new_keywords_are_recorded_per_bullet_for_audit() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The repeat penalty — one keyword should not render twice in an entry
+# Repetition — a rule, not a price (v3.3)
 # ---------------------------------------------------------------------------
 
 
-def test_an_unavoidable_repeat_is_admitted_alongside_the_clean_bullet() -> None:
-    """b1 is denser — Docker and CI/CD are new — but it repeats Git. b2 brings one
-    new keyword and repeats nothing. Both belong on the page: b1's keywords exist
-    nowhere else, which is what makes its repeat unavoidable.
+def test_a_denser_bullet_is_still_barred_when_it_restates_a_covered_keyword() -> None:
+    """b1 is the densest bullet in the entry — Docker and CI/CD are both new — and
+    it is still not selected, because it also says Git, which the pinned summary
+    already said.
 
-    Order is no longer pick order. The beam chooses a SET, then the set is sorted
-    for reading — densest first — so the summary is followed by the strongest
-    sentence rather than by whichever bullet the search happened to reach first.
+    This is the v3.3 reversal. Until now a repeat was priced: b1's two new keywords
+    outweighed its one restatement, so it rendered and the entry said Git twice.
+    The render set is now the lead block's alone and extras carry one or two
+    keywords each, so barring b1 outright costs Docker and CI/CD only when nothing
+    else in the entry can supply them — and then the floor, not the price, decides.
     """
     bullets = [
         _bullet("b0", "Summary using Git daily.", summary=True),
         _bullet("b1", "Shipped with Docker and Git under CI/CD."),
         _bullet("b2", "Wrote Terraform for the cluster."),
     ]
-    out = select_entry_bullets(
-        _entry(blocks=[_block(bullets=bullets)]), _jd(),
-        _kw("Git", "Docker", "CI/CD", "Terraform"), now=NOW,
-    )
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(
+            _entry(blocks=[_block(bullets=bullets)]), _jd(),
+            _kw("Git", "Docker", "CI/CD", "Terraform"), now=NOW,
+        )
     ids = [b.id for b in out.bullets]
     assert ids[0] == "b0", "the summary stays pinned"
-    assert set(ids) == {"b0", "b1", "b2"}
-    assert ids[1] == "b1", "densest bullet reads first after the summary"
+    assert ids == ["b0", "b2"], "the repeating bullet does not render at any density"
 
 
 def test_a_repeat_is_skipped_when_a_clean_bullet_covers_the_same_ground() -> None:
@@ -416,37 +414,26 @@ def test_a_repeat_is_skipped_when_a_clean_bullet_covers_the_same_ground() -> Non
     assert "b1" not in [b.id for b in out.bullets]
 
 
-def test_an_unavoidable_repeat_is_taken_only_if_it_pays_for_itself() -> None:
-    """Two rules together, and both are needed.
+def test_no_trade_buys_a_repeat_however_favourable() -> None:
+    """The old rule let a repeat through on an even trade and blocked it on a bad
+    one. There is no trade any more: one new keyword bought with one repeat is
+    refused exactly as three repeats were.
 
-    A repeat is reachable only when nothing clean supplies the keyword. Even then
-    the bullet must trade up: its new coverage must be worth at least as much as
-    what it restates. One new keyword bought with three repeats is a bad line, and
-    the greedy used to keep buying them until it hit the cap.
+    The floor is the only route left onto the page for a restating bullet, so these
+    run at min_per_entry=1 — at 3 the floor would take them whatever they cost.
     """
-    # min_per_entry=1 throughout: the floor outranks the early stop by design, so
-    # at 3 these bullets would be taken whatever their gain.
     kw = _kw("Python", "SQL", "Git", "Rust")
 
-    # An EVEN trade: one new keyword for one repeat. Unavoidable and affordable.
+    # An EVEN trade: one new keyword for one repeat. Used to render; now does not.
     even = _entry(blocks=[_block(bullets=[
         _bullet("b0", "Summary with Python only.", summary=True),
         _bullet("b1", "Used Python and Rust in the core loop."),
     ])])
     with _cfg(min_per_entry=1):
         out = select_entry_bullets(even, _jd(), kw, now=NOW)
-    assert [b.id for b in out.bullets] == ["b0", "b1"], "1-for-1 is worth the line"
+    assert [b.id for b in out.bullets] == ["b0"], "1-for-1 is still a repeat"
 
-    # A BAD trade: one new keyword for three repeats. Unavoidable, unaffordable.
-    lopsided = _entry(blocks=[_block(bullets=[
-        _bullet("b0", "Summary with Python and SQL and Git.", summary=True),
-        _bullet("b1", "Used Python and SQL and Git and Rust here."),
-    ])])
-    with _cfg(min_per_entry=1):
-        out = select_entry_bullets(lopsided, _jd(), kw, now=NOW)
-    assert [b.id for b in out.bullets] == ["b0"], "Rust is not worth three repeats"
-
-    # Give Rust a clean home and the restating bullet loses its only justification.
+    # A clean home for Rust renders instead, and the restating twin stays off.
     clean = _entry(blocks=[_block(bullets=[
         _bullet("b0", "Summary with Python and SQL and Git.", summary=True),
         _bullet("b1", "Used Python and SQL and Git and Rust here."),
@@ -457,26 +444,47 @@ def test_an_unavoidable_repeat_is_taken_only_if_it_pays_for_itself() -> None:
     assert [b.id for b in out.bullets] == ["b0", "b2"]
 
 
-def test_the_penalty_is_not_scaled_away_for_off_role_bullets() -> None:
-    """Relevance scales the reward, never the penalty.
+def test_the_floor_prefers_a_bullet_that_covers_nothing_to_one_that_repeats() -> None:
+    """The one place the ban bends, and how far.
 
-    An off-role bullet repeating a covered keyword must not escape the penalty just
-    because its block is barely related — off-role bullets are where cross-block
-    duplicates come from in the first place.
+    The floor outranks the early stop: an entry showing one bullet is not an entry.
+    When it fires, nothing left adds a keyword, so every candidate either repeats
+    something or covers nothing at all. A bullet covering nothing repeats nothing,
+    so it is taken first.
+    """
+    bullets = [
+        _bullet("b0", "Summary with Python.", summary=True),
+        _bullet("b1", "Used Python again on the second service."),
+        _bullet("b2", "Sat with the operations desk each Friday to hear what broke."),
+    ]
+    with _cfg(min_per_entry=2):
+        out = select_entry_bullets(
+            _entry(blocks=[_block(bullets=bullets)]), _jd(), _kw("Python"), now=NOW,
+        )
+    assert [b.id for b in out.bullets] == ["b0", "b2"]
+
+
+def test_an_off_role_extra_cannot_buy_a_slot_with_a_repeat() -> None:
+    """The recovery pool reaches across blocks; the repetition rule reaches with it.
+
+    x2 is an extra from a barely-related block. It covers Rust, which the entry
+    wants, but also restates Python from the pinned summary — and an off-role
+    bullet is exactly where a cross-block duplicate comes from. The on-role bullet
+    that covers Rust cleanly takes the slot instead.
     """
     lead = _block(bullets=[
         _bullet("b0", "Summary with Python.", summary=True),
         _bullet("b1", "Used Rust in the core loop."),
     ])
     off = _block("e1::ml", "ml", bullets=[
-        _bullet("b2", "Used Python and Rust in the model.", block="e1::ml", role="ml"),
+        _bullet("x2", "Used Python and Rust in the model.", block="e1::ml", role="ml",
+                extra=True),
     ], aliases=("ML Engineer",), alias_vecs=[W])
-    out = select_entry_bullets(
-        _entry(blocks=[lead, off]), _jd(), _kw("Python", "Rust"), now=NOW,
-    )
-    # b1 covers Rust cleanly on-role; b2 covers Rust too but repeats Python from an
-    # off-role block. b1 must come first.
-    assert [b.id for b in out.bullets][:2] == ["b0", "b1"]
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(
+            _entry(blocks=[lead, off]), _jd(), _kw("Python", "Rust"), now=NOW,
+        )
+    assert [b.id for b in out.bullets] == ["b0", "b1"]
 
 
 # ---------------------------------------------------------------------------
@@ -615,43 +623,72 @@ def test_an_extra_still_wins_when_it_covers_more() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cross-block pooling and the off-role penalty
+# What each block contributes (v3.3): render set from the lead, extras from all
 # ---------------------------------------------------------------------------
 
 
-def test_bullets_are_pooled_across_all_blocks_of_an_entry() -> None:
-    """A keyword only the quant block covers must still be reachable."""
-    entry = _entry(blocks=[
-        _block("e1::data", "data", bullets=[
-            _bullet("d0", "Summary.", summary=True, block="e1::data"),
-            _bullet("d1", "Built in Python.", block="e1::data"),
-        ]),
-        _block("e1::quant", "quant", fit="adjacent", aliases=["Quant Researcher"],
-               bullets=[_bullet("q1", "Ran jobs in Docker.", block="e1::quant",
-                                role="quant")]),
-    ])
-    out = select_entry_bullets(entry, _jd(), _kw("Python", "Docker"), now=NOW)
-    assert "q1" in [b.id for b in out.bullets]
-    assert out.coverage == pytest.approx(1.0)
+def test_the_render_set_comes_from_the_lead_block_alone() -> None:
+    """q1 covers a keyword nothing else covers, and still does not render.
 
-
-def test_an_on_role_bullet_wins_a_tie_against_an_off_role_one() -> None:
-    """The soft penalty: equal JD gain, so the lead block's bullet takes the slot."""
+    It is an AUDITED bullet of a non-lead block. The extractor writes each block as
+    a complete entry aimed at one title family, re-wording the same accomplishment
+    in every block it serves, so pooling render sets pulled three versions of one
+    claim into one entry. The lead block's render set is the entry.
+    """
     entry = _entry(blocks=[
         _block("e1::data", "data", alias_vecs=[V], bullets=[
             _bullet("d0", "Summary.", summary=True, block="e1::data"),
-            _bullet("d1", "Shipped pipelines with Docker.", block="e1::data"),
+            _bullet("d1", "Built in Python.", block="e1::data"),
+        ]),
+        _block("e1::quant", "quant", fit="adjacent", alias_vecs=[W],
+               aliases=["Quant Researcher"],
+               bullets=[_bullet("q1", "Ran jobs in Docker.", block="e1::quant",
+                                role="quant")]),
+    ])
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(entry, _jd(), _kw("Python", "Docker"), now=NOW)
+    assert [b.id for b in out.bullets] == ["d0", "d1"]
+
+
+def test_extras_are_still_pooled_across_every_block() -> None:
+    """The counterpart: a keyword only another block's RECOVERY pool covers stays
+    reachable. That is what the recovery pool is for — Docker under a `data` block
+    whose checklist never names it is otherwise unrecoverable at selection time."""
+    entry = _entry(blocks=[
+        _block("e1::data", "data", alias_vecs=[V], bullets=[
+            _bullet("d0", "Summary.", summary=True, block="e1::data"),
+            _bullet("d1", "Built in Python.", block="e1::data"),
+        ]),
+        _block("e1::quant", "quant", fit="adjacent", alias_vecs=[W],
+               aliases=["Quant Researcher"],
+               bullets=[_bullet("x1", "Ran jobs in Docker.", block="e1::quant",
+                                role="quant", extra=True)]),
+    ])
+    out = select_entry_bullets(entry, _jd(), _kw("Python", "Docker"), now=NOW)
+    assert "x1" in [b.id for b in out.bullets]
+    assert out.coverage == pytest.approx(1.0)
+
+
+def test_an_on_role_extra_wins_a_tie_against_an_off_role_one() -> None:
+    """Equal JD gain, so relevance decides: the lead block's extra takes the slot
+    and the off-role twin is left with nothing new to add."""
+    entry = _entry(blocks=[
+        _block("e1::data", "data", alias_vecs=[V], bullets=[
+            _bullet("d0", "Summary.", summary=True, block="e1::data"),
+            _bullet("x1", "Shipped pipelines with Docker.", block="e1::data",
+                    extra=True),
         ]),
         # W is orthogonal to the JD role vector, so this block scores ~0.
         # Different wording, same keyword — identical text would be deduped.
         _block("e1::quant", "quant", fit="adjacent", alias_vecs=[W], bullets=[
             _bullet("q1", "Ran backtests inside Docker.", block="e1::quant",
-                    role="quant"),
+                    role="quant", extra=True),
         ]),
     ])
-    out = select_entry_bullets(entry, _jd(), _kw("Docker"), now=NOW)
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(entry, _jd(), _kw("Docker"), now=NOW)
     ids = [b.id for b in out.bullets]
-    assert ids.index("d1") < ids.index("q1")
+    assert ids == ["d0", "x1"]
 
 
 def test_the_lead_block_supplies_the_header_and_dates() -> None:
@@ -1026,13 +1063,11 @@ def test_build_jd_context_makes_three_embeds_not_three_plus_skills() -> None:
     assert ctx.vec_role == [1.0, 1.0]
 
 
-def test_a_clean_extra_is_admitted_even_when_it_is_not_the_unique_source() -> None:
-    """The unique-source test was manufacturing the repetition it sat beside.
-
-    "Regression" is reachable two ways: from an audited bullet that also restates
-    SQL, and from an extra that repeats nothing. Requiring the extra to be the ONLY
-    source blocked the clean route and forced the repeat. A zero-repeat extra is
-    admitted regardless; an extra that would itself repeat still has to be unique.
+def test_a_clean_extra_is_preferred_to_a_repeating_audited_bullet() -> None:
+    """"Regression" is reachable two ways: from an audited bullet that also restates
+    SQL, and from an extra that repeats nothing. v3.2 required the extra to be the
+    ONLY source, which blocked the clean route and forced the repeat. With
+    repetition barred outright, the clean extra is simply the only legal route.
     """
     bullets = [
         _bullet("b0", "Summary with Python and SQL.", summary=True),
@@ -1049,8 +1084,9 @@ def test_a_clean_extra_is_admitted_even_when_it_is_not_the_unique_source() -> No
     assert "b1" not in ids, "the repeating audited bullet is no longer needed"
 
 
-def test_a_repeating_extra_still_needs_to_be_the_unique_source() -> None:
-    """The relaxation is only for extras that repeat nothing."""
+def test_a_repeating_extra_is_barred_like_any_other_bullet() -> None:
+    """The recovery pool buys no exemption: x1 covers Regression and restates both
+    Python and SQL, so the clean audited bullet takes the slot instead."""
     bullets = [
         _bullet("b0", "Summary with Python and SQL.", summary=True),
         _bullet("b1", "Built Regression checks in the pipeline."),
