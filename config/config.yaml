@@ -209,58 +209,30 @@ selection:
     # project ran to 8 while jobs stopped at 4-6 — the cap was setting project
     # length, and the last slots filled with restatement.
     project_cap: 5
-    # Cost of saying a keyword twice in one entry:
-    #     penalty = repeat_penalty * repeated_weight ** 2
-    # Squared, so one repeat stays cheap (a bullet with real new coverage still
-    # wins) while a restatement carrying three covered keywords costs 9x and is
-    # effectively barred. 0.0 disables it and restores pure set-cover.
-    # A repeating bullet must pay for itself: its NEW keyword weight has to be at
-    # least this multiple of what it restates, or it does not earn the line. 1.0
-    # means an even trade is acceptable; 1.5 demands the new outweigh the old.
-    # Repetition is otherwise allowed only when nothing clean can supply the
-    # keyword at all (selector.py picks clean candidates in a separate first pass).
     # Beam width for phase 1. Measured: 20 already reaches the same optimum as 200
     # on a 50-bullet pool, and the whole beam runs faster than the greedy it
     # replaced because hit sets are computed once instead of per iteration.
     beam_width: 20
-    repeat_requires_ratio: 1.0
-    repeat_penalty: 0.25
     # Phase 2: after JD gain is exhausted, fill the remaining slots from the title's
     # own qualification checklist. Stops at zero canonical gain, never pads to cap.
     qualification_fill: true
 
-    # --- Restatement control -------------------------------------------------
-    # Keyword arithmetic cannot see that two bullets say the same thing in
-    # different words. These catch it lexically, on text already normalised for
-    # keyword matching.
+    # --- Repetition ------------------------------------------------------------
+    # Inside ONE entry there is no tunable: a bullet restating an already-covered
+    # keyword is never selected. Full stop. v3.3 deleted the knobs that used
+    # to referee repetition (repeat_penalty, repeat_requires_ratio,
+    # duplicate_prefix_words/_jaccard/_min_words, across_entry_jaccard,
+    # max_repeats_across_entries, extras_must_be_unique_source) along with the
+    # cause they existed for — the render set now comes from the lead block alone,
+    # so the extractor's re-wordings of one accomplishment never meet in an entry,
+    # and re-extracted `extra` bullets carry one or two keywords each.
     #
-    # Within ONE entry a restatement is barred outright (the method: no keyword
-    # repeats inside a job/project entry). Two tests, either is enough:
-    duplicate_prefix_words: 4    # same opening N words = the eye reads a repeat
-    duplicate_jaccard: 0.55      # word-overlap ratio that counts as a reword
-    duplicate_min_words: 12      # below this, overlap ratio is noise, not signal
-    #
-    # ACROSS entries the method explicitly permits repetition, so this is a
-    # ceiling rather than a ban: a bullet family may render at most this many
-    # times on one resume. Measured: the AI-tooling bullet appeared in all six
-    # entries of one run, each time earning its slot on the single spurious
-    # keyword "modules" (the JD meant ES modules; the bullet meant order modules).
-    max_repeats_across_entries: 2
-    # Looser than duplicate_jaccard on purpose: within an entry a match BANS the
-    # bullet, so it must be precise; across entries it only caps at N, so it can
-    # group a family more generously. The AI-tooling family scored 0.66 / 0.44 /
-    # 0.36 between its three renderings — the strict bar caught one pair of three.
-    across_entry_jaccard: 0.33
-    # Ceiling on how many entries may claim the SAME keyword. Text similarity
-    # cannot catch this: "Agile" rendered in four of six entries in four
-    # genuinely different sentences. The repetition lives in the keyword, so the
-    # ceiling does too. 0 disables it and restores unlimited cross-entry repeats.
+    # ACROSS entries the method explicitly permits repetition, so the one ceiling
+    # left is a ceiling rather than a ban: at most this many entries may claim the
+    # same keyword. Measured before it existed: "Agile" rendered in four of six
+    # entries, in four genuinely different sentences, so no text-similarity rule
+    # could ever have caught it. 0 disables it and restores unlimited repeats.
     max_keyword_renders: 2
-    # The recovery pool is for recovery. An `extra` bullet may render only when it
-    # is the ONLY bullet in its entry able to claim something the JD (or the
-    # title's checklist) asked for. Enforces the contract RoleBlock.extra_bullets
-    # already states, which until v3.2 held only by accident.
-    extras_must_be_unique_source: true
 
   # --- Entry scoring ---------------------------------------------------------
   entry:
