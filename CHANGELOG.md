@@ -9,6 +9,18 @@ and this project loosely tracks iterations rather than semver.
 
 ### Added
 
+- `tools/build_master_profile.py` — rebuilds `master_profile.yaml` from the
+  per-repo `bullet_extract_latest.yaml` files (operator-run, never the pipeline;
+  hard rule #2 stands). Carries `personal`/`education`/`certifications` and a work
+  entry's dates forward, prefers a `demo` link over the repo, unions the skill and
+  gap pools, validates the rendered file against `MasterProfile`, and checks every
+  rendered bullet byte-for-byte against its extract before writing. `--check`
+  validates without writing; `--keep <id>` pins an entry whose extract is stale
+- Profile: rebuilt from all 18 current extracts — 19 entries (was 18), 85 role
+  blocks (was 62), 379 render bullets (was 310) and 837 recovery bullets (was 430).
+  New entry: the portfolio site (`portfolio-site`). `Quotes_Retrieval` is now
+  `quotes_retrieval`, matching its extract
+
 - `PIVOT_V3.md`: the plan for moving to the Headless Headhunter resume template
   — no Skills section, no Summary section, keyword-coverage scoring, and a
   master profile shaped like the `bullet-extract` skill's `role_blocks` output
