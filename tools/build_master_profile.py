@@ -69,8 +69,11 @@ PROJECT_REPOS = [
     "portfolioWebsite",
 ]
 
-#: Entries whose extract predates the profile — see the module docstring.
-DEFAULT_KEEP = ["nse_trade_quote", "trader_sentiment_analysis"]
+#: Entries pinned by default — none. ``nse_trade_quote`` and
+#: ``trader_sentiment_analysis`` were pinned while their extract predated the
+#: profile; a diff of all 70 bullets showed the two agreed everywhere except the
+#: bullets being rewritten, so there was nothing left for the pin to protect.
+DEFAULT_KEEP: list[str] = []
 
 #: ``Trader_sentiment_analysis_backup`` is a stale copy of an entry that
 #: ``trade_quote internship`` also carries, and a duplicate id fails validation.
