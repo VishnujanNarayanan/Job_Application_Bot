@@ -37,7 +37,6 @@ from src.config import settings
 from src.reasons import LOW_SCORE
 from src.scorer.keywords import Keyword, coverage_of
 from src.scorer.ordering import order_entries
-from src.scorer.keywords import norm as _norm_text
 from src.scorer.selector import (
     JDContext,
     Profile,
@@ -200,15 +199,14 @@ def evaluate(
     work = [*jobs, *gigs]
     entries = order_entries([*work, *projects])
 
-    # The cross-entry repeat ceiling applies to what actually RENDERS, so it runs
+    # The cross-entry keyword ceiling applies to what actually RENDERS, so it runs
     # here rather than inside scoring: entries were ranked on their own merits,
     # and only now is it known which ones survived and in what order. Re-selecting
-    # in render order means the best-placed entry keeps a contested bullet and
+    # in render order means the best-placed entry keeps a contested keyword and
     # later entries give it up.
-    across = int(getattr(settings.selection.bullets, "max_repeats_across_entries", 0) or 0)
-    if across:
+    kw_cap = int(getattr(settings.selection.bullets, "max_keyword_renders", 0) or 0)
+    if kw_cap:
         by_id = {e.id: e for e in (*profile.work, *profile.projects)}
-        ledger: list[str] = []
         kw_ledger: dict[str, int] = {}
         rebuilt: list[SelectedEntry] = []
         for se in entries:
@@ -217,12 +215,10 @@ def evaluate(
                 rebuilt.append(se)
                 continue
             fresh = select_entry_bullets(
-                cand, jd, keywords, now=now,
-                rendered_norm=ledger, rendered_keywords=kw_ledger,
+                cand, jd, keywords, now=now, rendered_keywords=kw_ledger,
             )
             # Keep the ranking decided above; only the bullets are re-picked.
             fresh.score, fresh.similarity = se.score, se.similarity
-            ledger.extend(_norm_text(b.text) for b in fresh.bullets)
             rebuilt.append(fresh)
         entries = rebuilt
         work = [e for e in entries if e.kind != "project"]

@@ -349,8 +349,13 @@ def _run(dry_run: bool, log) -> int:
             selection.job_id = job.job_id
 
             # --- Layer 7: persist applied row ---
-            title_alias = (
-                selection.entries[0].title_alias if selection.entries else job.role
+            # The notification's display title comes from the first WORK entry, not
+            # the first entry on the page. v3.2 merged work and projects into one
+            # section ordered by match, so position 1 can be a project — and a
+            # project has no title, only a name and an arbitrary alias list.
+            title_alias = next(
+                (e.title_alias for e in selection.entries if e.kind != "project"),
+                job.role,
             )
             expected_salary = (
                 parsed.salary_max_lpa

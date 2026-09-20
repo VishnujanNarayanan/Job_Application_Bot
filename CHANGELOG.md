@@ -7,6 +7,47 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Changed
+
+- Layer 4: the lead block is chosen on what its RENDER SET covers of the JD
+  checklist, not on title-alias cosine. An alias list is a label the extractor
+  attached to a block — two blocks of one entry can carry near-identical lists, and
+  a project renders its name, never a title — so a label was deciding which bullets
+  a recruiter reads. `lead = 0.75 * keyword_score + 0.25 * cosine`
+  (`selection.entry.lead_weight_keywords` / `lead_weight_similarity`), where
+  `keyword_score` is the mean of the checklist-coverage ratio and the
+  required-only ratio, and cosine keeps a minority share so keywords cannot rank a
+  block that is the wrong KIND of work. `extra_bullets` enter neither term: a
+  block cannot win the lead on material it would not render
+- Layer 4: an entry's render set comes from the LEAD BLOCK ALONE; `extra_bullets`
+  still pool across every block of the entry. Cross-block pooling of audited
+  bullets was pulling the extractor's three re-wordings of one accomplishment into
+  a single entry, which is what every repetition rule below existed to referee
+- Layer 4: repetition inside an entry is now a flat rule — a bullet restating an
+  already-covered keyword (the pinned summary included) is never selected. Measured
+  over 60 real JDs on the same profile: entries containing a within-entry keyword
+  repeat fell from 45 (15.5%) to 12 (4.9%), and near-duplicate bullet pairs on a
+  page from 7 to 3. The remaining cases are all single-keyword floor picks
+- Layer 4: the entry-score alias term applies to work and freelance only. A
+  project's alias list is machine input that never renders, so its similarity is
+  now its bullets alone. **The project/freelance thresholds are percentiles of the
+  old distribution — re-run `tools/calibrate.py`**
+- Layer 4: the floor fill prefers a bullet that covers nothing over one that
+  repeats, so the one place the ban bends, bends as little as it can
+- Layer 8: the notification's display title comes from the first WORK entry rather
+  than the first entry on the page, which since v3.2's merged section can be a
+  project
+
+### Removed
+
+- Layer 4: `repeat_penalty`, `repeat_requires_ratio`, `duplicate_prefix_words`,
+  `duplicate_jaccard`, `duplicate_min_words`, `across_entry_jaccard`,
+  `max_repeats_across_entries` and `extras_must_be_unique_source`, along with the
+  `_reads_as_repeat` lexical machinery and the render-set coverability scan. All of
+  it refereed duplicates that cross-block pooling created; the measured repeat rate
+  is a third of what it was with the knobs in place. `max_keyword_renders` (2)
+  survives as the one cross-entry ceiling
+
 ### Added
 
 - `tools/build_master_profile.py` — rebuilds `master_profile.yaml` from the
