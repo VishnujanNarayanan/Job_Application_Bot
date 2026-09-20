@@ -213,10 +213,6 @@ def bullet_cap(entry: EntryCand, now: datetime) -> int:
     return int(cfg.max_cap)
 
 
-def _alias_score(block: RoleBlockCand, jd: JDContext) -> float:
-    return max((cosine(e, jd.vec_role) for e in block.alias_embeddings), default=0.0)
-
-
 def _render_set(block: RoleBlockCand) -> list[BulletCand]:
     """The block's AUDITED bullets — its recovery pool is not part of what it is."""
     return [b for b in block.bullets if not b.is_extra]
@@ -758,33 +754,30 @@ def score_entry(
     """Select first, then score the entry on what it actually selected.
 
     Two signals, deliberately not one. ``coverage`` is what a recruiter grades in
-    twenty seconds; ``similarity`` is the calibrated embedding score with a year of
-    measured thresholds behind it. Scoring on coverage alone would rank a
-    keyword-dense but off-topic entry above a well-matched one — which is precisely
-    the "hot dog" failure the method warns about — and it is also why the lead block
-    is now picked on coverage while the ENTRY is still ranked on both.
+    twenty seconds; ``similarity`` is the embedding score — "is this the same kind
+    of work". Scoring on coverage alone would rank a keyword-dense but off-topic
+    entry above a well-matched one, which is precisely the "hot dog" failure the
+    method warns about.
 
-    The alias term applies to work and freelance only (v3.3). A job has a real
-    title, and how close it sits to the advertised one is information. A project
-    does not: the entry line shows the project's NAME, its alias list is a label the
-    extractor attached for machine matching, and letting an arbitrary label carry
-    30% of a project's similarity is the same mistake the lead-block choice just
-    stopped making. For a project the bullets carry the whole similarity.
+    NO TITLE-ALIAS TERM (v3.4). Similarity used to be
+    ``0.30 * alias_cosine + 0.70 * bullet_mean``, which handed every work entry a
+    bonus no project could earn: alias cosine runs ~0.34 against a bullet mean of
+    ~0.20, so work carried a structural +0.02 on score regardless of what it said.
+    Measured over 120 real JDs, the four work entries took three to four of the
+    five slots on nearly every resume while fifteen projects shared the rest — a
+    full-stack advert would show a law-firm website over a React/TypeScript app.
+    An alias is a label the extractor attached; it is not evidence, and it now
+    decides nothing anywhere in Layer 4. What an entry SAYS and what it COVERS is
+    the whole score, for work and projects alike.
     """
     cfg = settings.selection.entry
     selected = select_entry_bullets(entry, jd, keywords, now=now)
-    block = next(b for b in entry.blocks if b.block_id == selected.block_id)
 
-    bullet_avg = (
+    selected.similarity = (
         sum(b.score for b in selected.bullets) / len(selected.bullets)
         if selected.bullets
         else 0.0
     )
-    if entry.kind == "project":
-        selected.similarity = bullet_avg
-    else:
-        alias = _alias_score(block, jd)
-        selected.similarity = cfg.weight_alias * alias + cfg.weight_bullets * bullet_avg
     selected.score = (
         cfg.weight_similarity * selected.similarity
         + cfg.weight_coverage * selected.coverage
