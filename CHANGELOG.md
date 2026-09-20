@@ -13,9 +13,12 @@ and this project loosely tracks iterations rather than semver.
   checklist, not on title-alias cosine. An alias list is a label the extractor
   attached to a block — two blocks of one entry can carry near-identical lists, and
   a project renders its name, never a title — so a label was deciding which bullets
-  a recruiter reads. Tie-breaks stay content-based: `primary` over `adjacent`, then
-  mean render-set cosine. `extra_bullets` do not count toward the choice: a block
-  cannot win the lead on material it would not render
+  a recruiter reads. `lead = 0.75 * keyword_score + 0.25 * cosine`
+  (`selection.entry.lead_weight_keywords` / `lead_weight_similarity`), where
+  `keyword_score` is the mean of the checklist-coverage ratio and the
+  required-only ratio, and cosine keeps a minority share so keywords cannot rank a
+  block that is the wrong KIND of work. `extra_bullets` enter neither term: a
+  block cannot win the lead on material it would not render
 - Layer 4: an entry's render set comes from the LEAD BLOCK ALONE; `extra_bullets`
   still pool across every block of the entry. Cross-block pooling of audited
   bullets was pulling the extractor's three re-wordings of one accomplishment into
