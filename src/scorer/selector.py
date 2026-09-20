@@ -51,7 +51,7 @@ import structlog
 from src.config import settings
 from src.llm.schemas import JDParsed
 from src.scorer.embeddings import Vector, add, cosine, embed_batch
-from src.scorer.keywords import Keyword, covered_by, coverage_of, norm, weight_of
+from src.scorer.keywords import Keyword, covered_by, coverage_of, hit, norm, weight_of
 from src.scorer.qualifications import canonical_covered, canonical_overlap
 
 log = structlog.get_logger(__name__)
@@ -211,6 +211,35 @@ def bullet_cap(entry: EntryCand, now: datetime) -> int:
     if entry.kind == "project":
         return int(cfg.project_cap)
     return int(cfg.max_cap)
+
+
+def gated_terms() -> tuple[str, ...]:
+    """Terms whose bullets may render ONLY when the advert names them.
+
+    One family needs this today: the AI coding assistants (Claude Code, Codex,
+    Cursor, Copilot, MCP). They are true of nearly every repo, so they sit in most
+    recovery pools and phase 2 kept pulling them onto pages for adverts that never
+    mentioned AI tooling at all — where the line says nothing about the operator's
+    engineering and invites a question the advert never asked. Empty list disables
+    the rule entirely.
+    """
+    raw = getattr(settings.selection.bullets, "jd_gated_terms", None) or ()
+    return tuple(str(t) for t in raw)
+
+
+def is_gated(norm_text: str, terms: tuple[str, ...] = ()) -> bool:
+    """Does this bullet belong to a gated family?"""
+    terms = terms or gated_terms()
+    return any(hit(t, norm_text) for t in terms)
+
+
+def jd_wants_gated(keywords: tuple[Keyword, ...], terms: tuple[str, ...] = ()) -> bool:
+    """Did the ADVERT name one of the gated terms? Checked against the checklist,
+    not the body: the checklist is what the advert asks a candidate to have."""
+    terms = terms or gated_terms()
+    if not terms:
+        return False
+    return any(hit(t, norm(k.token)) for k in keywords for t in terms)
 
 
 def _render_set(block: RoleBlockCand) -> list[BulletCand]:
@@ -411,6 +440,7 @@ def select_entry_bullets(
     *,
     now: datetime,
     rendered_keywords: dict[str, int] | None = None,
+    rendered_gated: list[str] | None = None,
 ) -> SelectedEntry:
     """Pin the summary bullet, then fill the entry in two phases.
 
@@ -455,6 +485,36 @@ def select_entry_bullets(
     kw_cap = int(getattr(cfg, "max_keyword_renders", 0) or 0)
     kw_seen = {} if rendered_keywords is None else rendered_keywords
 
+    # A gated bullet renders only when the advert asked for its subject, and only
+    # once on the whole page. `gated_seen` is the page-level ledger; it is None
+    # during scoring (where each entry is considered on its own) and a shared list
+    # during the render pass, so the best-placed entry keeps the line.
+    g_terms = gated_terms()
+    gated_seen = rendered_gated
+    allow_gated = bool(g_terms) and jd_wants_gated(keywords, g_terms) and not (
+        gated_seen or []
+    )
+    #: Set once this entry has spent its single gated slot. Tracked per entry as
+    #: well as per page, because one entry's pool can hold two gated bullets (the
+    #: recovery pools of two blocks) and "at most once" means once either way.
+    gated_taken = False
+
+    def _gated(b: BulletCand) -> bool:
+        return bool(g_terms) and is_gated(b.norm_text, g_terms)
+
+    def _gate_blocks(b: BulletCand) -> bool:
+        """Is this bullet barred by the gate right now?"""
+        return _gated(b) and (not allow_gated or gated_taken)
+
+    def _record_gated(b: BulletCand) -> None:
+        """Spend the slot, for this entry and for the page."""
+        nonlocal gated_taken
+        if not _gated(b):
+            return
+        gated_taken = True
+        if gated_seen is not None:
+            gated_seen.append(b.id)
+
     def _spent(tokens: set[str]) -> set[str]:
         """Drop tokens already claimed their maximum number of times on this page.
 
@@ -473,6 +533,8 @@ def select_entry_bullets(
         rb.block_id: block_coverage(rb, keywords)[0] for rb in entry.blocks
     }
     pool = _entry_pool(entry, block.block_id)
+    if g_terms and not allow_gated:
+        pool = [b for b in pool if not is_gated(b.norm_text, g_terms)]
 
     covered: set[str] = set()
     covered_canon: set[str] = set()
@@ -625,6 +687,12 @@ def select_entry_bullets(
         reverse=True,
     )
     for b in ordered:
+        # The beam optimises coverage and does not know about the gate, so a set it
+        # returns can hold a gated bullet the page has already spent. Drop it here
+        # rather than constraining the search: the gate is about what may RENDER.
+        if _gate_blocks(b):
+            remaining.remove(b)
+            continue
         gained = hits_of[b.id] - covered
         chosen.append(
             SelectedBullet(
@@ -635,6 +703,7 @@ def select_entry_bullets(
         covered_canon |= canon_of[b.id]
         for tok in hits_of[b.id]:
             kw_seen[tok] = kw_seen.get(tok, 0) + 1
+        _record_gated(b)
         remaining.remove(b)
 
     # The floor still outranks the early stop: an entry showing one bullet is not a
@@ -647,7 +716,7 @@ def select_entry_bullets(
     # restatement only reaches the page when the entry would otherwise be invalid.
     while len(chosen) < floor and remaining:
         b = max(
-            remaining,
+            [x for x in remaining if not _gate_blocks(x)],
             key=lambda x: (not (hits_of[x.id] & covered), sim_of[x.id]),
             default=None,
         )
@@ -661,6 +730,7 @@ def select_entry_bullets(
         covered_canon |= canon_of[b.id]
         for tok in hits_of[b.id]:
             kw_seen[tok] = kw_seen.get(tok, 0) + 1
+        _record_gated(b)
         remaining.remove(b)
 
     # --- 3. phase 2: fill the rest from the title's own qualification list --
@@ -671,6 +741,12 @@ def select_entry_bullets(
     while cfg.qualification_fill and len(chosen) < cap and remaining:
         best = None
         for b in remaining:
+            # Phase 2 is the title's standing checklist asking, not this advert --
+            # and a gated bullet renders only when the ADVERT asks. This is the
+            # path that used to put "AI coding tools" on pages for adverts that
+            # never mentioned them.
+            if _gated(b):
+                continue
             hits = canonical_covered(b.norm_text, block.checklist)
             gained_c = hits - covered_canon
             repeated_c = hits & covered_canon

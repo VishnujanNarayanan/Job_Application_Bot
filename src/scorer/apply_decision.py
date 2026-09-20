@@ -41,6 +41,7 @@ from src.scorer.selector import (
     JDContext,
     Profile,
     SelectedEntry,
+    gated_terms,
     select_top,
     select_entry_bullets,
 )
@@ -191,9 +192,12 @@ def evaluate(
     # in render order means the best-placed entry keeps a contested keyword and
     # later entries give it up.
     kw_cap = int(getattr(settings.selection.bullets, "max_keyword_renders", 0) or 0)
-    if kw_cap:
+    if kw_cap or gated_terms():
         by_id = {e.id: e for e in (*profile.work, *profile.projects)}
         kw_ledger: dict[str, int] = {}
+        # Page-level ledger for the gated families (AI coding assistants): once one
+        # entry renders that line, no later entry may repeat it.
+        gated_ledger: list[str] = []
         rebuilt: list[SelectedEntry] = []
         for se in entries:
             cand = by_id.get(se.id)
@@ -202,6 +206,7 @@ def evaluate(
                 continue
             fresh = select_entry_bullets(
                 cand, jd, keywords, now=now, rendered_keywords=kw_ledger,
+                rendered_gated=gated_ledger,
             )
             # Keep the ranking decided above; only the bullets are re-picked.
             fresh.score, fresh.similarity = se.score, se.similarity
