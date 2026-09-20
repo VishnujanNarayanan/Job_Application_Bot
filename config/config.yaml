@@ -234,6 +234,28 @@ selection:
     # could ever have caught it. 0 disables it and restores unlimited repeats.
     max_keyword_renders: 2
 
+    # --- Bullets the ADVERT has to ask for -------------------------------------
+    # A bullet naming any of these renders only when the advert's own checklist
+    # names one too, and at most ONCE on a page.
+    #
+    # The AI coding assistants are true of nearly every repo, so they sit in most
+    # recovery pools -- and phase 2 (the title's standing checklist, not this
+    # advert) kept pulling them onto pages for jobs that never mentioned AI
+    # tooling. There the line says nothing about the operator's engineering and
+    # invites a question the advert never asked. Where an advert DOES ask for
+    # them, one mention is the whole signal; a second is repetition.
+    #
+    # Empty list disables the rule.
+    jd_gated_terms:
+      - "Claude Code"
+      - "OpenAI Codex"
+      - "Codex"
+      - "Cursor"
+      - "GitHub Copilot"
+      - "Copilot"
+      - "Model Context Protocol"
+      - "MCP"
+
   # --- Entry scoring ---------------------------------------------------------
   entry:
     # No title-alias term (v3.4). `similarity` is the mean cosine of the bullets

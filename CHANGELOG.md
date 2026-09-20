@@ -9,6 +9,25 @@ and this project loosely tracks iterations rather than semver.
 
 ### Changed
 
+- Profile: every bullet naming an AI coding assistant rewritten across all 19
+  extracts (23 bullets) to claim USE, never authorship. "Wrote most of this
+  codebase with…", "Drafted and reviewed the codebase with…" and "Built this
+  backend with…" all became "Used AI coding tools — <the tools that project
+  actually used> — scoping context tightly to keep token usage efficient." The
+  tools named are unchanged; only the verb was overstating what the operator would
+  have to defend in an interview
+- Layer 4: `selection.bullets.jd_gated_terms` — a bullet naming one of these
+  renders ONLY when the advert's own checklist names one too, and at most once per
+  page. The AI-tooling line is true of nearly every repo, so it sat in most
+  recovery pools and phase 2 (the TITLE's standing checklist, not the advert) kept
+  pulling it onto pages for jobs that never mentioned AI tooling. Enforced on all
+  four paths a bullet can reach the page — pool, beam result, floor fill and phase
+  2 — and tracked per entry as well as per page
+- `tools/build_master_profile.py`: `DEFAULT_KEEP` is now empty. The two pinned
+  entries were pinned while their extract predated the profile; a bullet-by-bullet
+  diff showed the two agreed everywhere, so the pin had nothing left to protect and
+  was silently holding back edits to those extracts
+
 - Layer 4: the page is the best `selection.top_n` (5) entries, ranked in ONE pool —
   work, freelance and projects compete for the same slots, which is what the merged
   section already renders. Removed `work`/`freelance`/`project` thresholds,

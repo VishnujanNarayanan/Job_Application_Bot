@@ -491,6 +491,79 @@ def test_an_off_role_extra_cannot_buy_a_slot_with_a_repeat() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Gated bullets — the advert has to ask (v3.4)
+# ---------------------------------------------------------------------------
+
+
+def _ai_entry(eid="e1"):
+    """An entry whose recovery pool holds the AI-tooling line."""
+    return _entry(eid, blocks=[_block(f"{eid}::backend", bullets=[
+        _bullet(f"{eid}_0", "Built the service in Python.", summary=True,
+                block=f"{eid}::backend"),
+        _bullet(f"{eid}_1", "Queried the warehouse in SQL.", block=f"{eid}::backend"),
+        _bullet(f"{eid}_x", "Used AI coding tools — Claude Code, Cursor and GitHub "
+                            "Copilot — scoping context tightly to keep token usage "
+                            "efficient.", block=f"{eid}::backend", extra=True),
+    ])])
+
+
+def test_a_gated_bullet_stays_off_when_the_advert_never_asks() -> None:
+    """The failure this rule exists for: the line is true of nearly every repo, so
+    it sat in most recovery pools and phase 2 kept putting it on pages for adverts
+    that never mentioned AI tooling at all."""
+    out = select_entry_bullets(_ai_entry(), _jd(), _kw("Python", "SQL"), now=NOW)
+    assert "e1_x" not in [b.id for b in out.bullets]
+
+
+def test_a_gated_bullet_renders_when_the_advert_does_ask() -> None:
+    out = select_entry_bullets(
+        _ai_entry(), _jd(), _kw("Python", "GitHub Copilot"), now=NOW,
+    )
+    assert "e1_x" in [b.id for b in out.bullets]
+
+
+def test_a_gated_bullet_is_not_reachable_through_phase_2(monkeypatch) -> None:
+    """Phase 2 is the TITLE's standing checklist asking, not this advert — and the
+    rule is that the advert must ask. This is the exact path that leaked."""
+    _fake_canon(monkeypatch, {"claude code": {"claude code"}, "cursor": {"cursor"}})
+    with _cfg(min_per_entry=1):
+        out = select_entry_bullets(
+            _ai_entry(), _jd(), _kw("Python"), now=NOW,
+        )
+    assert "e1_x" not in [b.id for b in out.bullets]
+
+
+def test_a_gated_bullet_cannot_be_smuggled_in_by_the_floor() -> None:
+    """The floor fills by cosine when nothing adds a keyword; it must respect the
+    gate too, or an advert that never mentions AI tooling still gets the line."""
+    entry = _entry(blocks=[_block(bullets=[
+        _bullet("b0", "Summary, nothing matching.", summary=True),
+        _bullet("x1", "Used AI coding tools — Claude Code and Cursor — scoping "
+                      "context tightly to keep token usage efficient.", extra=True),
+        _bullet("b1", "Sat with the operations desk each Friday."),
+        _bullet("b2", "Kept a decision log anyone could read."),
+    ])])
+    out = select_entry_bullets(entry, _jd(), _kw("Kubernetes"), now=NOW)
+    assert "x1" not in [b.id for b in out.bullets]
+    assert len(out.bullets) >= int(settings.selection.bullets.min_per_entry)
+
+
+def test_a_gated_bullet_renders_at_most_once_on_a_page() -> None:
+    """Two entries both carry the line and the advert does ask. One mention is the
+    whole signal; the second is repetition, so the first entry keeps it."""
+    kws = _kw("Python", "Claude Code")
+    ledger: list[str] = []
+    picked = []
+    for eid in ("e1", "e2"):
+        out = select_entry_bullets(
+            _ai_entry(eid), _jd(), kws, now=NOW, rendered_gated=ledger,
+        )
+        picked.append([b.id for b in out.bullets])
+    assert f"e1_x" in picked[0]
+    assert f"e2_x" not in picked[1], "the second entry may not repeat the line"
+
+
+# ---------------------------------------------------------------------------
 # Phase 2 — the title's own qualification checklist
 # ---------------------------------------------------------------------------
 
