@@ -1,0 +1,296 @@
+# The pipeline, checked stage by stage — one job per layer of the bot.
+#
+# Why this exists alongside ci.yml: ci.yml is the honest gate (one job, whole
+# suite, fresh install). This workflow runs the SAME 319 tests, but split along
+# the pipeline's own seams and chained with `needs:` so the stages complete in
+# pipeline order — scrape, parse, score, llm, build, notify, serve, observe.
+# Reading the run graph tells you which layer broke, not just "tests failed".
+#
+# Trigger is manual so a run can be repeated without a commit.
+
+name: pipeline checks
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_image:
+        description: "Also build the Docker image (adds ~6 min, runs in parallel)"
+        type: boolean
+        default: false
+  # pull_request:   # ci.yml already covers PRs; enabling both double-runs the suite.
+
+# One run at a time: the chained jobs share a dependency cache, and two runs
+# racing to populate it on a cold key wastes the whole install twice.
+concurrency:
+  group: pipeline-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # src/state/db.py builds the engine at import time. The engine is lazy and
+  # never connects here (DB tests mock session_scope), so this only has to
+  # exist for imports to succeed — same reasoning as ci.yml.
+  DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Stage 0 — build the environment once. Every stage below restores it from
+  # cache rather than reinstalling: requirements.txt pulls torch+cpu, spacy and
+  # its en_core_web_sm wheel, so a cold install is minutes and would dominate
+  # each of the nine jobs that follow.
+  # ---------------------------------------------------------------------------
+  deps:
+    name: dependencies resolve
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.key.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # The venv is cached by requirements.txt content, so it is rebuilt only
+      # when a pin actually changes. Runner workspace paths are identical
+      # across jobs in a run, so the venv's absolute shebangs stay valid.
+      - name: Compute cache key
+        id: key
+        run: echo "value=venv-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore virtualenv
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ steps.key.outputs.value }}
+
+      # Only on a cache miss. This is also the honest test that requirements.txt
+      # is complete for a fresh contributor (CLAUDE.md rule #21).
+      - name: Install dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Every module imports
+        run: |
+          .venv/bin/python - <<'PY'
+          import importlib, pkgutil, src
+          bad = []
+          for m in pkgutil.walk_packages(src.__path__, "src."):
+              try:
+                  importlib.import_module(m.name)
+              except Exception as e:
+                  bad.append(f"{m.name}: {e.__class__.__name__}: {e}")
+          if bad:
+              raise SystemExit("failed to import:\n  " + "\n  ".join(bad))
+          print("all src modules import clean")
+          PY
+
+  # ---------------------------------------------------------------------------
+  # Stages 1..8 — the pipeline in order. Each `needs:` the one before it, so the
+  # run graph completes left to right in the order the bot actually runs.
+  # ---------------------------------------------------------------------------
+  scrape:
+    name: "1 · scrape"
+    needs: deps
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ needs.deps.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Boards are queried and results deduplicated
+        run: .venv/bin/pytest -v tests/test_iteration_2_scraper.py
+      - name: The scraper's contract holds end to end
+        run: .venv/bin/pytest -v tests/test_iteration_1.py
+
+  parse:
+    name: "2 · parse"
+    needs: [deps, scrape]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ needs.deps.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Descriptions yield requirements
+        run: .venv/bin/pytest -v tests/test_iteration_2_parser.py
+      - name: The operator profile loads and validates
+        run: .venv/bin/pytest -v tests/test_iteration_2_master_profile.py
+
+  score:
+    name: "3 · score"
+    needs: [deps, parse]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ needs.deps.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Fit is scored the same way twice
+        run: .venv/bin/pytest -v tests/test_iteration_2_scorer.py
+      - name: Every verdict is recorded, including rejections
+        run: .venv/bin/pytest -v tests/test_v2_verdict_recording.py
+
+  llm:
+    name: "4 · llm"
+    needs: [deps, score]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ needs.deps.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: A dead provider fails over to the next
+        run: .venv/bin/pytest -v tests/test_v2_llm_fallback.py
+      - name: A 429 is retried, honoured, or abandoned correctly
+        run: .venv/bin/pytest -v tests/test_v2_llm_retry.py
+
+  build:
+    name: "5 · build"
+    needs: [deps, llm]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ needs.deps.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: The resume assembles from the template
+        run: .venv/bin/pytest -v tests/test_iteration_2_builder.py
+      - name: Output defects stay fixed
+        run: .venv/bin/pytest -v tests/test_iteration_3_output_fixes.py
+
+  notify:
+    name: "6 · notify"
+    needs: [deps, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ needs.deps.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Matches reach Telegram
+        run: .venv/bin/pytest -v tests/test_iteration_2_notifications.py
+      - name: Pre-rendered links are fresh and rotated
+        run: .venv/bin/pytest -v tests/test_v2_prerender_rotation.py
+
+  serve:
+    name: "7 · serve"
+    needs: [deps, notify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ needs.deps.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Resumes are served on demand
+        run: .venv/bin/pytest -v tests/test_iteration_2_endpoint.py
+      - name: The operator dashboard renders
+        run: .venv/bin/pytest -v tests/test_v2_dashboard.py
+
+  observe:
+    name: "8 · observe"
+    needs: [deps, serve]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ needs.deps.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: Logs reach CloudWatch
+        run: .venv/bin/pytest -v tests/test_cloudwatch_handler.py
+      - name: Runs are counted and reported
+        run: .venv/bin/pytest -v tests/test_iteration_3_analytics.py
+      - name: Rows persist and read back
+        run: .venv/bin/pytest -v tests/test_iteration_2_data.py
+
+  smoke:
+    name: "9 · smoke"
+    needs: [deps, observe]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/cache@v4
+        with:
+          path: .venv
+          key: ${{ needs.deps.outputs.cache-key }}
+          fail-on-cache-miss: true
+      - name: The wiring holds end to end
+        run: .venv/bin/pytest -v tests/test_smoke.py
+      - name: Config parses
+        run: .venv/bin/python -c "import yaml,sys; yaml.safe_load(open('config/config.yaml')); print('config/config.yaml parses')"
+      # This workflow hand-assigns each test file to a stage, so a new file
+      # could be added and silently never run. That is worse than a red job:
+      # the run graph would still be all green. Fail instead.
+      - name: Every test file is claimed by a stage
+        run: |
+          missed=0
+          for f in tests/test_*.py; do
+            if ! grep -q "$f" .github/workflows/green.yml; then
+              echo "::error::$f is not run by any stage in green.yml"
+              missed=1
+            fi
+          done
+          test "$missed" -eq 0
+          echo "all $(ls tests/test_*.py | wc -l) test files are assigned to a stage"
+
+  # Opt-in and parallel: a cold image build is ~6 min (LibreOffice + fonts +
+  # torch) and would stall the chain above if it were part of it.
+  image:
+    name: "image builds"
+    needs: deps
+    if: inputs.build_image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the runtime image
+        run: docker build -t job-application-bot:ci .
+
+  # The single check to require on a branch protection rule: it is green only
+  # if every stage above is.
+  green:
+    name: "all green"
+    needs: [deps, scrape, parse, score, llm, build, notify, serve, observe, smoke]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "### Pipeline is green" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "All 319 tests passed across 9 pipeline stages." >> "$GITHUB_STEP_SUMMARY"
