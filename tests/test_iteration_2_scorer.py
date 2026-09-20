@@ -740,6 +740,26 @@ def test_the_lead_block_is_chosen_on_coverage_not_on_title_aliases() -> None:
     assert out.coverage == pytest.approx(1.0)
 
 
+def test_the_required_half_of_the_checklist_breaks_a_lead_block_tie() -> None:
+    """Equal total weight, unequal seriousness.
+
+    `data` covers two nice-to-haves (0.5 each); `backend` covers one required
+    (1.0). Both total 1.0, and the block that answers the REQUIRED line leads —
+    that is the half a screen rejects on.
+    """
+    kws = (Keyword("Python", 1.0), Keyword("Airflow", 0.5), Keyword("dbt", 0.5))
+    entry = _entry(blocks=[
+        _block("e1::data", "data", header="DATA",
+               bullets=[_bullet("d0", "Scheduled loads in Airflow and dbt.",
+                                summary=True, block="e1::data")]),
+        _block("e1::backend", "backend", header="BACKEND",
+               bullets=[_bullet("k0", "Built the service in Python.", summary=True,
+                                block="e1::backend", role="backend")]),
+    ])
+    out = select_entry_bullets(entry, _jd(), kws, now=NOW)
+    assert out.block_id == "e1::backend"
+
+
 def test_extras_do_not_count_toward_which_block_leads() -> None:
     """A block cannot win the lead on material it would not render. The recovery
     pool belongs to the entry once a lead is picked, not to a block's identity."""

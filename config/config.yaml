@@ -244,6 +244,22 @@ selection:
     # entry top, which is exactly the failure the method calls a "hot dog".
     weight_similarity: 0.50
     weight_coverage: 0.50
+    # --- Which block leads (v3.3) ----------------------------------------------
+    # The lead block supplies the render set, the header, the dates and the title.
+    # It is chosen on what its AUDITED bullets cover of this JD's checklist, not on
+    # its title aliases: an alias list is a label the extractor attached, two blocks
+    # of one entry can carry near-identical lists, and a project renders its name
+    # rather than a title, so a label was deciding which bullets a recruiter reads.
+    #
+    #   lead = lead_weight_keywords * keyword_score + lead_weight_similarity * cosine
+    #
+    # Keywords carry the weight because that is what a screen grades. Cosine keeps a
+    # small share because keywords cannot tell that a block is the same KIND of work
+    # (the "hot dog" failure), and two blocks of one entry routinely cover the same
+    # tokens — there the embedding is the only thing that can separate them.
+    lead_weight_keywords: 0.75
+    lead_weight_similarity: 0.25
+
     # Bullets are pooled across all of an entry's role_blocks, so an off-role
     # bullet can surface under an on-role header. Rather than excluding those
     # blocks wholesale (which would drop keywords the operator genuinely has),

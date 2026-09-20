@@ -233,8 +233,14 @@ def _render_set(block: RoleBlockCand) -> list[BulletCand]:
 
 def block_coverage(
     block: RoleBlockCand, keywords: tuple[Keyword, ...]
-) -> tuple[float, set[str]]:
-    """What this block's render set covers of the JD checklist, and which tokens.
+) -> tuple[float, float, set[str]]:
+    """What this block's render set covers of the JD checklist.
+
+    Returns ``(total_weight, required_weight, tokens)``. Keywords only — the
+    comparison is between the checklist and the tokens the block's sentences
+    literally contain, never between embeddings of whole bullets. A bullet's
+    embedding measures topical mood; a recruiter's checklist is answered by words
+    that are either written down or are not.
 
     Render set only. ``extra_bullets`` are a recovery pool the ENTRY may reach into
     once a lead is chosen — they belong to no block's identity, and counting them
@@ -243,7 +249,8 @@ def block_coverage(
     hits: set[str] = set()
     for b in _render_set(block):
         hits |= covered_by(b.norm_text, keywords)
-    return weight_of(hits, keywords), hits
+    required = {k.token for k in keywords if k.weight >= 1.0}
+    return weight_of(hits, keywords), weight_of(hits & required, keywords), hits
 
 
 def lead_block(
@@ -259,25 +266,47 @@ def lead_block(
     recruiter reads, which is backwards: the block that can answer this advert is
     the one whose sentences contain the answers.
 
-    Tie-breaks, in order, and both are still about content:
+    ``lead = w_keywords * keyword_score + w_similarity * cosine``
 
-      * ``primary`` over ``adjacent`` — an adjacent block is, by the extractor's
-        own admission, a stretch, so it should not name the entry when a primary
-        block covers as much.
-      * mean cosine of the render set to the JD — "is this the same kind of work",
-        the question coverage arithmetic cannot answer.
+    Keywords carry the weight (0.75 by default) because that is what a screen
+    grades; cosine keeps a real minority share (0.25) because keywords alone cannot tell
+    that a block is the same KIND of work — the "hot dog" failure — and two blocks
+    of one entry routinely cover the same checklist tokens, where the embedding is
+    the only thing left that can separate them.
 
-    With no checklist (a JD that parsed to nothing) every block covers 0.0 and the
-    tie-breaks decide alone, which is the right degradation: content, then content.
+    ``keyword_score`` is the mean of two ratios, both in [0, 1]:
+
+      * what fraction of the whole checklist's weight the render set covers
+      * what fraction of the REQUIRED half it covers — three required beats six
+        nice-to-haves at the same total, because that is how a screen reads
+
+    ``cosine`` is the render set's mean similarity to the JD. ``extra_bullets``
+    enter neither term: a block cannot win the lead on material it would not
+    render. ``primary`` breaks an exact tie — an adjacent block is, by the
+    extractor's own admission, a stretch.
+
+    With no checklist (a JD that parsed to nothing) both ratios are 0 for every
+    block and the cosine share decides alone, which is the right degradation.
     """
-    def key(rb: RoleBlockCand) -> tuple[float, bool, float]:
-        weight, _ = block_coverage(rb, keywords)
+    cfg = settings.selection.entry
+    w_kw = float(getattr(cfg, "lead_weight_keywords", 0.75))
+    w_sim = float(getattr(cfg, "lead_weight_similarity", 0.25))
+    total_w = weight_of({k.token for k in keywords}, keywords)
+    required_w = weight_of(
+        {k.token for k in keywords if k.weight >= 1.0}, keywords
+    )
+
+    def key(rb: RoleBlockCand) -> tuple[float, bool]:
+        total, required, _ = block_coverage(rb, keywords)
+        ratios = [total / total_w if total_w else 0.0,
+                  required / required_w if required_w else 0.0]
         bullets = _render_set(rb)
         sim = (
             sum(cosine(b.embedding, jd.vec_match) for b in bullets) / len(bullets)
             if bullets else 0.0
         )
-        return (round(weight, 9), rb.role_fit == "primary", sim)
+        score = w_kw * (sum(ratios) / len(ratios)) + w_sim * sim
+        return (round(score, 9), rb.role_fit == "primary")
 
     return max(entry.blocks, key=key)
 
