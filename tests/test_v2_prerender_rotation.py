@@ -197,7 +197,7 @@ def _notify_capturing_buttons(resume_urls, base_url=_BASE_URL):
     from src.state.models import AllJobs
     from src.llm.schemas import JDParsed
     from src.scorer.apply_decision import SelectionResult
-    from src.scorer.selector import SelectedBullet, SelectedExperience, SummaryCand
+    from src.scorer.selector import SelectedBullet, SelectedEntry
 
     job = AllJobs(
         job_id="job123", company="Fintech Inc", role="Python Developer",
@@ -210,18 +210,19 @@ def _notify_capturing_buttons(resume_urls, base_url=_BASE_URL):
         responsibilities=["Build"], salary_max_lpa=10.0, salary_currency="INR",
         location_type="remote", apply_url="https://apply.example/123",
     )
+    entry = SelectedEntry(
+        id="e1", kind="work", block_id="e1::backend", label="ACME",
+        header_left="Backend Developer at ACME, Pune",
+        header_right="Jan 2024 to current",
+        bullets=[SelectedBullet("b1", "Did X", 0.9, is_summary=True)],
+        covered={"Python"}, coverage=0.5, similarity=0.8, score=0.8, cap=6,
+        end_date="present",
+    )
     result = SelectionResult(
         apply=True, final_score=0.78, fit=0.75, success_prob=0.82,
         recency=0.60, project_score=0.70,
-        summary=SummaryCand(id="s1", text="Eng.", role_categories=["backend"],
-                            embedding=[0.0]),
-        summary_score=0.65,
-        experiences=[SelectedExperience(
-            id="e1", company="ACME", actual_title="Backend Dev",
-            safe_title_aliases=["Backend Dev"], score=0.8, alias_score=0.75,
-            end_date="present", bullets=[SelectedBullet("b1", "Did X", 0.9)],
-        )],
-        projects=[], skill_candidates=[("Python", 0.9)], skills_before_projects=True,
+        entries=[entry], work=[entry], projects=[],
+        keyword_coverage=0.5, lead_entry_coverage=0.5,
     )
 
     captured: dict[str, str] = {}

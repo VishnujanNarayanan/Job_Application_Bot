@@ -16,6 +16,18 @@ operator:
   years_experience: 1.5
   timezone: "Asia/Kolkata"
 
+  # Display lines for the resume template header, used by
+  # tools/build_headless_template.py. These are hand-trimmed forms, not the full
+  # records in master_profile.yaml: the method caps Education & Certificates at
+  # three lines, and the entry line has ~89 characters, so the long degree title
+  # and full course names do not fit. Left unset, the tool derives them from the
+  # profile instead.
+  resume_header:
+    portfolio_url: "https://vishnujan.dev"
+    education_line: "B.Tech CSE (Big Data), UPES Dehradun"
+    education_status: "Status - Graduated"
+    certificates_line: "IBM Generative AI Engineering, Google Advanced Data Analytics, Google Data Analytics, NPTEL (IIT Madras / IIT Kharagpur)"
+
 # ---------------------------------------------------------------------------
 # Hard filters — Layer 2/3 job rejection (architecture doc Section 2)
 # ---------------------------------------------------------------------------
@@ -164,175 +176,155 @@ scraper:
 # Selection — Layer 4 (pure deterministic, no LLM)
 # ---------------------------------------------------------------------------
 selection:
-  experience:
-    weight_alias: 0.30    # best title alias cosine score contribution
-    weight_bullets: 0.70  # top-3 bullet avg cosine score contribution
-    # CALIBRATED, not chosen. 0.45 was set as if a good cosine ran near 1.0.
-    # Measured over 60 real JDs on 2026-08-19, the BEST-matching experience
-    # this profile can produce scored 0.416 and the 3rd-place one peaked at
-    # 0.395 — so nothing ever cleared 0.45, and 84 of 85 stored selections
-    # were the force-include minimum of exactly 2. The threshold was inert.
-    #
-    # all-MiniLM-L6-v2 cosine between a JD facet and a resume bullet lives in
-    # roughly 0.2-0.45; the bar has to sit inside that band to mean anything.
-    # 0.332 is the 75th percentile of the 3rd-place score, so a third
-    # experience appears on about the top quarter of jobs and stays a signal
-    # of genuine fit rather than padding every resume to 3.
-    threshold: 0.332
-    max_shown: 3
-    min_shown: 2
-    bullets_per_experience: 3   # exactly 3 bullets shown per experience
-    # If best_score - second_score > this gap, best-match goes to position 1.
-    # Otherwise positions 1+ follow recency (most recent first).
-    match_then_recency_gap: 0.20
+  # --- The JD checklist ------------------------------------------------------
+  # The template has no Skills section, so a qualification counts only when it is
+  # written inside a bullet. These weights define what Layer 4 grades against.
+  keywords:
+    weight_required: 1.00
+    # Halved because the offline grader (resume guide/score_coverage.py) drops
+    # "Nice to Have:" lines from the required token set entirely. Half weight is
+    # the softest honest version of the same judgement.
+    weight_nice_to_have: 0.50
+    # resume_method.md: "ignore everything except the Qualifications section".
+    # responsibilities is duty prose — tokenising it floods the checklist with
+    # sentences no bullet can match and deflates every coverage ratio. It still
+    # feeds vec_match, where it drives the embedding tie-break.
+    include_responsibilities: false
+    # Vendored copy of the 128-title sheet, used as a TIE-BREAK only (see
+    # src/scorer/qualifications.py). Unset or missing -> the tie-break is off and
+    # selection is unaffected.
+    qualifications_path: "data/job_qualifications.md"
 
-  project:
-    weight_name: 0.20     # project name cosine score contribution
-    weight_bullets: 0.80  # topN bullet avg contribution (N = bullets shown)
-    # Same calibration as experience above, same measurement run: the 3rd-place
-    # project peaked at 0.383 against a 0.50 bar, so the projects section was
-    # always exactly 2. 0.344 is the 75th percentile of the 3rd-place score.
-    threshold: 0.344
-    max_shown: 3
-    min_shown: 2
-    bullet_threshold: 0.40  # individual bullet floor; 2 force-included if fewer pass
-    bullet_min: 2
-    bullet_max: 3
-    hide_section: false   # projects section NEVER hidden
+  # --- Bullets per entry -----------------------------------------------------
+  # Method: minimum 3, maximum 8 (1 summary + 2-7), "scaled to how long you were
+  # there — under 6 months you need three, not five".
+  bullets:
+    min_per_entry: 3
+    # One flat cap for everything. A job, a freelance engagement and a project are
+    # selected by the same method and compete for the same slots — what an entry IS
+    # has no say in how many bullets it gets, only what it covers does. (v3.1
+    # replaced the tenure bands and the separate project cap.)
+    max_cap: 8
+    # Projects stop earning space sooner than jobs. Measured: with a flat 8, every
+    # project ran to 8 while jobs stopped at 4-6 — the cap was setting project
+    # length, and the last slots filled with restatement.
+    project_cap: 5
+    # Beam width for phase 1. Measured: 20 already reaches the same optimum as 200
+    # on a 50-bullet pool, and the whole beam runs faster than the greedy it
+    # replaced because hit sets are computed once instead of per iteration.
+    beam_width: 20
+    # Phase 2: after JD gain is exhausted, fill the remaining slots from the title's
+    # own qualification checklist. Stops at zero canonical gain, never pads to cap.
+    qualification_fill: true
 
-  summary:
-    # Deterministic: pick summary whose role_categories match the JD's
-    # role_category, then highest cosine score. Falls back to all summaries
-    # if no category match.
-    fallback_to_all: true
+    # --- Repetition ------------------------------------------------------------
+    # Inside ONE entry there is no tunable: a bullet restating an already-covered
+    # keyword is never selected. Full stop. v3.3 deleted the knobs that used
+    # to referee repetition (repeat_penalty, repeat_requires_ratio,
+    # duplicate_prefix_words/_jaccard/_min_words, across_entry_jaccard,
+    # max_repeats_across_entries, extras_must_be_unique_source) along with the
+    # cause they existed for — the render set now comes from the lead block alone,
+    # so the extractor's re-wordings of one accomplishment never meet in an entry,
+    # and re-extracted `extra` bullets carry one or two keywords each.
+    #
+    # ACROSS entries the method explicitly permits repetition, so the one ceiling
+    # left is a ceiling rather than a ban: at most this many entries may claim the
+    # same keyword. Measured before it existed: "Agile" rendered in four of six
+    # entries, in four genuinely different sentences, so no text-similarity rule
+    # could ever have caught it. 0 disables it and restores unlimited repeats.
+    max_keyword_renders: 2
 
-  skills:
-    # Step 1: deterministic scoring takes top-14 pool candidates.
-    top_candidates: 14
-    # Step 2: group the candidates using the explicit taxonomy below, then show
-    # the `categories_count` categories whose skills best match this JD.
+    # --- Bullets the ADVERT has to ask for -------------------------------------
+    # A bullet naming any of these renders only when the advert's own checklist
+    # names one too, and at most ONCE on a page.
     #
-    # Why an explicit map rather than embedding similarity: knowing Grafana is
-    # observability, or that pytest is testing rather than infrastructure, is
-    # world knowledge. Sentence-transformer cosines between a short tech token
-    # and a category phrase do NOT carry it — measured on this pool, correct
-    # pairings scored 0.106-0.375 while wrong ones scored 0.054-0.347. The
-    # ranges overlap, so no threshold can separate them: "Grafana ->
-    # Monitoring" (right) scores 0.106 while "Linux -> Web & Frontend" (wrong)
-    # scores 0.347. A lookup is exact and costs nothing.
+    # The AI coding assistants are true of nearly every repo, so they sit in most
+    # recovery pools -- and phase 2 (the title's standing checklist, not this
+    # advert) kept pulling them onto pages for jobs that never mentioned AI
+    # tooling. There the line says nothing about the operator's engineering and
+    # invites a question the advert never asked. Where an advert DOES ask for
+    # them, one mention is the whole signal; a second is repetition.
     #
-    # Headings still vary per job, because which categories appear depends on
-    # which skills this JD pulled to the top: a data JD surfaces the data
-    # categories, a backend JD surfaces the backend ones.
-    #
-    # Keep in step with master_profile.yaml's skills_pool. A skill missing from
-    # here still gets grouped (nearest category by embedding) and is logged as
-    # `skill_untaxonomised` so it can be added.
-    categories_count: 3
-    taxonomy:
-      "Languages":
-        - "Python"
-        - "JavaScript"
-        - "TypeScript"
-        - "SQL"
-        - "C++"
-        - "Bash"
-      "Backend & APIs":
-        - "Backend Development"
-        - "REST API Development"
-        - "FastAPI"
-        - "NestJS"
-        - "Node.js"
-        - "Express.js"
-        - "WebSockets / Socket.IO"
-        - "JWT Authentication"
-        - "Webhook & Callback Handling"
-      "Frontend & Full-Stack":
-        - "Full-Stack Development"
-        - "React"
-        - "Next.js"
-        - "React Native"
-        - "Tailwind CSS"
-        - "Responsive Web Design"
-      "Data Engineering & ETL":
-        - "Data Engineering"
-        - "ETL Pipelines"
-        - "Data Ingestion"
-        - "Incremental / Resumable ETL"
-        - "Data Quality & Validation"
-        - "Anomaly Detection"
-      "Scraping & Browser Automation":
-        - "Web Scraping"
-        - "Browser Automation"
-        - "Playwright"
-        - "Selenium"
-        - "Scrapy"
-        - "Crawlee"
-        - "BeautifulSoup"
-        - "Proxy Rotation"
-        - "Anti-bot / Stealth Scraping"
-        - "Session Management"
-        - "HTML Parsing / DOM Traversal"
-      "Concurrency & Networking":
-        - "Async Programming (asyncio)"
-        - "Concurrent / Parallel Programming"
-        - "Rate-limit Handling & Backoff"
-        - "HTTP Internals (headers, cookies, TLS, sessions)"
-      "Machine Learning & NLP":
-        - "Machine Learning"
-        - "Deep Learning"
-        - "Natural Language Processing"
-        - "Feature Engineering"
-        - "scikit-learn"
-        - "PyTorch"
-        - "TensorFlow"
-        - "Keras"
-        - "Computer Vision"
-        - "Semantic Search / Vector Retrieval"
-        - "sentence-transformers"
-        - "FAISS"
-      "Data Analysis & Visualisation":
-        - "Statistical Analysis / Hypothesis Testing"
-        - "pandas"
-        - "NumPy"
-        - "Matplotlib"
-        - "Seaborn"
-        - "Jupyter"
-      "Databases & Storage":
-        - "PostgreSQL"
-        - "MongoDB"
-        - "Redis"
-        - "SQLite"
-        - "TypeORM"
-        - "Database Schema Design"
-        - "Caching Strategies"
-      "Cloud, DevOps & Tooling":
-        - "Docker"
-        - "AWS"
-        - "Linux"
-        - "Git / GitHub"
-        - "CI/CD (GitHub Actions)"
-        - "Vercel"
-        - "Railway"
-      "Quantitative Finance":
-        - "Quantitative Finance / Market Data"
-        - "Time-Series Analysis"
-        - "Backtesting"
-        - "Financial Data Analysis"
-        - "NSE / Indian Equity Markets"
-        - "Risk-adjusted Scoring"
-      "Integrations & Platform":
-        - "Twilio (Voice / IVR)"
-        - "Geospatial / Location-Based Matching"
-    skills_per_category_min: 3
-    skills_per_category_max: 5
-    # Gap skills shown under "Familiar With" (ordered against the other
-    # categories by match, never pinned first — hard rule #7).
-    familiar_with_max: 4
+    # Empty list disables the rule.
+    jd_gated_terms:
+      - "Claude Code"
+      - "OpenAI Codex"
+      - "Codex"
+      - "Cursor"
+      - "GitHub Copilot"
+      - "Copilot"
+      - "Model Context Protocol"
+      - "MCP"
 
-# ---------------------------------------------------------------------------
-# Scoring — Layer 4 final score formula
-# ---------------------------------------------------------------------------
+  # --- Entry scoring ---------------------------------------------------------
+  entry:
+    # No title-alias term (v3.4). `similarity` is the mean cosine of the bullets
+    # actually selected, and nothing else. The old 0.30 alias share handed every
+    # work entry a bonus no project could earn -- alias cosine runs ~0.34 against a
+    # bullet mean of ~0.20 -- so over 120 real JDs the four work entries took 3-4 of
+    # the 5 slots on nearly every resume and a full-stack advert showed a law-firm
+    # website over a React/TypeScript app. An alias is a label, not evidence.
+    #
+    # Two signals, not one. `coverage` is what a recruiter grades in 20 seconds;
+    # `similarity` is "is this the same kind of work". Coverage alone ranks a
+    # keyword-dense but off-topic entry top, which is the "hot dog" failure.
+    weight_similarity: 0.50
+    weight_coverage: 0.50
+    # --- Which block leads (v3.3) ----------------------------------------------
+    # The lead block supplies the render set, the header, the dates and the title.
+    # It is chosen on what its AUDITED bullets cover of this JD's checklist, not on
+    # its title aliases: an alias list is a label the extractor attached, two blocks
+    # of one entry can carry near-identical lists, and a project renders its name
+    # rather than a title, so a label was deciding which bullets a recruiter reads.
+    #
+    #   lead = lead_weight_keywords * keyword_score + lead_weight_similarity * cosine
+    #
+    # Keywords carry the weight because that is what a screen grades. Cosine keeps a
+    # small share because keywords cannot tell that a block is the same KIND of work
+    # (the "hot dog" failure), and two blocks of one entry routinely cover the same
+    # tokens — there the embedding is the only thing that can separate them.
+    lead_weight_keywords: 0.75
+    lead_weight_similarity: 0.25
+
+    # Bullets are pooled across all of an entry's role_blocks, so an off-role
+    # bullet can surface under an on-role header. Rather than excluding those
+    # blocks wholesale (which would drop keywords the operator genuinely has),
+    # scale their coverage gain by how relevant their block is to this JD: an
+    # off-role bullet then wins only when nothing on-role covers that keyword.
+    off_role_scaling: true
+    off_role_floor: 0.05  # relevance never scales fully to zero
+    # v3.2 merged Work History and Projects into one section ordered purely by
+    # match. This is the single guard: the salaried employment entry
+    # (employment_type: employment) must appear within the first N positions, so
+    # the page never opens without the operator's actual job in view. Freelance
+    # does not satisfy it -- a gig competes on merit like a project.
+    # 0 disables the guard and lets score alone decide every position.
+    job_within_top: 2
+
+  # --- How many entries reach the page (v3.4) --------------------------------
+  # The best N entries, full stop. No per-kind threshold, no max_shown, no
+  # min_shown backfill.
+  #
+  # WHY A COUNT AND NOT A CUTOFF. The old thresholds (work 0.199, freelance 0.210,
+  # project 0.153) were percentiles measured by running selection over the corpus
+  # once, so they described a distribution that stopped existing the moment the
+  # scoring formula changed. It changed, and on a real full-stack advert exactly
+  # ONE entry of nineteen cleared its threshold -- the page was then filled by
+  # min_shown backfill rather than by merit. A count cannot drift: the page is
+  # always full, always of the five that answer this JD best, and a formula change
+  # reorders them instead of emptying the page.
+  #
+  # Work, freelance and projects compete in one pool for these slots, which is what
+  # the merged section already renders. The salaried employment entry is always one
+  # of them (see select_top) and always sits in position 1 or 2 (job_within_top).
+  top_n: 5
+
+  # Freelance engagements render under the merged section like everything else;
+  # this is only what their entry line shows in the right slot, where a job shows
+  # dates and a project shows its link.
+  freelance:
+    label: "Freelance"
+
 scoring:
   final:
     # Weights sum to 1.0.
@@ -349,13 +341,29 @@ scoring:
   vocabulary_min_jobs: 5
 
   # Jobs below this threshold are not applied to (reason: LOW_SCORE).
-  apply_threshold: 0.50
+  #
+  # STAGE 6, measured 2026-09-01 over all 767 parsed all_jobs rows: final_score
+  # p50=0.254 p90=0.341 p95=0.372 p99=0.457, MAXIMUM 0.523. The previous 0.50
+  # would have notified on one or two ads out of 767 — the inert-threshold
+  # failure this file already records once, repeated.
+  #
+  # p95, so roughly 1 ad in 20 notifies. This is the one number to turn if the
+  # volume is wrong: lower it for more matches, raise it for fewer. Same
+  # provisional caveat as the selection thresholds above — re-measure after the
+  # bullet-extract re-run.
+  apply_threshold: 0.372
 
   fit:
     # Weights sum to 1.0.
-    best_experience: 0.50
-    selected_summary: 0.20
-    avg_skill_pool_match: 0.30
+    #
+    # The old split was best_experience 0.50 + selected_summary 0.20 +
+    # avg_skill_pool_match 0.30. Both of those measured cosine against things the
+    # new template does not put on the page, so half the fit score was graded on
+    # content no recruiter would ever read. keyword_coverage replaces them: the
+    # weighted fraction of the JD's own qualifications that the SELECTED bullets
+    # literally contain (src/scorer/keywords.py).
+    best_experience: 0.55
+    keyword_coverage: 0.45
 
   success_prob:
     # Collapsed formula per project decision (applicant_score and age_score
@@ -410,7 +418,7 @@ scoring:
 # Resume builder — Layer 5
 # ---------------------------------------------------------------------------
 builder:
-  template_path: "resumes/templates/Templete.docx"   # actual filename (typo in name kept)
+  template_path: "resumes/templates/headless_v1.docx"
   output_dir: "resumes/applied"
   # Diff check: reject any build that modifies content outside permitted
   # regions. Header (before first WORK EXPERIENCE Heading1) is never touched.
@@ -764,7 +772,7 @@ endpoint:
   base_url: "https://asus-tuf-f16-vishnu.tail106cde.ts.net"
   port: 8000
   # Template path is config-driven so any instance can swap the file.
-  template_path: "resumes/templates/Templete.docx"
+  template_path: "resumes/templates/headless_v1.docx"
   # How long a cached render stays valid, in days.
   #
   # MUST be kept in step with the S3 lifecycle rule on the `pdf_cache/` and
@@ -773,6 +781,33 @@ endpoint:
   # the endpoint still serves the resume (it re-renders), but every "hit"
   # silently costs a full rebuild.
   render_cache_ttl_days: 90
+
+  # Structural knobs for the Headless template. These are numbering.xml ids, not
+  # style names: the assembler detects structure, never text (the template ships
+  # placeholder headings).
+  render:
+    # v3.2: ONE section for work, freelance and projects, ordered by match rather
+    # than by kind. Two headings forced every project below every job regardless
+    # of fit.
+    section_heading: "Work & Projects"
+    # What the right-slot link reads as. The label follows the URL rather than
+    # being fixed: master_profile links point at a live demo where one exists and
+    # fall back to the repo where none does, and promising a demo that turns out
+    # to be a source tree is worse than promising nothing.
+    #
+    # The gap before the arrow is U+00A0. At the right-aligned tab stop Word
+    # breaks a normal space, which dropped the arrow onto its own line.
+    link_text_demo: "View\u00a0Demo\u00a0\u2192"
+    link_text_code: "View\u00a0Code\u00a0\u2192"
+    code_hosts: ["github.com", "gitlab.com", "bitbucket.org"]
+    bullet_num_id: "1"          # numbering.xml: entry bullets, 1.5 line spacing
+    education_num_id: "2"       # numbering.xml: Education & Certificates lines
+    education_max_lines: 3      # the method's hard cap on that section
+    # An entry must not be stranded across a page break with a title and one
+    # orphaned bullet. Its header is bound to this fraction of its bullets; if
+    # that group does not fit, the whole group moves to the next page. The rest
+    # may flow, so a long entry still fills the page it has.
+    keep_together_ratio: 0.66
   # Operator dashboard (Layer 6 browser surface).
   dashboard:
     # The skipped table is the biggest one and only its top is ever scanned.
