@@ -41,7 +41,7 @@ from src.scorer.selector import (
     JDContext,
     Profile,
     SelectedEntry,
-    select_entries,
+    select_top,
     select_entry_bullets,
 )
 
@@ -174,30 +174,16 @@ def evaluate(
     """Score one job against the profile and decide build-or-skip."""
     now = now or datetime.now(timezone.utc)
 
-    # Three groups, not two. Employment is force-included -- a resume without the
-    # operator's actual job is not a resume. Freelance engagements are separate
-    # entries that compete on merit exactly as projects do: any, all or none may
-    # appear on a given resume. They still render under Work History, because
-    # that is what they are.
-    employment = [e for e in profile.work if e.employment_type != "freelance"]
-    freelance = [e for e in profile.work if e.employment_type == "freelance"]
-
-    jobs = select_entries(employment, jd, keywords, kind="work", now=now)
-    gigs = select_entries(freelance, jd, keywords, kind="freelance", now=now)
-    projects = sorted(
-        select_entries(profile.projects, jd, keywords, kind="project", now=now),
-        key=lambda e: e.score,
-        reverse=True,
-    )
-    # v3.2: one merged section. Work, freelance and projects render under a single
-    # heading, ordered purely on how well each matches this JD -- a project that
-    # fits better than a job appears above it. The one guard: the salaried
-    # employment entry must hold one of the top two slots, so a resume never opens
-    # without the operator's actual job in view. A gig does not count for that --
-    # it competes on merit here exactly as it does above. Recency no longer orders
-    # anything; match does.
-    work = [*jobs, *gigs]
-    entries = order_entries([*work, *projects])
+    # One pool, one ranking (v3.4). Work, freelance and projects are scored the
+    # same way and compete for the same `selection.top_n` slots -- which is what
+    # the merged section already renders. No per-kind threshold decides who gets
+    # on the page, because a threshold is a percentile of a distribution that
+    # stops existing whenever the formula moves. `select_top` guarantees the
+    # salaried job a slot; `order_entries` guarantees it position 1 or 2.
+    entries = order_entries(select_top(profile, jd, keywords, now=now))
+    work = [e for e in entries if e.kind != "project"]
+    projects = [e for e in entries if e.kind == "project"]
+    jobs = [e for e in work if e.employment_type == "employment"]
 
     # The cross-entry keyword ceiling applies to what actually RENDERS, so it runs
     # here rather than inside scoring: entries were ranked on their own merits,
