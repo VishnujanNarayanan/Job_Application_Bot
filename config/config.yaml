@@ -236,12 +236,16 @@ selection:
 
   # --- Entry scoring ---------------------------------------------------------
   entry:
-    weight_alias: 0.30    # best title-alias cosine (carried over from experience)
-    weight_bullets: 0.70  # mean cosine of the bullets actually selected
+    # No title-alias term (v3.4). `similarity` is the mean cosine of the bullets
+    # actually selected, and nothing else. The old 0.30 alias share handed every
+    # work entry a bonus no project could earn -- alias cosine runs ~0.34 against a
+    # bullet mean of ~0.20 -- so over 120 real JDs the four work entries took 3-4 of
+    # the 5 slots on nearly every resume and a full-stack advert showed a law-firm
+    # website over a React/TypeScript app. An alias is a label, not evidence.
+    #
     # Two signals, not one. `coverage` is what a recruiter grades in 20 seconds;
-    # `similarity` is the calibrated embedding score with a year of measured
-    # thresholds behind it. Coverage alone ranks a keyword-dense but off-topic
-    # entry top, which is exactly the failure the method calls a "hot dog".
+    # `similarity` is "is this the same kind of work". Coverage alone ranks a
+    # keyword-dense but off-topic entry top, which is the "hot dog" failure.
     weight_similarity: 0.50
     weight_coverage: 0.50
     # --- Which block leads (v3.3) ----------------------------------------------
