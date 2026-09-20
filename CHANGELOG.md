@@ -7,85 +7,7 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
-### Changed
-
-- Profile: every bullet naming an AI coding assistant rewritten across all 19
-  extracts (23 bullets) to claim USE, never authorship. "Wrote most of this
-  codebase with…", "Drafted and reviewed the codebase with…" and "Built this
-  backend with…" all became "Used AI coding tools — <the tools that project
-  actually used> — scoping context tightly to keep token usage efficient." The
-  tools named are unchanged; only the verb was overstating what the operator would
-  have to defend in an interview
-- Layer 4: `selection.bullets.jd_gated_terms` — a bullet naming one of these
-  renders ONLY when the advert's own checklist names one too, and at most once per
-  page. The AI-tooling line is true of nearly every repo, so it sat in most
-  recovery pools and phase 2 (the TITLE's standing checklist, not the advert) kept
-  pulling it onto pages for jobs that never mentioned AI tooling. Enforced on all
-  four paths a bullet can reach the page — pool, beam result, floor fill and phase
-  2 — and tracked per entry as well as per page
-- `tools/build_master_profile.py`: `DEFAULT_KEEP` is now empty. The two pinned
-  entries were pinned while their extract predated the profile; a bullet-by-bullet
-  diff showed the two agreed everywhere, so the pin had nothing left to protect and
-  was silently holding back edits to those extracts
-
-- Layer 4: the page is the best `selection.top_n` (5) entries, ranked in ONE pool —
-  work, freelance and projects compete for the same slots, which is what the merged
-  section already renders. Removed `work`/`freelance`/`project` thresholds,
-  `max_shown`, `min_shown`, `match_then_recency_gap`, `hide_section` and
-  `_force_min`. Every one of those was a percentile of a distribution that stopped
-  existing when the scoring formula changed: on a real full-stack advert exactly ONE
-  entry of nineteen cleared its threshold and the page was filled by `min_shown`
-  backfill rather than merit. A count cannot drift. Measured over 120 JDs: every
-  resume now carries 5 entries (was 3), and all 19 entries reach a page at least once
-- Layer 4: `select_top` guarantees the salaried employment entry a slot even when
-  five others outscore it — it takes the last one, displacing the weakest — and
-  `order_entries` still gives it position 1 or 2. Measured over 120 JDs: present on
-  120/120, at position 1 or 2 every time
-- Layer 4: entry `similarity` is the mean cosine of the selected bullets alone; the
-  `0.30 * alias_cosine` term is gone, and with it `weight_alias` / `weight_bullets`.
-  It handed every work entry a bonus no project could earn (alias ~0.34 vs bullet
-  mean ~0.20), so four work entries took 3-4 of the 5 slots on nearly every resume.
-  An alias is a label the extractor attached, not evidence, and it now decides
-  nothing in Layer 4
-
-- Layer 4: the lead block is chosen on what its RENDER SET covers of the JD
-  checklist, not on title-alias cosine. An alias list is a label the extractor
-  attached to a block — two blocks of one entry can carry near-identical lists, and
-  a project renders its name, never a title — so a label was deciding which bullets
-  a recruiter reads. `lead = 0.75 * keyword_score + 0.25 * cosine`
-  (`selection.entry.lead_weight_keywords` / `lead_weight_similarity`), where
-  `keyword_score` is the mean of the checklist-coverage ratio and the
-  required-only ratio, and cosine keeps a minority share so keywords cannot rank a
-  block that is the wrong KIND of work. `extra_bullets` enter neither term: a
-  block cannot win the lead on material it would not render
-- Layer 4: an entry's render set comes from the LEAD BLOCK ALONE; `extra_bullets`
-  still pool across every block of the entry. Cross-block pooling of audited
-  bullets was pulling the extractor's three re-wordings of one accomplishment into
-  a single entry, which is what every repetition rule below existed to referee
-- Layer 4: repetition inside an entry is now a flat rule — a bullet restating an
-  already-covered keyword (the pinned summary included) is never selected. Measured
-  over 60 real JDs on the same profile: entries containing a within-entry keyword
-  repeat fell from 45 (15.5%) to 12 (4.9%), and near-duplicate bullet pairs on a
-  page from 7 to 3. The remaining cases are all single-keyword floor picks
-- Layer 4: the entry-score alias term applies to work and freelance only. A
-  project's alias list is machine input that never renders, so its similarity is
-  now its bullets alone. **The project/freelance thresholds are percentiles of the
-  old distribution — re-run `tools/calibrate.py`**
-- Layer 4: the floor fill prefers a bullet that covers nothing over one that
-  repeats, so the one place the ban bends, bends as little as it can
-- Layer 8: the notification's display title comes from the first WORK entry rather
-  than the first entry on the page, which since v3.2's merged section can be a
-  project
-
-### Removed
-
-- Layer 4: `repeat_penalty`, `repeat_requires_ratio`, `duplicate_prefix_words`,
-  `duplicate_jaccard`, `duplicate_min_words`, `across_entry_jaccard`,
-  `max_repeats_across_entries` and `extras_must_be_unique_source`, along with the
-  `_reads_as_repeat` lexical machinery and the render-set coverability scan. All of
-  it refereed duplicates that cross-block pooling created; the measured repeat rate
-  is a third of what it was with the knobs in place. `max_keyword_renders` (2)
-  survives as the one cross-entry ceiling
+## [v3.0.0] — 2026-09-20
 
 ### Added
 
@@ -100,7 +22,6 @@ and this project loosely tracks iterations rather than semver.
   blocks (was 62), 379 render bullets (was 310) and 837 recovery bullets (was 430).
   New entry: the portfolio site (`portfolio-site`). `Quotes_Retrieval` is now
   `quotes_retrieval`, matching its extract
-
 - `PIVOT_V3.md`: the plan for moving to the Headless Headhunter resume template
   — no Skills section, no Summary section, keyword-coverage scoring, and a
   master profile shaped like the `bullet-extract` skill's `role_blocks` output
@@ -130,9 +51,94 @@ and this project loosely tracks iterations rather than semver.
   `master_title_aliases.block_id` (migration `0009_role_blocks`)
 - `src/state/selection_compat.py`: reads both selection shapes, so the 85
   pre-pivot rows stay listable in the dashboard and the monthly report
+- Layer 4: `employment_type` on work entries. Freelance engagements are separate
+  entries that compete on merit like projects — any, all or none may appear —
+  but render under Work History with `Freelance · <dates>` in the dates slot.
+  Employment is force-included; position is earned, not pinned
+  (`selection.freelance`)
+- Layer 6: an entry is never stranded across a page break. The header and the
+  first `endpoint.render.keep_together_ratio` (0.66) of its bullets are bound by
+  a `keepNext` chain, so the group moves to the next page rather than splitting;
+  `keepLines` stops a single bullet's own wrapped lines splitting
+- Layer 6: section headings are `Heading 2`, so sections collapse in Word and
+  appear in the navigation pane. Appearance is unchanged — runs carry Arial /
+  10.5 / bold as direct formatting — but colour is pinned explicitly, since the
+  style's own colour is blue. `_is_section_heading` still accepts bold-Normal
+- `tools/build_headless_template.py` — builds the operator's template from the
+  pristine one: header, links, Education & Certificates, bullet glyph, section
+  heading styles. Reads identity from `master_profile.yaml` and display strings
+  from `operator.resume_header` in config, so no operator literal enters source
+- `tools/measure_pdf_spacing.py` — reads line positions out of a rendered PDF.
+  Matching paragraph properties does not mean correct rendered gaps; that
+  assumption hid a doubled blank line for several review rounds
 
 ### Changed
 
+- Profile: every bullet naming an AI coding assistant rewritten across all 19
+  extracts (23 bullets) to claim USE, never authorship. "Wrote most of this
+  codebase with…", "Drafted and reviewed the codebase with…" and "Built this
+  backend with…" all became "Used AI coding tools — <the tools that project
+  actually used> — scoping context tightly to keep token usage efficient." The
+  tools named are unchanged; only the verb was overstating what the operator would
+  have to defend in an interview
+- Layer 4: `selection.bullets.jd_gated_terms` — a bullet naming one of these
+  renders ONLY when the advert's own checklist names one too, and at most once per
+  page. The AI-tooling line is true of nearly every repo, so it sat in most
+  recovery pools and phase 2 (the TITLE's standing checklist, not the advert) kept
+  pulling it onto pages for jobs that never mentioned AI tooling. Enforced on all
+  four paths a bullet can reach the page — pool, beam result, floor fill and phase
+  2 — and tracked per entry as well as per page
+- `tools/build_master_profile.py`: `DEFAULT_KEEP` is now empty. The two pinned
+  entries were pinned while their extract predated the profile; a bullet-by-bullet
+  diff showed the two agreed everywhere, so the pin had nothing left to protect and
+  was silently holding back edits to those extracts
+- Layer 4: the page is the best `selection.top_n` (5) entries, ranked in ONE pool —
+  work, freelance and projects compete for the same slots, which is what the merged
+  section already renders. Removed `work`/`freelance`/`project` thresholds,
+  `max_shown`, `min_shown`, `match_then_recency_gap`, `hide_section` and
+  `_force_min`. Every one of those was a percentile of a distribution that stopped
+  existing when the scoring formula changed: on a real full-stack advert exactly ONE
+  entry of nineteen cleared its threshold and the page was filled by `min_shown`
+  backfill rather than merit. A count cannot drift. Measured over 120 JDs: every
+  resume now carries 5 entries (was 3), and all 19 entries reach a page at least once
+- Layer 4: `select_top` guarantees the salaried employment entry a slot even when
+  five others outscore it — it takes the last one, displacing the weakest — and
+  `order_entries` still gives it position 1 or 2. Measured over 120 JDs: present on
+  120/120, at position 1 or 2 every time
+- Layer 4: entry `similarity` is the mean cosine of the selected bullets alone; the
+  `0.30 * alias_cosine` term is gone, and with it `weight_alias` / `weight_bullets`.
+  It handed every work entry a bonus no project could earn (alias ~0.34 vs bullet
+  mean ~0.20), so four work entries took 3-4 of the 5 slots on nearly every resume.
+  An alias is a label the extractor attached, not evidence, and it now decides
+  nothing in Layer 4
+- Layer 4: the lead block is chosen on what its RENDER SET covers of the JD
+  checklist, not on title-alias cosine. An alias list is a label the extractor
+  attached to a block — two blocks of one entry can carry near-identical lists, and
+  a project renders its name, never a title — so a label was deciding which bullets
+  a recruiter reads. `lead = 0.75 * keyword_score + 0.25 * cosine`
+  (`selection.entry.lead_weight_keywords` / `lead_weight_similarity`), where
+  `keyword_score` is the mean of the checklist-coverage ratio and the
+  required-only ratio, and cosine keeps a minority share so keywords cannot rank a
+  block that is the wrong KIND of work. `extra_bullets` enter neither term: a
+  block cannot win the lead on material it would not render
+- Layer 4: an entry's render set comes from the LEAD BLOCK ALONE; `extra_bullets`
+  still pool across every block of the entry. Cross-block pooling of audited
+  bullets was pulling the extractor's three re-wordings of one accomplishment into
+  a single entry, which is what every repetition rule below existed to referee
+- Layer 4: repetition inside an entry is now a flat rule — a bullet restating an
+  already-covered keyword (the pinned summary included) is never selected. Measured
+  over 60 real JDs on the same profile: entries containing a within-entry keyword
+  repeat fell from 45 (15.5%) to 12 (4.9%), and near-duplicate bullet pairs on a
+  page from 7 to 3. The remaining cases are all single-keyword floor picks
+- Layer 4: the entry-score alias term applies to work and freelance only. A
+  project's alias list is machine input that never renders, so its similarity is
+  now its bullets alone. **The project/freelance thresholds are percentiles of the
+  old distribution — re-run `tools/calibrate.py`**
+- Layer 4: the floor fill prefers a bullet that covers nothing over one that
+  repeats, so the one place the ban bends, bends as little as it can
+- Layer 8: the notification's display title comes from the first WORK entry rather
+  than the first entry on the page, which since v3.2's merged section can be a
+  project
 - Layer 4: bullets are selected by greedy keyword set-cover instead of top-3
   cosine. Each entry takes the bullet adding the most uncovered JD keyword
   weight, stopping when nothing new is left to say. The covered set resets per
@@ -254,32 +260,6 @@ and this project loosely tracks iterations rather than semver.
   every block that serves them
 - `resume guide/score_coverage.py`: walks `work_experience` (it only ever walked
   `projects`), survives a missing baseline, and adds `--per-title`
-
-### Added
-
-- Layer 4: `employment_type` on work entries. Freelance engagements are separate
-  entries that compete on merit like projects — any, all or none may appear —
-  but render under Work History with `Freelance · <dates>` in the dates slot.
-  Employment is force-included; position is earned, not pinned
-  (`selection.freelance`)
-- Layer 6: an entry is never stranded across a page break. The header and the
-  first `endpoint.render.keep_together_ratio` (0.66) of its bullets are bound by
-  a `keepNext` chain, so the group moves to the next page rather than splitting;
-  `keepLines` stops a single bullet's own wrapped lines splitting
-- Layer 6: section headings are `Heading 2`, so sections collapse in Word and
-  appear in the navigation pane. Appearance is unchanged — runs carry Arial /
-  10.5 / bold as direct formatting — but colour is pinned explicitly, since the
-  style's own colour is blue. `_is_section_heading` still accepts bold-Normal
-- `tools/build_headless_template.py` — builds the operator's template from the
-  pristine one: header, links, Education & Certificates, bullet glyph, section
-  heading styles. Reads identity from `master_profile.yaml` and display strings
-  from `operator.resume_header` in config, so no operator literal enters source
-- `tools/measure_pdf_spacing.py` — reads line positions out of a rendered PDF.
-  Matching paragraph properties does not mean correct rendered gaps; that
-  assumption hid a doubled blank line for several review rounds
-
-### Changed
-
 - Layer 4 (Stage 6): every selection threshold recalibrated against all 767
   parsed `all_jobs` rows, replacing v2 values measured under the old scoring
   formula. `apply_threshold` 0.50 → 0.372, `work.threshold` 0.332 → 0.199,
@@ -311,7 +291,6 @@ and this project loosely tracks iterations rather than semver.
   template lacks it). Measured end to end: 0 annotations before, 6 after.
   Isolated by A/B — `w:history` and element provenance make no difference; only
   `rStyle` does, which corrects the note in `PIVOT_V3.md` §12
-
 - Layer 4: the same sentence could render twice in one entry. The bullet pool
   deduped by id, but the extractor writes each accomplishment "re-worded in
   every block it honestly serves", so an entry legitimately holds near-twins
@@ -337,20 +316,15 @@ and this project loosely tracks iterations rather than semver.
   through python-docx's `part.relate_to()`, and a test asserts no dangling
   relationship survives assembly
 
-### Known issues
-
-- Layer 6: hyperlinks added programmatically are valid in the DOCX but are NOT
-  exported to the PDF by LibreOffice — it renders the text and ignores the
-  reference. Reproduced with raw XML injection, so it is not a python-docx
-  fault; links authored in Word do export. Affects the header links and the
-  project `Code →` links. See PIVOT_V3.md §12 for the isolation and the options
-- Layer 4: every threshold is a v2 value calibrated against the old scoring
-  formula. Measured on real ads, entry scores land at 0.12-0.31 against
-  thresholds of 0.332/0.344, so freelance entries never appear, and no job
-  reaches the 0.50 apply threshold. PIVOT_V3.md Stage 6
-
 ### Removed
 
+- Layer 4: `repeat_penalty`, `repeat_requires_ratio`, `duplicate_prefix_words`,
+  `duplicate_jaccard`, `duplicate_min_words`, `across_entry_jaccard`,
+  `max_repeats_across_entries` and `extras_must_be_unique_source`, along with the
+  `_reads_as_repeat` lexical machinery and the render-set coverability scan. All of
+  it refereed duplicates that cross-block pooling created; the measured repeat rate
+  is a third of what it was with the knobs in place. `max_keyword_renders` (2)
+  survives as the one cross-entry ceiling
 - Layer 4: `selection.bullets.tenure_bands` and the `_months_between` helper it
   drove — the cap no longer scales by tenure
 - Layer 6: the separate "Work History" and "Projects" headings — one merged
@@ -367,6 +341,18 @@ and this project loosely tracks iterations rather than semver.
   dangling-reference failure mode breaks the LibreOffice PDF render
 - Layer 7: `master_bullets` rows with `parent_type='project_name'` and all
   `master_summaries` rows are deactivated (never deleted — hard rule #17)
+
+### Known issues
+
+- Layer 6: hyperlinks added programmatically are valid in the DOCX but are NOT
+  exported to the PDF by LibreOffice — it renders the text and ignores the
+  reference. Reproduced with raw XML injection, so it is not a python-docx
+  fault; links authored in Word do export. Affects the header links and the
+  project `Code →` links. See PIVOT_V3.md §12 for the isolation and the options
+- Layer 4: every threshold is a v2 value calibrated against the old scoring
+  formula. Measured on real ads, entry scores land at 0.12-0.31 against
+  thresholds of 0.332/0.344, so freelance entries never appear, and no job
+  reaches the 0.50 apply threshold. PIVOT_V3.md Stage 6
 
 ## [v2.0.2] — 2026-08-19
 
