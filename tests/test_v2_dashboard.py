@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 import src.endpoint.app as app_module
 from src.endpoint import dashboard, runner
+from src.config import settings
 
 _NOW = datetime(2026, 8, 8, 10, 30, tzinfo=timezone.utc)
 
@@ -109,7 +110,8 @@ def test_dashboard_draws_the_score_against_the_threshold(client):
         body = client.get("/dashboard").text
 
     assert "width: 78.0%" in body
-    assert "left: 50.0%" in body      # threshold 0.50
+    # From config, not a literal: Stage 6 moved apply_threshold off 0.50.
+    assert f"left: {100 * float(settings.scoring.apply_threshold):.1f}%" in body
 
 
 def test_dashboard_shows_empty_state_without_matches(client):

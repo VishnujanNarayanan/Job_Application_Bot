@@ -11,11 +11,7 @@ import pytest
 
 from src.llm.schemas import JDParsed
 from src.scorer.apply_decision import SelectionResult
-from src.scorer.selector import (
-    BulletCand, ExperienceCand, Profile, ProjectCand,
-    SelectedBullet, SelectedExperience, SelectedProject,
-    SkillCand, SummaryCand,
-)
+from src.scorer.selector import SelectedBullet, SelectedEntry
 from src.state.models import AllJobs
 
 
@@ -47,22 +43,19 @@ def _make_parsed() -> JDParsed:
 
 
 def _make_result() -> SelectionResult:
-    exp = SelectedExperience(
-        id="exp1", company="ACME", actual_title="Backend Dev",
-        safe_title_aliases=["Backend Dev"], score=0.80,
-        alias_score=0.75, end_date="present",
-        bullets=[SelectedBullet("b1", "Did X", 0.9)],
-    )
-    summary = SummaryCand(
-        id="sum1", text="Engineer.", role_categories=["backend"], embedding=[0.0]
+    entry = SelectedEntry(
+        id="exp1", kind="work", block_id="exp1::backend", label="ACME",
+        header_left="Backend Developer at ACME, Pune",
+        header_right="Jan 2024 to current",
+        bullets=[SelectedBullet("b1", "Did X", 0.9, is_summary=True)],
+        covered={"Python"}, coverage=0.5, similarity=0.8, score=0.80, cap=6,
+        end_date="present",
     )
     return SelectionResult(
         apply=True, final_score=0.78, fit=0.75, success_prob=0.82,
         recency=0.60, project_score=0.70,
-        summary=summary, summary_score=0.65,
-        experiences=[exp], projects=[],
-        skill_candidates=[("Python", 0.9)],
-        skills_before_projects=True,
+        entries=[entry], work=[entry], projects=[],
+        keyword_coverage=0.5, lead_entry_coverage=0.5,
     )
 
 

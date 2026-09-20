@@ -187,6 +187,15 @@ class MasterBullets(Base):
     tags: Mapped[Any | None] = mapped_column(JSONB)
     embedding: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Role-block provenance. A bullet now belongs to one role_block of one entry
+    # ("{entry_id}::{role}"), the selector pools an entry's blocks and pins
+    # bullet_index 0 of the lead block, and extra_bullets are the recovery pool
+    # that only renders when a JD asks for their keyword.
+    block_id: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str | None] = mapped_column(Text)
+    bullet_index: Mapped[int | None] = mapped_column(Integer)
+    is_summary: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_extra: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -198,6 +207,7 @@ class MasterBullets(Base):
     __table_args__ = (
         Index("idx_bullets_parent", "parent_id", "parent_type"),
         Index("idx_bullets_active", "is_active"),
+        Index("idx_bullets_block", "block_id"),
     )
 
 
@@ -220,11 +230,17 @@ class MasterTitleAliases(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     parent_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # Aliases hang off the role_block, not the entry: each block targets its own
+    # title family, so the `data` block's aliases are not the `backend` block's.
+    block_id: Mapped[str | None] = mapped_column(Text)
     alias: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[Any | None] = mapped_column(Vector(EMBEDDING_DIM))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    __table_args__ = (Index("idx_aliases_parent", "parent_id"),)
+    __table_args__ = (
+        Index("idx_aliases_parent", "parent_id"),
+        Index("idx_aliases_block", "block_id"),
+    )
 
 
 class MasterMeta(Base):

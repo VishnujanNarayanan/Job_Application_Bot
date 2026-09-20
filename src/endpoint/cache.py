@@ -25,6 +25,7 @@ from src.config import settings
 from src.endpoint.assembler import assemble_docx
 from src.endpoint.pdf_convert import to_pdf
 from src.llm.schemas import StoredSelection
+from src.state.selection_compat import version_of
 from src.state.models import Applied, RenderCache
 
 log = structlog.get_logger(__name__)
@@ -50,6 +51,28 @@ def _cache_ttl_days() -> int:
     return int(settings.endpoint.get("render_cache_ttl_days", 90))
 
 
+class StaleSelectionError(RuntimeError):
+    """A pre-pivot (v1) selection was requested.
+
+    v1 rows reference bullet ids and a ``summary_id`` from the profile as it was
+    before the Headless pivot, and they describe sections — a profile Summary, a
+    Skills list — that the current template does not have. Rendering one would
+    either crash on a missing bullet or silently produce a resume that is not the
+    one the operator was notified about. Refusing is the honest outcome; the rows
+    are kept as history (PIVOT_V3.md D10), not as renderable artifacts.
+    """
+
+
+def _load_selection(selection_json, job_id: str) -> StoredSelection:
+    version = version_of(selection_json)
+    if version == 1:
+        raise StaleSelectionError(
+            f"job {job_id} has a pre-pivot (v1) selection, which cannot be "
+            "rendered against the current template"
+        )
+    return StoredSelection.model_validate(selection_json)
+
+
 def get_or_build(
     job_id: str,
     ext: str,
@@ -68,7 +91,7 @@ def get_or_build(
     if applied_row is None or applied_row.selection_json is None:
         raise KeyError(f"No selection found for job_id={job_id!r}")
 
-    selection = StoredSelection.model_validate(applied_row.selection_json)
+    selection = _load_selection(applied_row.selection_json, job_id)
     cache_key = f"{job_id}_{selection.template_version}"
 
     # Check render_cache table for a valid hit
@@ -123,7 +146,7 @@ def prerender(
 
             get_or_build(job_id, ext, db_session)
 
-            selection = StoredSelection.model_validate(applied_row.selection_json)
+            selection = _load_selection(applied_row.selection_json, job_id)
             url = cache_presigned_url(
                 f"{job_id}_{selection.template_version}", ext, expires_seconds
             )

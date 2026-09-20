@@ -33,6 +33,8 @@ Design rules:
 
 from __future__ import annotations
 
+from src.state.selection_compat import title_alias_of
+
 import csv
 import os
 import tempfile
@@ -140,13 +142,8 @@ def _match_rows(session, endpoint_base_url: str) -> list[list[str]]:
 
 
 def _title_alias(selection_json) -> str | None:
-    """First experience's title alias from a stored selection, if present."""
-    if not isinstance(selection_json, dict):
-        return None
-    experiences = selection_json.get("experiences") or []
-    if experiences and isinstance(experiences[0], dict):
-        return experiences[0].get("title_alias")
-    return None
+    """The first entry's title alias, across both stored-selection shapes."""
+    return title_alias_of(selection_json) or None
 
 
 def _skipped_rows(session) -> list[list[str]]:

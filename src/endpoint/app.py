@@ -29,7 +29,7 @@ from fastapi.responses import Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.endpoint import dashboard
-from src.endpoint.cache import get_or_build
+from src.endpoint.cache import StaleSelectionError, get_or_build
 from src.state.db import session_scope
 
 log = structlog.get_logger(__name__)
@@ -75,6 +75,17 @@ def get_resume(filename: str) -> FastAPIResponse:
             data, content_type = get_or_build(job_id, ext, session)
     except KeyError:
         raise HTTPException(status_code=404, detail=f"No resume found for job_id={job_id!r}")
+    except StaleSelectionError as exc:
+        # 409, not 500: nothing failed. The row predates the template pivot and is
+        # kept as history, so there is no resume to serve and never will be.
+        log.info("resume_request_stale", job_id=job_id, ext=ext, status=409)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This job was matched before the resume template changed; its "
+                "stored selection cannot be rendered against the current template."
+            ),
+        ) from exc
     except Exception as exc:
         # Catch-all endpoint failure: assembler error, propagated conversion
         # error, DB error, etc. Distinct from pdf_convert's `render_failed`
