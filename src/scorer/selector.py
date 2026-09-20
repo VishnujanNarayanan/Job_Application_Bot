@@ -194,15 +194,6 @@ class JDContext:
 # ---------------------------------------------------------------------------
 
 
-def _force_min(passing: list, ranked: list, max_shown: int, min_shown: int) -> list:
-    """Take up to ``max_shown`` that passed threshold; if fewer than
-    ``min_shown`` passed, force-include the top ``min_shown`` overall."""
-    selected = passing[:max_shown]
-    if len(selected) < min_shown:
-        selected = ranked[:min_shown]
-    return selected
-
-
 def bullet_cap(entry: EntryCand, now: datetime) -> int:
     """How many bullets this entry may show.
 
@@ -220,10 +211,6 @@ def bullet_cap(entry: EntryCand, now: datetime) -> int:
     if entry.kind == "project":
         return int(cfg.project_cap)
     return int(cfg.max_cap)
-
-
-def _alias_score(block: RoleBlockCand, jd: JDContext) -> float:
-    return max((cosine(e, jd.vec_role) for e in block.alias_embeddings), default=0.0)
 
 
 def _render_set(block: RoleBlockCand) -> list[BulletCand]:
@@ -767,33 +754,30 @@ def score_entry(
     """Select first, then score the entry on what it actually selected.
 
     Two signals, deliberately not one. ``coverage`` is what a recruiter grades in
-    twenty seconds; ``similarity`` is the calibrated embedding score with a year of
-    measured thresholds behind it. Scoring on coverage alone would rank a
-    keyword-dense but off-topic entry above a well-matched one — which is precisely
-    the "hot dog" failure the method warns about — and it is also why the lead block
-    is now picked on coverage while the ENTRY is still ranked on both.
+    twenty seconds; ``similarity`` is the embedding score — "is this the same kind
+    of work". Scoring on coverage alone would rank a keyword-dense but off-topic
+    entry above a well-matched one, which is precisely the "hot dog" failure the
+    method warns about.
 
-    The alias term applies to work and freelance only (v3.3). A job has a real
-    title, and how close it sits to the advertised one is information. A project
-    does not: the entry line shows the project's NAME, its alias list is a label the
-    extractor attached for machine matching, and letting an arbitrary label carry
-    30% of a project's similarity is the same mistake the lead-block choice just
-    stopped making. For a project the bullets carry the whole similarity.
+    NO TITLE-ALIAS TERM (v3.4). Similarity used to be
+    ``0.30 * alias_cosine + 0.70 * bullet_mean``, which handed every work entry a
+    bonus no project could earn: alias cosine runs ~0.34 against a bullet mean of
+    ~0.20, so work carried a structural +0.02 on score regardless of what it said.
+    Measured over 120 real JDs, the four work entries took three to four of the
+    five slots on nearly every resume while fifteen projects shared the rest — a
+    full-stack advert would show a law-firm website over a React/TypeScript app.
+    An alias is a label the extractor attached; it is not evidence, and it now
+    decides nothing anywhere in Layer 4. What an entry SAYS and what it COVERS is
+    the whole score, for work and projects alike.
     """
     cfg = settings.selection.entry
     selected = select_entry_bullets(entry, jd, keywords, now=now)
-    block = next(b for b in entry.blocks if b.block_id == selected.block_id)
 
-    bullet_avg = (
+    selected.similarity = (
         sum(b.score for b in selected.bullets) / len(selected.bullets)
         if selected.bullets
         else 0.0
     )
-    if entry.kind == "project":
-        selected.similarity = bullet_avg
-    else:
-        alias = _alias_score(block, jd)
-        selected.similarity = cfg.weight_alias * alias + cfg.weight_bullets * bullet_avg
     selected.score = (
         cfg.weight_similarity * selected.similarity
         + cfg.weight_coverage * selected.coverage
@@ -801,21 +785,67 @@ def score_entry(
     return selected
 
 
-def select_entries(
-    entries: list[EntryCand],
+def select_top(
+    profile: Profile,
     jd: JDContext,
     keywords: tuple[Keyword, ...],
     *,
-    kind: str,
     now: datetime | None = None,
 ) -> list[SelectedEntry]:
-    """Rank entries, keep ``max_shown`` above threshold, force-include ``min_shown``."""
+    """Score every entry the operator has and keep the best ``top_n``.
+
+    WHY THERE IS NO THRESHOLD ANY MORE (v3.4)
+    -----------------------------------------
+    Until now each kind had its own cutoff — work 0.199, freelance 0.210, project
+    0.153 — plus a ``max_shown`` and a ``min_shown`` to catch the cases the cutoff
+    got wrong. Every one of those numbers was a percentile measured by running
+    selection over the job corpus once, which means they describe a distribution
+    that stops existing the moment the scoring formula changes. It did change, and
+    the failure was not subtle: on a real full-stack advert exactly ONE entry of
+    nineteen cleared its threshold, and the page was filled out by ``min_shown``
+    backfill rather than by merit.
+
+    A count needs no calibration. "The best five" is a ranking, not a cutoff, so it
+    cannot drift when a weight moves: the page is always full, always of the five
+    entries that answer this JD best, and a formula change reorders them instead of
+    emptying the page.
+
+    Kind stops gating anything too. Work, freelance and projects are scored the
+    same way and compete in one pool, which is what the merged section already
+    renders — a project that answers the advert better than a gig should outrank
+    it, and now does.
+
+    THE ONE GUARANTEE. The salaried employment entry is always on the page, even
+    when five others outscore it: a resume without the operator's actual job is not
+    a resume. If it did not earn a place it takes the last one, displacing the
+    weakest entry. Where it then SITS is ``order_entries``' job — it holds position
+    1 or 2 (``selection.entry.job_within_top``), so the page never opens without
+    the job in view.
+    """
     now = now or datetime.now(timezone.utc)
-    cfg = getattr(settings.selection, kind)
-    ranked = [score_entry(e, jd, keywords, now=now) for e in entries]
-    ranked.sort(key=lambda s: s.score, reverse=True)
-    passing = [s for s in ranked if s.score >= cfg.threshold]
-    return _force_min(passing, ranked, cfg.max_shown, cfg.min_shown)
+    top_n = max(1, int(getattr(settings.selection, "top_n", 5)))
+
+    candidates = [*profile.work, *profile.projects]
+    ranked = sorted(
+        (score_entry(e, jd, keywords, now=now) for e in candidates),
+        key=lambda s: s.score,
+        reverse=True,
+    )
+    selected = ranked[:top_n]
+
+    if not any(_is_employment(s) for s in selected):
+        job = next((s for s in ranked if _is_employment(s)), None)
+        if job is not None:
+            # Displace the weakest, not the nearest miss: the entry that earned its
+            # place least is the one that gives it up.
+            selected = [*selected[: top_n - 1], job]
+    return selected
+
+
+def _is_employment(entry: SelectedEntry) -> bool:
+    """The operator's salaried job. A freelance engagement loads as ``kind="work"``
+    too, so ``kind`` alone cannot answer this -- see ``ordering._is_salaried``."""
+    return entry.kind == "work" and entry.employment_type == "employment"
 
 
 # ---------------------------------------------------------------------------

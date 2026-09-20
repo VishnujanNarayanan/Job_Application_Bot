@@ -9,6 +9,26 @@ and this project loosely tracks iterations rather than semver.
 
 ### Changed
 
+- Layer 4: the page is the best `selection.top_n` (5) entries, ranked in ONE pool —
+  work, freelance and projects compete for the same slots, which is what the merged
+  section already renders. Removed `work`/`freelance`/`project` thresholds,
+  `max_shown`, `min_shown`, `match_then_recency_gap`, `hide_section` and
+  `_force_min`. Every one of those was a percentile of a distribution that stopped
+  existing when the scoring formula changed: on a real full-stack advert exactly ONE
+  entry of nineteen cleared its threshold and the page was filled by `min_shown`
+  backfill rather than merit. A count cannot drift. Measured over 120 JDs: every
+  resume now carries 5 entries (was 3), and all 19 entries reach a page at least once
+- Layer 4: `select_top` guarantees the salaried employment entry a slot even when
+  five others outscore it — it takes the last one, displacing the weakest — and
+  `order_entries` still gives it position 1 or 2. Measured over 120 JDs: present on
+  120/120, at position 1 or 2 every time
+- Layer 4: entry `similarity` is the mean cosine of the selected bullets alone; the
+  `0.30 * alias_cosine` term is gone, and with it `weight_alias` / `weight_bullets`.
+  It handed every work entry a bonus no project could earn (alias ~0.34 vs bullet
+  mean ~0.20), so four work entries took 3-4 of the 5 slots on nearly every resume.
+  An alias is a label the extractor attached, not evidence, and it now decides
+  nothing in Layer 4
+
 - Layer 4: the lead block is chosen on what its RENDER SET covers of the JD
   checklist, not on title-alias cosine. An alias list is a label the extractor
   attached to a block — two blocks of one entry can carry near-identical lists, and
