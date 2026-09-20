@@ -194,15 +194,6 @@ class JDContext:
 # ---------------------------------------------------------------------------
 
 
-def _force_min(passing: list, ranked: list, max_shown: int, min_shown: int) -> list:
-    """Take up to ``max_shown`` that passed threshold; if fewer than
-    ``min_shown`` passed, force-include the top ``min_shown`` overall."""
-    selected = passing[:max_shown]
-    if len(selected) < min_shown:
-        selected = ranked[:min_shown]
-    return selected
-
-
 def bullet_cap(entry: EntryCand, now: datetime) -> int:
     """How many bullets this entry may show.
 
@@ -801,21 +792,67 @@ def score_entry(
     return selected
 
 
-def select_entries(
-    entries: list[EntryCand],
+def select_top(
+    profile: Profile,
     jd: JDContext,
     keywords: tuple[Keyword, ...],
     *,
-    kind: str,
     now: datetime | None = None,
 ) -> list[SelectedEntry]:
-    """Rank entries, keep ``max_shown`` above threshold, force-include ``min_shown``."""
+    """Score every entry the operator has and keep the best ``top_n``.
+
+    WHY THERE IS NO THRESHOLD ANY MORE (v3.4)
+    -----------------------------------------
+    Until now each kind had its own cutoff — work 0.199, freelance 0.210, project
+    0.153 — plus a ``max_shown`` and a ``min_shown`` to catch the cases the cutoff
+    got wrong. Every one of those numbers was a percentile measured by running
+    selection over the job corpus once, which means they describe a distribution
+    that stops existing the moment the scoring formula changes. It did change, and
+    the failure was not subtle: on a real full-stack advert exactly ONE entry of
+    nineteen cleared its threshold, and the page was filled out by ``min_shown``
+    backfill rather than by merit.
+
+    A count needs no calibration. "The best five" is a ranking, not a cutoff, so it
+    cannot drift when a weight moves: the page is always full, always of the five
+    entries that answer this JD best, and a formula change reorders them instead of
+    emptying the page.
+
+    Kind stops gating anything too. Work, freelance and projects are scored the
+    same way and compete in one pool, which is what the merged section already
+    renders — a project that answers the advert better than a gig should outrank
+    it, and now does.
+
+    THE ONE GUARANTEE. The salaried employment entry is always on the page, even
+    when five others outscore it: a resume without the operator's actual job is not
+    a resume. If it did not earn a place it takes the last one, displacing the
+    weakest entry. Where it then SITS is ``order_entries``' job — it holds position
+    1 or 2 (``selection.entry.job_within_top``), so the page never opens without
+    the job in view.
+    """
     now = now or datetime.now(timezone.utc)
-    cfg = getattr(settings.selection, kind)
-    ranked = [score_entry(e, jd, keywords, now=now) for e in entries]
-    ranked.sort(key=lambda s: s.score, reverse=True)
-    passing = [s for s in ranked if s.score >= cfg.threshold]
-    return _force_min(passing, ranked, cfg.max_shown, cfg.min_shown)
+    top_n = max(1, int(getattr(settings.selection, "top_n", 5)))
+
+    candidates = [*profile.work, *profile.projects]
+    ranked = sorted(
+        (score_entry(e, jd, keywords, now=now) for e in candidates),
+        key=lambda s: s.score,
+        reverse=True,
+    )
+    selected = ranked[:top_n]
+
+    if not any(_is_employment(s) for s in selected):
+        job = next((s for s in ranked if _is_employment(s)), None)
+        if job is not None:
+            # Displace the weakest, not the nearest miss: the entry that earned its
+            # place least is the one that gives it up.
+            selected = [*selected[: top_n - 1], job]
+    return selected
+
+
+def _is_employment(entry: SelectedEntry) -> bool:
+    """The operator's salaried job. A freelance engagement loads as ``kind="work"``
+    too, so ``kind`` alone cannot answer this -- see ``ordering._is_salaried``."""
+    return entry.kind == "work" and entry.employment_type == "employment"
 
 
 # ---------------------------------------------------------------------------

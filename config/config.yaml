@@ -275,50 +275,29 @@ selection:
     # 0 disables the guard and lets score alone decide every position.
     job_within_top: 2
 
-  # STAGE 6, measured 2026-09-01 over all 767 parsed all_jobs rows.
-  # Provisional: the profile behind these numbers is the OLD flat bullet pool
-  # mechanically converted to role_blocks, not a bullet-extract re-run. Coverage
-  # will rise once the bullets are rewritten to the method, which lifts
-  # final_score -- RE-RUN the calibration after Stage 0 or this floods.
+  # --- How many entries reach the page (v3.4) --------------------------------
+  # The best N entries, full stop. No per-kind threshold, no max_shown, no
+  # min_shown backfill.
   #
-  # Distributions (entry.score): employment p50=0.172 p75=0.199 p90=0.224
-  # max=0.341 | freelance p50=0.158 p75=0.188 p90=0.218 max=0.568 | project
-  # p50=0.085 p75=0.117 p90=0.153 max=0.588. best-second gap p50=0.015
-  # p90=0.047 p99=0.098. final_score p50=0.254 p90=0.341 p95=0.372 max=0.523.
-  work:
-    # p75 of employment entry scores. The previous 0.332 sat ABOVE the observed
-    # maximum (0.341) and its p99 (0.286): no employment entry ever cleared it,
-    # and the operator's job reached the page only through min_shown.
-    threshold: 0.199
-    max_shown: 3
-    min_shown: 2
-    # If best_score - second_score > this gap, best-match goes to position 1.
-    # Otherwise positions follow recency (most recent first).
-    # p90 of the observed gap, so merit-ordering fires for the clearest ~10% of
-    # jobs. The previous 0.20 was above the p99 (0.098) — it never fired once.
-    match_then_recency_gap: 0.047
+  # WHY A COUNT AND NOT A CUTOFF. The old thresholds (work 0.199, freelance 0.210,
+  # project 0.153) were percentiles measured by running selection over the corpus
+  # once, so they described a distribution that stopped existing the moment the
+  # scoring formula changed. It changed, and on a real full-stack advert exactly
+  # ONE entry of nineteen cleared its threshold -- the page was then filled by
+  # min_shown backfill rather than by merit. A count cannot drift: the page is
+  # always full, always of the five that answer this JD best, and a formula change
+  # reorders them instead of emptying the page.
+  #
+  # Work, freelance and projects compete in one pool for these slots, which is what
+  # the merged section already renders. The salaried employment entry is always one
+  # of them (see select_top) and always sits in position 1 or 2 (job_within_top).
+  top_n: 5
 
-  # Freelance engagements: separate entries that render under Work History but
-  # compete on merit like projects. min_shown is 0 by design — unlike a job, a
-  # gig that does not match this JD simply should not appear.
+  # Freelance engagements render under the merged section like everything else;
+  # this is only what their entry line shows in the right slot, where a job shows
+  # dates and a project shows its link.
   freelance:
     label: "Freelance"
-    # p88 of freelance entry scores. 0.150 was the p22 — ~78% of gig/JD pairs
-    # passed it, so all three gigs landed on nearly every resume and pushed the
-    # page to two. min_shown is 0 by design; the threshold is what makes "any,
-    # all or none" mean anything, and at this value the typical resume shows 0-1.
-    threshold: 0.210
-    max_shown: 3
-    min_shown: 0
-    match_then_recency_gap: 0.047
-
-  project:
-    # p90 of project entry scores. 0.344 sat above the p99 (0.241), so the
-    # section was filled entirely by min_shown; this makes the third slot earned.
-    threshold: 0.153
-    max_shown: 3
-    min_shown: 2
-    hide_section: false   # projects section NEVER hidden
 
 scoring:
   final:

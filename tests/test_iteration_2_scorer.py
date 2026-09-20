@@ -26,7 +26,7 @@ from src.scorer.selector import (
     SkillCand,
     build_jd_context,
     bullet_cap,
-    select_entries,
+    select_top,
     select_entry_bullets,
 )
 
@@ -834,36 +834,105 @@ def test_freelance_shows_its_label_and_link_but_no_dates() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _simple_entry(eid, text, *, end="present"):
-    return _entry(eid, blocks=[_block(f"{eid}::data", bullets=[
+def _profile(work=(), projects=()):
+    """A Profile for select_top. `skills` is vestigial — the Skills section is
+    gone — but the dataclass still carries it."""
+    return Profile(work=list(work), projects=list(projects), skills=[])
+
+
+def _scored(eid, **kw):
+    """One entry, scored, for tests that only care about ordering."""
+    return select_top(
+        _profile(work=[_simple_entry(eid, "x")]), _jd(), _kw(), now=NOW,
+    )[0]
+
+
+def _simple_entry(eid, text, *, end="present", kind="work"):
+    return _entry(eid, kind, blocks=[_block(f"{eid}::data", bullets=[
         _bullet(f"{eid}_0", "Summary.", summary=True, block=f"{eid}::data"),
         _bullet(f"{eid}_1", text, block=f"{eid}::data"),
     ])], end=end)
 
 
-def test_entries_force_include_the_minimum_below_threshold() -> None:
-    """W is orthogonal to the entries' vectors, so similarity and coverage are
-    both 0 and nothing clears the threshold — two are force-included anyway,
-    because a resume with no work history is not a resume."""
-    entries = [_simple_entry(f"e{i}", "Nothing relevant.") for i in range(4)]
-    out = select_entries(
-        entries, _jd(vec_role=W, vec_match=W), _kw("Kubernetes"), kind="work", now=NOW,
+def _simple_project(eid, text):
+    """kind matters: a `work`-kind entry satisfies the salaried guarantee, so a
+    test about that guarantee must build real projects."""
+    return _simple_entry(eid, text, kind="project")
+
+
+def test_the_page_is_always_full_even_when_nothing_matches() -> None:
+    """W is orthogonal to every entry's vector, so similarity and coverage are both
+    0 across the board. Under the old per-kind thresholds that emptied the page and
+    min_shown backfilled it; a count cannot empty — the best five of a bad field are
+    still the best five."""
+    projects = [_simple_project(f"p{i}", "Nothing relevant.") for i in range(8)]
+    out = select_top(
+        _profile(work=[_simple_entry("job", "Nothing either.")], projects=projects),
+        _jd(vec_role=W, vec_match=W), _kw("Kubernetes"), now=NOW,
     )
-    assert all(e.score < settings.selection.work.threshold for e in out)
-    assert len(out) == int(settings.selection.work.min_shown)
+    assert len(out) == int(settings.selection.top_n)
+    assert all(e.score == 0.0 for e in out)
 
 
-def test_entries_cap_at_max_shown() -> None:
-    entries = [_simple_entry(f"e{i}", "Built with Python.") for i in range(5)]
-    out = select_entries(entries, _jd(), _kw("Python"), kind="work", now=NOW)
-    assert len(out) <= int(settings.selection.work.max_shown)
+def test_only_the_best_top_n_reach_the_page() -> None:
+    """More candidates than slots: the page takes the best `top_n` and no more."""
+    projects = [_simple_project(f"p{i}", "Built with Python.") for i in range(9)]
+    out = select_top(
+        _profile(work=[_simple_entry("job", "Built with Python.")], projects=projects),
+        _jd(), _kw("Python"), now=NOW,
+    )
+    assert len(out) == int(settings.selection.top_n)
+
+
+def test_work_freelance_and_projects_compete_in_one_pool() -> None:
+    """Kind gates nothing. A project that answers the JD outranks a gig that does
+    not, and takes the slot — which is what the merged section renders."""
+    job = _simple_entry("job", "Nothing relevant.")
+    gig = _simple_entry("gig", "Nothing relevant either.")
+    gig.employment_type = "freelance"
+    winner = _simple_project("proj", "Built the service in Python.")
+    out = select_top(
+        _profile(work=[job, gig], projects=[winner]), _jd(), _kw("Python"), now=NOW,
+    )
+    assert out[0].id == "proj", "the best match leads whatever kind it is"
+    assert {e.id for e in out} == {"job", "gig", "proj"}
+
+
+def test_the_salaried_job_is_always_on_the_page_even_when_outscored() -> None:
+    """The one guarantee. Five projects all beat the job; the job still renders,
+    displacing the WEAKEST of them — a resume without the operator's actual job is
+    not a resume."""
+    job = _simple_entry("job", "Nothing relevant.")
+    projects = [
+        _simple_project(f"p{i}", "Built the service in Python.") for i in range(6)
+    ]
+    out = select_top(
+        _profile(work=[job], projects=projects), _jd(), _kw("Python"), now=NOW,
+    )
+    ids = [e.id for e in out]
+    assert "job" in ids
+    assert len(out) == int(settings.selection.top_n)
+    assert out[-1].id == "job", "it takes the last slot, not a better one"
+
+
+def test_a_freelance_gig_does_not_satisfy_the_salaried_guarantee() -> None:
+    """A gig reads to a recruiter as a project with an invoice, so it cannot stand
+    in for the job — the job is pulled in alongside it."""
+    gig = _simple_entry("gig", "Built the service in Python.")
+    gig.employment_type = "freelance"
+    job = _simple_entry("job", "Nothing relevant.")
+    projects = [
+        _simple_project(f"p{i}", "Built the service in Python.") for i in range(5)
+    ]
+    out = select_top(
+        _profile(work=[job, gig], projects=projects), _jd(), _kw("Python"), now=NOW,
+    )
+    assert "job" in [e.id for e in out]
 
 
 def test_order_entries_best_match_first_when_gap_large() -> None:
-    a, b = _simple_entry("e1", "x", end="2020-01"), _simple_entry("e2", "y")
-    sa = select_entries([a], _jd(), _kw(), kind="work", now=NOW)[0]
-    sb = select_entries([b], _jd(), _kw(), kind="work", now=NOW)[0]
-    sa.score, sb.score = 0.9, 0.1   # a gap no calibration will ever exceed
+    sa, sb = _scored("e1"), _scored("e2")
+    sa.score, sb.score = 0.9, 0.1
     assert order_entries([sb, sa])[0] is sa
 
 
@@ -874,18 +943,13 @@ def test_order_is_by_match_not_recency() -> None:
     more recently — the page is arranged for the reader's twenty seconds, not
     chronologically.
     """
-    a, b = _simple_entry("e1", "x", end="2020-01"), _simple_entry("e2", "y")
-    sa = select_entries([a], _jd(), _kw(), kind="work", now=NOW)[0]
-    sb = select_entries([b], _jd(), _kw(), kind="work", now=NOW)[0]
+    sa, sb = _scored("e1"), _scored("e2")
     sa.score, sb.score = 0.60, 0.50
     assert order_entries([sa, sb])[0] is sa  # better match, despite being older
 
 
 def test_a_project_may_lead_the_page() -> None:
-    p = _simple_entry("p1", "x")
-    w = _simple_entry("e1", "y")
-    sp = select_entries([p], _jd(), _kw(), kind="project", now=NOW)[0]
-    sw = select_entries([w], _jd(), _kw(), kind="work", now=NOW)[0]
+    sp, sw = _scored("p1"), _scored("e1")
     sp.kind, sw.kind = "project", "work"
     sp.score, sw.score = 0.70, 0.40
     assert [e.id for e in order_entries([sw, sp])] == ["p1", "e1"]
@@ -893,9 +957,7 @@ def test_a_project_may_lead_the_page() -> None:
 
 def _ordering_entry(eid, *, kind, score, employment_type="employment"):
     """A scored entry shaped only for ordering: kind, employment_type, score."""
-    selected = select_entries(
-        [_simple_entry(eid, "x")], _jd(), _kw(), kind="work", now=NOW,
-    )[0]
+    selected = _scored(eid)
     selected.kind, selected.employment_type, selected.score = (
         kind, employment_type, score,
     )
