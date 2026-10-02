@@ -107,6 +107,83 @@ def hit(tok: str, text: str) -> bool:
     return False
 
 
+def _norm_with_offsets(s: str) -> tuple[str, list[int]]:
+    """``norm(s)`` plus, for every output character, the index it came from in ``s``.
+
+    NFKD can expand one character into several (an accented letter becomes letter +
+    combining mark), so the normalised string is not index-aligned with the
+    original. The offset map lets a match found in normalised space be cut out of
+    the original text without drifting.
+    """
+    out: list[str] = []
+    src: list[int] = []
+    for i, ch in enumerate(s):
+        for c in unicodedata.normalize("NFKD", ch).lower():
+            out.append(c)
+            src.append(i)
+    return _KEEP.sub(" ", "".join(out)), src
+
+
+_DOTTED_TAIL = re.compile(r"(?:\.[A-Za-z0-9]+)+")
+_DOTTED_HEAD = re.compile(r"(?:[A-Za-z0-9]+\.)+$")
+
+
+def _whole_dotted_name(text: str, start: int, end: int) -> tuple[int, int]:
+    """Grow a match across dots joined to alphanumerics on both sides.
+
+    ``.`` is a boundary to the matcher, so ``Node`` legitimately covers "Node.js"
+    -- but bolding only "Node" leaves a visibly broken **Node**.js. A sentence's
+    full stop is never joined to a following letter, so it is never absorbed.
+    Slashes are deliberately NOT crossed: ``Python`` in "Python/SQL" must not
+    bold SQL, which may be no keyword at all.
+    """
+    if start and text[start - 1] == ".":
+        m = _DOTTED_HEAD.search(text, 0, start)
+        if m and m.end() == start:
+            start = m.start()
+    m = _DOTTED_TAIL.match(text, end)
+    if m:
+        end = m.end()
+    return start, end
+
+
+def keyword_spans(
+    text: str, tokens: Iterable[str]
+) -> tuple[list[tuple[int, int]], set[str]]:
+    """Where ``tokens`` literally appear in ``text``, as original-text offsets.
+
+    Returns ``(spans, shown)``: non-overlapping ``(start, end)`` pairs sorted by
+    start, and the tokens those spans display. Uses only the literal,
+    boundary-guarded branch of :func:`hit` -- never the prose fallback, which
+    matches scattered content words and would mark fragments, not a keyword.
+
+    Each token is located at its first occurrence. Overlaps resolve longest-first,
+    so "machine learning" wins over "learning"; a token lying wholly inside a kept
+    span counts as shown, because it is on the page inside that span. A token that
+    only partly overlaps a kept span is neither kept nor shown.
+    """
+    norm_text, src = _norm_with_offsets(text)
+    found: list[tuple[int, int, str]] = []
+    for tok in tokens:
+        t = norm(tok).strip()
+        if not t:
+            continue
+        m = _boundary_re(t).search(norm_text)
+        if m:
+            start, end = _whole_dotted_name(text, src[m.start()], src[m.end() - 1] + 1)
+            found.append((start, end, tok))
+    found.sort(key=lambda s: (-(s[1] - s[0]), s[0]))
+    kept: list[tuple[int, int]] = []
+    shown: set[str] = set()
+    for start, end, tok in found:
+        if all(end <= k0 or start >= k1 for k0, k1 in kept):
+            kept.append((start, end))
+            shown.add(tok)
+        elif any(k0 <= start and end <= k1 for k0, k1 in kept):
+            shown.add(tok)
+    return sorted(kept), shown
+
+
 def tokens_of(lines: Iterable[str]) -> list[str]:
     """Split qualification lines into individually searchable tokens.
 

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from src.aws.s3 import cache_get_bytes, cache_put
 from src.config import settings
-from src.endpoint.assembler import assemble_docx
+from src.endpoint.assembler import BOLD_JD_KEYWORDS, assemble_docx
 from src.endpoint.pdf_convert import to_pdf
 from src.llm.schemas import StoredSelection
 from src.state.selection_compat import version_of
@@ -63,6 +63,24 @@ class StaleSelectionError(RuntimeError):
     """
 
 
+def render_version(selection: StoredSelection) -> str:
+    """The render-cache version: template version plus any render-format revision.
+
+    A change to how the assembler renders (not just which template it renders
+    into) must also miss the cache, or resumes already in S3 keep serving the old
+    format. Never contains ``_``: ``_check_render_cache`` reads the version back as
+    the key's last ``_``-separated part.
+    """
+    rv = selection.template_version
+    if BOLD_JD_KEYWORDS:
+        rv += "-kb1"
+    return rv
+
+
+def cache_key_of(job_id: str, selection: StoredSelection) -> str:
+    return f"{job_id}_{render_version(selection)}"
+
+
 def _load_selection(selection_json, job_id: str) -> StoredSelection:
     version = version_of(selection_json)
     if version == 1:
@@ -92,7 +110,7 @@ def get_or_build(
         raise KeyError(f"No selection found for job_id={job_id!r}")
 
     selection = _load_selection(applied_row.selection_json, job_id)
-    cache_key = f"{job_id}_{selection.template_version}"
+    cache_key = cache_key_of(job_id, selection)
 
     # Check render_cache table for a valid hit
     s3_uri = _check_render_cache(db_session, cache_key, ext)
@@ -148,7 +166,7 @@ def prerender(
 
             selection = _load_selection(applied_row.selection_json, job_id)
             url = cache_presigned_url(
-                f"{job_id}_{selection.template_version}", ext, expires_seconds
+                cache_key_of(job_id, selection), ext, expires_seconds
             )
             if url:
                 urls[ext] = url
@@ -214,7 +232,7 @@ def _assemble_and_cache(
         s3_uri: str | None = None
         try:
             s3_uri = cache_put(serve_path, cache_key, ext)
-            _record_render_cache(session, cache_key, ext, selection.template_version, s3_uri, selection.job_id)
+            _record_render_cache(session, cache_key, ext, render_version(selection), s3_uri, selection.job_id)
             session.commit()
         except Exception as exc:
             # s3.py:cache_put already logs s3_cache_failed with the raw error.

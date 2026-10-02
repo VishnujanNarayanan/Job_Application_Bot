@@ -229,6 +229,79 @@ def test_weight_of_ignores_unknown_tokens():
 
 
 # --------------------------------------------------------------------------
+# keyword_spans — what the assembler bolds
+# --------------------------------------------------------------------------
+
+def _cut(text, tokens):
+    spans, shown = kw.keyword_spans(text, tokens)
+    return [text[a:b] for a, b in spans], shown
+
+
+def test_spans_cut_the_original_casing_and_punctuation():
+    assert _cut("Shipped Node.js and CI/CD on AWS.", ["node.js", "CI/CD"]) == (
+        ["Node.js", "CI/CD"], {"node.js", "CI/CD"}
+    )
+
+
+@pytest.mark.parametrize(
+    "token,text",
+    [("Java", "Wrote JavaScript"), ("SQL", "Tuned PostgreSQL"), ("Go", "Built in Django")],
+)
+def test_spans_respect_alphanumeric_boundaries(token, text):
+    """The same guard as hit(): a token inside a longer name is not a keyword."""
+    assert _cut(text, [token]) == ([], set())
+
+
+def test_spans_keep_trailing_and_leading_punctuation_names():
+    assert _cut("Wrote C++ and .NET services", ["C++", ".NET"])[0] == ["C++", ".NET"]
+
+
+def test_longest_match_wins_and_the_contained_token_counts_as_shown():
+    cut, shown = _cut("Applied machine learning to fraud", ["learning", "machine learning"])
+    assert cut == ["machine learning"]
+    assert shown == {"learning", "machine learning"}
+
+
+def test_a_partial_overlap_is_neither_kept_nor_shown():
+    cut, shown = _cut("Built data pipelines", ["data pipelines", "pipelines in"])
+    assert cut == ["data pipelines"]
+    assert shown == {"data pipelines"}
+
+
+def test_spans_mark_only_the_first_occurrence():
+    assert kw.keyword_spans("Python here, Python there", ["Python"])[0] == [(0, 6)]
+
+
+def test_spans_never_use_the_prose_fallback():
+    """hit() would accept this via the 3-content-word fallback; bold must not."""
+    tok = "experience building distributed systems"
+    text = "Building distributed systems with experience"
+    assert kw.hit(tok, kw.norm(text))
+    assert _cut(text, [tok]) == ([], set())
+
+
+@pytest.mark.parametrize(
+    "token,text,expected",
+    [
+        ("Node", "Ran Node.js services", "Node.js"),
+        ("js", "Ran Node.js services", "Node.js"),
+        ("NET", "Built ASP.NET APIs", "ASP.NET"),
+        ("Docker", "Shipped it in Docker.", "Docker"),       # full stop not absorbed
+        ("Docker", "Shipped Docker. Then more", "Docker"),
+        ("Python", "Wrote Python/SQL jobs", "Python"),       # slash not crossed
+    ],
+)
+def test_spans_cover_the_whole_dotted_name(token, text, expected):
+    """Bolding "Node" alone would render a broken **Node**.js."""
+    assert _cut(text, [token])[0] == [expected]
+
+
+def test_spans_survive_characters_that_nfkd_expands():
+    """é expands to two code points under NFKD; offsets must still map back."""
+    assert _cut("Café ordering in Python", ["Python"])[0] == ["Python"]
+
+
+# --------------------------------------------------------------------------
 # the canonical sheet — tie-break only
 # --------------------------------------------------------------------------
 

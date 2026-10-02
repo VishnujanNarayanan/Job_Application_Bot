@@ -72,6 +72,7 @@ has already audited for exactly that purpose.
 | D14b | **"Freelance" never appears in a job title.** It is stated once, in the dates slot. A title like "Freelance Full-Stack Developer" reads as a job called that, and repeats what the right-hand column already says. Long legal company names are shortened for the same reason the URL was (`Smart Centre for Perfect Legal Solutions & Research Pvt. Ltd.` → `SCPLS`). |
 | D15 | **An entry is never stranded across a page break.** Word has no "keep 66% together" setting, so the rule is a `keepNext` chain: the entry header plus the first `ceil(keep_together_ratio × n)` bullets are bound into one unbreakable group, and the chain stops there so the remainder may still flow. `keepLines` on every bullet stops a single bullet's own wrapped lines splitting. Config: `endpoint.render.keep_together_ratio: 0.66`. |
 | D16 | **Section headings are `Heading 2`, not bold Normal.** The template shipped them as merely-bolded Normal paragraphs, which carry no outline level: they do not collapse in Word, do not appear in the navigation pane, and give a parser no structure. Appearance is unchanged because every run carries Arial/10.5/bold/black as *direct* formatting, which beats the style — but colour had to be pinned explicitly, or the heading inherits Heading 2's `0f4761` blue. `_is_section_heading` accepts Heading 2 **or** bold-Normal, so a hand-made template still works. |
+| D17 | **JD keywords are bold in the bullets, once each.** A deliberate exception to the method's "bold only section headings". Each `selection.jd_keywords` token is bolded at its first appearance in the rendered bullets, top to bottom across the resume; later appearances stay plain, and entry title lines are never touched. Matching is `keywords.keyword_spans`: the literal, boundary-guarded branch of `hit` only (never the prose fallback), longest match first. Structural detection is unaffected — a section heading is bold *and* unnumbered, and every entry bullet carries `numPr`. Toggle: `endpoint.render.bold_jd_keywords`; the render-cache key carries a `-kb1` revision so resumes already in S3 re-render. |
 
 ## Branch
 
@@ -301,7 +302,8 @@ rewrite replaces text-matched `Heading 1` lookup with three local predicates:
 ```python
 _is_section_heading(p)  # Normal, no numPr, non-empty, ALL non-empty runs bold.
                         # The method bolds ONLY section headings, so boldness is
-                        # unambiguous. Text is NOT matched — the template ships
+                        # unambiguous. (D17 bolds JD keywords inside bullets;
+                        # bullets carry numPr, so they never match this.) Text is NOT matched — the template ships
                         # the placeholder "Work History OR Projects".
 _is_entry_line(p)       # Heading 3 WITHOUT numPr (Education lines HAVE numPr)
 _is_entry_bullet(p)     # Normal with numId == 1 (numId 2 is Education)

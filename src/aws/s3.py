@@ -7,7 +7,8 @@ Cache layout:
 Backup layout:
   s3://{bucket}/backups/selection_json/{YYYY-MM-DD}/applied_{timestamp}.jsonl
 
-``cache_key`` = ``{job_id}_{template_version}``; the format suffix is
+``cache_key`` = ``{job_id}_{render_version}`` (``cache.render_version``: the
+template version plus any render-format revision); the format suffix is
 appended by the caller as part of the S3 object key.
 
 IAM permissions needed (hard rule #19):

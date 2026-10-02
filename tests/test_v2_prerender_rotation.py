@@ -106,10 +106,30 @@ def test_prerender_returns_presigned_urls_for_both_formats(applied_row):
          patch("src.aws.s3.cache_presigned_url", side_effect=lambda k, e, s: f"https://s3/{k}.{e}"):
         urls = cache.prerender("j1", session, expires_seconds=604800)
 
-    assert urls == {
-        "pdf": "https://s3/j1_abc12345.pdf",
-        "docx": "https://s3/j1_abc12345.docx",
-    }
+    key = cache.cache_key_of("j1", selection)
+    assert urls == {"pdf": f"https://s3/{key}.pdf", "docx": f"https://s3/{key}.docx"}
+
+
+def test_render_version_carries_the_bold_revision_only_when_bolding():
+    """Resumes cached before bolding must miss the cache, or S3 keeps serving them."""
+    from src.endpoint import cache
+
+    selection = MagicMock(template_version="abc12345")
+    with patch.object(cache, "BOLD_JD_KEYWORDS", True):
+        assert cache.render_version(selection) == "abc12345-kb1"
+        assert cache.cache_key_of("j1", selection) == "j1_abc12345-kb1"
+    with patch.object(cache, "BOLD_JD_KEYWORDS", False):
+        assert cache.render_version(selection) == "abc12345"
+
+
+def test_render_version_never_contains_the_key_separator():
+    """_check_render_cache reads the version back as the key's last `_` part."""
+    from src.endpoint import cache
+
+    selection = MagicMock(template_version="abc12345")
+    for flag in (True, False):
+        with patch.object(cache, "BOLD_JD_KEYWORDS", flag):
+            assert "_" not in cache.render_version(selection)
 
 
 def test_prerender_returns_empty_without_a_selection():

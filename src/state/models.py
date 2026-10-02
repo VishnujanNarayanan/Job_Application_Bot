@@ -281,7 +281,8 @@ class CompanyCooldown(Base):
 
 # ---------------------------------------------------------------------------
 # Render cache — the PDF/DOCX files live in S3; this table tracks them
-# (architecture §7.3). Cache key is {job_id}_{template_version}_{ext}.
+# (architecture §7.3). Cache key is {job_id}_{render_version}_{ext} — see
+# src/endpoint/cache.py:render_version.
 # ---------------------------------------------------------------------------
 
 
