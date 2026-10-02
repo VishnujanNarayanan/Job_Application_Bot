@@ -808,6 +808,11 @@ endpoint:
     # that group does not fit, the whole group moves to the next page. The rest
     # may flow, so a long entry still fills the page it has.
     keep_together_ratio: 0.66
+    # Bold each JD keyword (selection.jd_keywords) at its FIRST appearance in the
+    # rendered bullets, top to bottom across the whole resume. Bullets only —
+    # entry title lines are never touched. Literal, boundary-guarded matches
+    # only (Java never bolds inside "JavaScript"), longest match wins.
+    bold_jd_keywords: true
   # Operator dashboard (Layer 6 browser surface).
   dashboard:
     # The skipped table is the biggest one and only its top is ever scanned.

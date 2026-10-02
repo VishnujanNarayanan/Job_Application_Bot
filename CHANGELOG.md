@@ -7,6 +7,14 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Added
+
+- Resume: JD keywords render **bold** at their first appearance in the bullets,
+  top to bottom across the resume (PIVOT_V3.md D17). Bullets only, literal
+  boundary-guarded matches only, longest match wins. Toggle:
+  `endpoint.render.bold_jd_keywords` (on). The render-cache key gains a `-kb1`
+  revision so already-cached resumes re-render with bold
+
 ## [v3.0.0] — 2026-09-20
 
 ### Added

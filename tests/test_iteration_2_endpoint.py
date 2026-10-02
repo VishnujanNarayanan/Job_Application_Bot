@@ -11,6 +11,7 @@ only the text differs, and the assembler matches on structure alone.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import shutil
@@ -501,6 +502,132 @@ def test_every_bullet_keeps_its_own_lines_together(
         assert el is not None and el.get(_qn("w:val")) in ("1", "true"), (
             f"bullet may split across pages: {p.text[:40]!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# JD keywords in bold (PIVOT_V3.md D17)
+# ---------------------------------------------------------------------------
+
+
+def _bold_pieces(paragraph) -> list[str]:
+    from src.endpoint.assembler import _is_bold
+
+    return [r.text for r in paragraph.runs if r.text and _is_bold(r._r)]
+
+
+@pytest.fixture
+def bolding(monkeypatch):
+    from src.endpoint import assembler
+
+    monkeypatch.setattr(assembler, "BOLD_JD_KEYWORDS", True)
+
+
+@pytest.fixture
+def docker_twice(minimal_profile):
+    """The project's first bullet also mentions Docker, after the work entry did."""
+    data = json.loads(minimal_profile.read_text())
+    data["projects"][0]["role_blocks"][0]["bullets"][0]["text"] = (
+        "Packaged the model in Docker with Python."
+    )
+    minimal_profile.write_text(json.dumps(data))
+    return minimal_profile
+
+
+def test_a_jd_keyword_is_bold_at_its_first_appearance_only(
+    bolding, docker_twice, minimal_selection, tmp_path
+):
+    doc = _assemble(docker_twice, minimal_selection, tmp_path)
+    first = next(p for p in doc.paragraphs if p.text.startswith("Ran services"))
+    later = next(p for p in doc.paragraphs if p.text.startswith("Packaged the model"))
+
+    assert _bold_pieces(first) == ["Docker"]
+    # Docker was already shown; Python makes its first appearance here.
+    assert _bold_pieces(later) == ["Python"]
+
+
+def test_bolding_changes_no_text(bolding, docker_twice, minimal_selection, tmp_path):
+    doc = _assemble(docker_twice, minimal_selection, tmp_path)
+    texts = [p.text for p in doc.paragraphs]
+    assert "Ran services in Docker to cut setup time." in texts
+    assert "Packaged the model in Docker with Python." in texts
+
+
+def test_a_bold_piece_differs_from_the_plain_text_only_by_bold(
+    bolding, minimal_profile, minimal_selection, tmp_path
+):
+    """Font, size, colour and highlight come from the template's run, untouched."""
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    p = next(p for p in doc.paragraphs if p.text.startswith("Ran services"))
+
+    def props(run, drop_bold):
+        rPr = copy.deepcopy(run._r.find(qn("w:rPr")))
+        if drop_bold:
+            for tag in ("w:b", "w:bCs"):
+                for el in rPr.findall(qn(tag)):
+                    rPr.remove(el)
+        return re.sub(r'\sxmlns(:\w+)?="[^"]*"', "", etree.tostring(rPr).decode())
+
+    plain = next(r for r in p.runs if r.text == "Ran services in ")
+    bold = next(r for r in p.runs if r.text == "Docker")
+    assert props(plain, True) == props(bold, True)
+
+
+def test_entry_title_lines_are_never_bolded(
+    minimal_profile, minimal_selection, tmp_path, monkeypatch
+):
+    """A keyword in a title is not evidence; only bullets carry keyword bold.
+
+    The title line must come out byte-identical with the switch on and off.
+    """
+    from src.endpoint import assembler
+
+    selection = minimal_selection.model_copy(
+        update={"jd_keywords": ["Backend Engineer", "Stock Prediction"]}
+    )
+
+    def title_xml(flag, sub):
+        monkeypatch.setattr(assembler, "BOLD_JD_KEYWORDS", flag)
+        out = tmp_path / sub
+        out.mkdir()
+        doc = _assemble(minimal_profile, selection, out)
+        return [
+            etree.tostring(p._p, method="c14n")
+            for p in doc.paragraphs
+            if p.text.startswith(("Backend Engineer at", "Stock Prediction Engine"))
+        ]
+
+    on, off = title_xml(True, "on"), title_xml(False, "off")
+    assert len(on) == 2 and on == off
+
+
+def test_bolded_bullets_are_never_mistaken_for_section_headings(
+    bolding, minimal_profile, minimal_selection, tmp_path
+):
+    from src.endpoint.assembler import _is_section_heading
+
+    selection = minimal_selection.model_copy(
+        update={"jd_keywords": ["Built APIs serving 10k requests"]}
+    )
+    doc = _assemble(minimal_profile, selection, tmp_path)
+    p = next(p for p in doc.paragraphs if p.text.startswith("Built APIs"))
+    assert _bold_pieces(p) == ["Built APIs serving 10k requests"]
+    assert not _is_section_heading(p._p)
+
+
+def test_no_bold_when_the_switch_is_off(minimal_profile, minimal_selection, tmp_path, monkeypatch):
+    from src.endpoint import assembler
+
+    monkeypatch.setattr(assembler, "BOLD_JD_KEYWORDS", False)
+    doc = _assemble(minimal_profile, minimal_selection, tmp_path)
+    for p in doc.paragraphs:
+        if _is_entry_bullet(p._p):
+            assert _bold_pieces(p) == [], p.text
+
+
+def test_frozen_prefix_unchanged_with_bolding(
+    bolding, minimal_profile, minimal_selection, tmp_path
+):
+    test_frozen_prefix_unchanged(minimal_profile, minimal_selection, tmp_path)
 
 
 def test_link_label_follows_the_url_not_a_fixed_string():

@@ -64,6 +64,7 @@ from lxml import etree
 
 from src.config import settings
 from src.llm.schemas import StoredSelection
+from src.scorer.keywords import keyword_spans
 
 log = structlog.get_logger(__name__)
 
@@ -85,6 +86,12 @@ _LINK_TEXT_DEMO = str(
 _LINK_TEXT_CODE = str(
     getattr(settings.endpoint.render, "link_text_code", "View\u00a0Code\u00a0\u2192")
 )
+#: Bold each JD keyword at its first appearance in the rendered bullets. The
+#: method once bolded only section headings; this is the deliberate exception,
+#: and it is safe structurally because a heading is found by being bold AND
+#: unnumbered, while every entry bullet carries numPr.
+BOLD_JD_KEYWORDS = bool(getattr(settings.endpoint.render, "bold_jd_keywords", False))
+
 #: Hosts that serve source, not a running thing.
 _CODE_HOSTS = tuple(
     getattr(settings.endpoint.render, "code_hosts", None)
@@ -348,6 +355,65 @@ def _set_text(p_elem, text: str) -> None:
         _blank_run_text(r)
 
 
+def _set_run_bold(r_elem) -> None:
+    """Turn bold on for a run, overriding any explicit ``w:val="0"`` it carries.
+
+    The template's bullet runs pin ``<w:b w:val="0"/>`` as direct formatting, so
+    bold is switched on in place; where the element is absent it is inserted
+    after ``rStyle``/``rFonts`` to keep the schema's child order.
+    """
+    rPr = r_elem.find(qn("w:rPr"))
+    if rPr is None:
+        rPr = OxmlElement("w:rPr")
+        r_elem.insert(0, rPr)
+    for tag in ("w:bCs", "w:b"):
+        el = rPr.find(qn(tag))
+        if el is None:
+            el = OxmlElement(tag)
+            anchor = rPr.find(qn("w:rFonts"))
+            if anchor is None:
+                anchor = rPr.find(qn("w:rStyle"))
+            if anchor is not None:
+                anchor.addnext(el)
+            else:
+                rPr.insert(0, el)
+        el.attrib.pop(qn("w:val"), None)
+
+
+def _set_text_with_bold(p_elem, text: str, spans: list[tuple[int, int]]) -> None:
+    """A bullet whose ``spans`` (original-text offsets) render bold.
+
+    The first run is the formatting prototype: every piece is a clone of it, so
+    the bold pieces differ from the plain ones by the bold flag and nothing else.
+    """
+    if not spans:
+        _set_text(p_elem, text)
+        return
+    runs = _direct_runs(p_elem)
+    if not runs:
+        return
+    proto = runs[0]
+    pieces: list[tuple[str, bool]] = []
+    pos = 0
+    for start, end in spans:
+        if start > pos:
+            pieces.append((text[pos:start], False))
+        pieces.append((text[start:end], True))
+        pos = end
+    if pos < len(text):
+        pieces.append((text[pos:], False))
+    anchor = proto
+    for piece, bold in pieces:
+        r = copy.deepcopy(proto)
+        _set_run_text(r, piece)
+        if bold:
+            _set_run_bold(r)
+        anchor.addnext(r)
+        anchor = r
+    for r in runs:
+        p_elem.remove(r)
+
+
 def _set_keep(p_elem, *, keep_next: bool, keep_lines: bool = True) -> None:
     """Set ``w:keepNext`` / ``w:keepLines`` on a paragraph.
 
@@ -563,6 +629,9 @@ def assemble_docx(
     protos = _capture_prototypes(body, start)
 
     new_elems: list = []
+    # First occurrence per resume: a keyword leaves this list once it has been
+    # shown in bold, so later bullets render it plain.
+    to_bold = list(selection.jd_keywords) if BOLD_JD_KEYWORDS else []
     # v3.2: ONE section, not two. Work, freelance and projects render under a
     # single heading in the order Layer 4 ranked them, so the best-matching entry
     # leads the page whatever kind it is. Splitting them forced every project below
@@ -610,7 +679,9 @@ def assemble_docx(
                         "— rebuild master_profile.json (`python -m src.cli.reparse`)"
                     )
                 bp = copy.deepcopy(protos["entry_bullet"])
-                _set_text(bp, text)
+                spans, shown = keyword_spans(text, to_bold) if to_bold else ([], set())
+                _set_text_with_bold(bp, text, spans)
+                to_bold = [k for k in to_bold if k not in shown]
                 # keepNext on every bullet except the last of the bound group,
                 # which is where the chain is allowed to break.
                 _set_keep(bp, keep_next=position < bound - 1)
