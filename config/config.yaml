@@ -80,12 +80,12 @@ scheduler:
 scraper:
   hours_old:
     # JobSpy `hours_old` parameter — how far back to look per run.
-    # Runs are manually triggered (v2), not every 40 minutes, so a 2-hour
-    # window would show almost nothing on a once-a-day click. Sized to cover
-    # a day between clicks; the company cooldown and the all_jobs duplicate
-    # check stop the wider window re-notifying anything already seen.
-    peak: 24
-    off_peak: 48
+    # Narrowed to the freshest postings only. JobSpy takes whole hours, so
+    # 1 is the minimum — 0 (or anything int() rounds to 0) DISABLES the age
+    # filter entirely. Was peak 24 / off_peak 48 to cover a day between
+    # manual clicks; widen again if runs come back empty.
+    peak: 1
+    off_peak: 1
   # Stop searching when this many jobs have passed hard filters in one run.
   short_circuit_count: 20
   # JobSpy results_wanted cap per query term.
