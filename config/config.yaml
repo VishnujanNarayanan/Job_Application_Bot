@@ -33,9 +33,12 @@ operator:
 # ---------------------------------------------------------------------------
 filters:
   job_type: "fulltime"
-  # Reject any JD requiring more years than this. Single source of truth —
-  # re-checked on the Gemini-structured field in Layer 3.
-  years_ceiling: 5
+  # Reject a JD only when it EXPLICITLY requires more years than this. Single
+  # source of truth — re-checked on the Gemini-structured field in Layer 3.
+  # A JD that states no years parses to 0 and always passes: an unstated
+  # requirement is not a reason to reject. There is deliberately no seniority
+  # hard filter — role_level never rejects a job.
+  years_ceiling: 6
   # Open to international relocation; no visa filter applied.
   visa_filter: null
   # Reject scraped jobs whose location string contains any of these
@@ -227,12 +230,21 @@ selection:
     # so the extractor's re-wordings of one accomplishment never meet in an entry,
     # and re-extracted `extra` bullets carry one or two keywords each.
     #
-    # ACROSS entries the method explicitly permits repetition, so the one ceiling
-    # left is a ceiling rather than a ban: at most this many entries may claim the
-    # same keyword. Measured before it existed: "Agile" rendered in four of six
-    # entries, in four genuinely different sentences, so no text-similarity rule
-    # could ever have caught it. 0 disables it and restores unlimited repeats.
+    # ACROSS entries the method explicitly permits repetition -- and a real skill
+    # shown in several roles is stronger evidence, which fit's keyword-repetition
+    # term rewards. So the ceiling covers ONLY the filler words listed in
+    # `capped_keywords`: at most `max_keyword_renders` entries may claim one of
+    # them. Measured before it existed: "Agile" rendered in four of six entries,
+    # in four genuinely different sentences, so no text-similarity rule could
+    # ever have caught it. Every other keyword may repeat freely (issue #14; it
+    # used to cap EVERY keyword). A JD token is capped when it contains a listed
+    # term, so "Agile methodologies" counts. 0 or an empty list disables it.
+    #
+    # The AI coding assistants are NOT listed here: `jd_gated_terms` below
+    # already holds them to once per page, and only when the advert asks.
     max_keyword_renders: 2
+    capped_keywords:
+      - "Agile"
 
     # --- Bullets the ADVERT has to ask for -------------------------------------
     # A bullet naming any of these renders only when the advert's own checklist
@@ -327,11 +339,13 @@ selection:
 
 scoring:
   final:
-    # Weights sum to 1.0.
-    fit: 0.55
-    success_prob: 0.30
-    recency: 0.10
-    project: 0.05
+    # Weights sum to 1.0. Each factor is counted exactly once: recency used to
+    # enter both here (0.10) and inside success_prob (0.40 x 0.30), which made it
+    # an undeclared 22% of the score. The separate `project` term (0.05) went
+    # when fit started grading the lead entry of ANY kind: with a project leading,
+    # the same score would have counted twice.
+    fit: 0.60
+    success_prob: 0.40
   # How many DISTINCT job ads a term must appear in before it joins the
   # technology vocabulary that Layer 3 scans each JD against. Recurrence is
   # what separates a technology from a hallucination: an invented skill does
@@ -351,7 +365,13 @@ scoring:
   # volume is wrong: lower it for more matches, raise it for fewer. Same
   # provisional caveat as the selection thresholds above — re-measure after the
   # bullet-extract re-run.
-  apply_threshold: 0.372
+  #
+  # PROVISIONAL 0.50 (2026-10-04), set for the first live run of the #13
+  # scoring rework (final = 0.60 fit + 0.40 applicant score). The 0.372 p95 was
+  # measured on the old formula and would pass most jobs under the new one: a
+  # typical fit contributes ~0.24 and the applicant score up to 0.40. Re-measure
+  # from the job_scored logs once real applicant counts have accumulated.
+  apply_threshold: 0.50
 
   fit:
     # Weights sum to 1.0.
@@ -362,23 +382,45 @@ scoring:
     # content no recruiter would ever read. keyword_coverage replaces them: the
     # weighted fraction of the JD's own qualifications that the SELECTED bullets
     # literally contain (src/scorer/keywords.py).
-    best_experience: 0.55
-    keyword_coverage: 0.45
+    #
+    # best_experience is the score of the entry that LEADS the page, of any kind
+    # (a project led 70 of 84 stored resumes). keyword_repetition rewards a
+    # required skill shown in several roles: for each required JD keyword the
+    # page covers, min(entries showing it, repetition_cap) / repetition_cap,
+    # averaged. Filler words are capped separately (selection.bullets.
+    # capped_keywords), so they cannot farm this term.
+    best_experience: 0.45
+    keyword_coverage: 0.35
+    keyword_repetition: 0.20
+    repetition_cap: 3
 
+  # success_prob = applicant score, and nothing else: FEWER applicants scores
+  # higher. Read from LinkedIn's public job page at scrape time
+  # (all_jobs.applicants_count). Seniority was dropped from scoring --
+  # years_ceiling is the only experience gate -- and time since posting moved
+  # out of the score because the 1-hour scrape window made it identical for
+  # every job (issue #13). Bands: first match wins, ascending by `under`.
+  # "Be among the first 25" is stored as 24 and "Over 200" as 201.
   success_prob:
-    # Collapsed formula per project decision (applicant_score and age_score
-    # were undefined in the architecture doc; removed from spec).
-    # success_prob = seniority * 0.60 + recency * 0.40
-    weight_seniority: 0.60
-    weight_recency: 0.40
-    # Scores for Gemini-parsed role_level field.
-    seniority_scores:
-      junior: 1.00
-      mid: 0.80
-      senior: 0.40
-      lead: 0.15
-      null: 0.80  # treat unknown level as mid
+    applicant_bands:
+      - under: 25
+        score: 1.00
+      - under: 50
+        score: 0.85
+      - under: 100
+        score: 0.65
+      - under: 200
+        score: 0.40
+    # 200 or more.
+    default: 0.15
+    # No count: a non-LinkedIn portal, a page without the caption, or a row
+    # scraped before counts were captured. Neutral -- an absent measurement
+    # neither rewards nor punishes a job.
+    unknown: 0.50
 
+  # RECORDED, NOT SCORED. Time since posting is still computed for every job and
+  # stored in applied/not_applied.recency_score (and logged), so it stays
+  # available for analysis; it no longer enters final_score.
   recency_score:
     # Bands by hours since the job was posted, first match wins. Ordered
     # ascending by `under_hours`; both the edges and the scores are tunable

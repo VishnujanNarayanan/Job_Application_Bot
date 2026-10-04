@@ -7,7 +7,34 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Changed
+
+- Scoring rework (#13). `final = 0.60 × fit + 0.40 × success_prob`; every factor
+  now counts once.
+  - `success_prob` is the **applicant score**: LinkedIn's applicant count, banded so
+    fewer applicants score higher (<25 → 1.00, <50 → 0.85, <100 → 0.65, <200 → 0.40,
+    200+ → 0.15, unknown → 0.50).
+  - Time since posting (`recency`) is still computed, logged and stored in
+    `recency_score`, but no longer scored. It used to count twice (an undeclared
+    22%), and the 1-hour scrape window made it identical for every job.
+  - Seniority (`role_level`) is no longer scored. The years ceiling is the only
+    experience gate.
+  - `fit = 0.45 × lead entry + 0.35 × keyword coverage + 0.20 × keyword repetition`.
+    The lead entry is the one that heads the page, of any kind; it used to be
+    salaried employment only, though a project led 70 of 84 stored resumes.
+    Keyword repetition rewards a required JD skill shown in several roles (capped
+    at 3). The separate `project` term is gone.
+- Years filter: reject only when the JD explicitly asks for **more than 6** years
+  (was 5). A JD stating no years parses to 0 and passes.
+- Keyword ceiling (#14): `max_keyword_renders` now applies only to
+  `capped_keywords` (Agile), not to every keyword. Real skills may repeat across
+  entries. The AI-tooling gate (`jd_gated_terms`) is unchanged.
+
 ### Added
+
+- Scraper: captures LinkedIn's applicant caption from the job page JobSpy already
+  fetches (no extra request) into `all_jobs.applicants_text` / `applicants_count`
+  (migration `0010_applicants`).
 
 - Resume: JD keywords render **bold** at their first appearance in the bullets,
   top to bottom across the resume (PIVOT_V3.md D17). Bullets only, literal

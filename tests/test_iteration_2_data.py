@@ -20,14 +20,14 @@ from src.config import Settings, settings
 def test_operator_block_present_and_personal_gone() -> None:
     assert settings.operator.full_name
     assert "personal" not in settings  # renamed to operator/filters/salary
-    assert settings.filters.years_ceiling == 5
+    assert settings.filters.years_ceiling == 6
     assert settings.filters.job_type == "fulltime"
     assert settings.salary.default_expected_lpa == 6.0
 
 
 def test_attribute_access_is_recursive() -> None:
     # Dotted access works several levels deep (CLAUDE.md convention).
-    assert settings.scoring.final.fit == 0.55
+    assert settings.scoring.final.fit == 0.60
     assert isinstance(settings.filters.disallowed_regions, list)
 
 

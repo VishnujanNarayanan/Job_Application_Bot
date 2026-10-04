@@ -40,6 +40,11 @@ def test_exceeds_years_ceiling() -> None:
     assert exceeds_years_ceiling(7, 5) is True
     assert exceeds_years_ceiling(5, 5) is False
     assert exceeds_years_ceiling(None, 5) is False  # unknown never rejects here
+    # The live ceiling: only an EXPLICIT requirement above 6 rejects; an
+    # unstated one parses to 0 and passes.
+    assert exceeds_years_ceiling(6, 6) is False
+    assert exceeds_years_ceiling(7, 6) is True
+    assert exceeds_years_ceiling(0, 6) is False
 
 
 def test_company_in_cooldown() -> None:
@@ -290,3 +295,66 @@ def test_scrape_linkedin_cap_and_fetch_flag(monkeypatch) -> None:
     assert seen["linkedin"]["results_wanted"] == 25
     assert seen["linkedin"]["linkedin_fetch_description"] is True
     assert seen["indeed"]["results_wanted"] == 50
+
+
+# ---------------------------------------------------------------------------
+# LinkedIn applicant count (issue #13)
+# ---------------------------------------------------------------------------
+
+#: Trimmed from the live public page of linkedin.com/jobs/view/4473167100
+#: (2026-10-04): the top-card figure JobSpy fetches and then discards.
+_TOPCARD = """
+        <figure class="num-applicants__figure topcard__flavor--metadata topcard__flavor--bullet">
+          <span class="num-applicants__icon num-applicants__icon--notify-pebble lazy-load"></span>
+          <figcaption class="num-applicants__caption">
+            Over 200 applicants
+          </figcaption>
+        </figure>
+"""
+
+
+@pytest.mark.parametrize("caption,expected", [
+    ("Be among the first 25 applicants", 24),   # FEWER than 25
+    ("139 applicants", 139),
+    ("1,024 applicants", 1024),
+    ("Over 200 applicants", 201),               # MORE than 200
+    ("No longer accepting applications", None),
+    (None, None),
+])
+def test_parse_applicants(caption, expected) -> None:
+    from src.scraper.jobspy_wrapper import parse_applicants
+
+    assert parse_applicants(caption) == expected
+
+
+def test_applicant_caption_is_read_from_the_live_page_markup() -> None:
+    from src.scraper.jobspy_wrapper import applicant_caption
+
+    assert applicant_caption(_TOPCARD) == "Over 200 applicants"
+    assert applicant_caption("<html>no top card</html>") is None
+
+
+def test_captured_captions_land_on_their_own_rows(monkeypatch) -> None:
+    """A caption captured during the scrape is merged by JobSpy row id."""
+    from src.scraper import jobspy_wrapper as jw
+
+    monkeypatch.setattr(jw.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(jw, "install_applicant_capture", lambda: None)
+    jw._APPLICANTS.clear()
+    jw._APPLICANTS["li-111"] = "139 applicants"
+
+    fake_module = types.ModuleType("jobspy")
+    fake_module.scrape_jobs = lambda **kw: _FakeDF([
+        {"site": "linkedin", "id": "li-111", "company": "A", "title": "SDE"},
+        {"site": "linkedin", "id": "li-222", "company": "B", "title": "SDE"},
+    ])
+    monkeypatch.setitem(sys.modules, "jobspy", fake_module)
+
+    jobs = {j.job_id: j for j in jw.scrape(
+        "sde", sites=["linkedin"], country="india", results_wanted=5, hours_old=1,
+        linkedin_fetch_description=True,
+    )}
+    assert jobs["linkedin-li-111"].applicants_count == 139
+    assert jobs["linkedin-li-111"].applicants_text == "139 applicants"
+    assert jobs["linkedin-li-222"].applicants_count is None
+    assert jw._APPLICANTS == {}, "captions must not leak into the next scrape"

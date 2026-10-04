@@ -38,7 +38,8 @@ affordability ratio, two lexical near-duplicate tests, a cross-entry family
 ceiling and a unique-source rule for extras. All of it is gone. The duplicates
 came from the pooling, and the re-extract rewrote every ``extra`` as a
 single-subject sentence carrying one or two keywords, so the flat ban costs no
-coverage. ``max_keyword_renders`` survives as the one cross-entry ceiling.
+coverage. ``max_keyword_renders`` survives as the one cross-entry ceiling, for
+the filler words in ``capped_keywords`` only.
 """
 
 from __future__ import annotations
@@ -187,6 +188,9 @@ class JDContext:
     posted_at: datetime | None
     scraped_at: datetime | None
     scrape_window_hours: float | None
+    #: LinkedIn's applicant count at scrape time (None when the portal shows
+    #: none). Drives success_prob; see apply_decision.applicant_score.
+    applicants_count: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +228,17 @@ def gated_terms() -> tuple[str, ...]:
     the rule entirely.
     """
     raw = getattr(settings.selection.bullets, "jd_gated_terms", None) or ()
+    return tuple(str(t) for t in raw)
+
+
+def capped_terms() -> tuple[str, ...]:
+    """Keywords held to ``max_keyword_renders`` entries per page.
+
+    Only filler words a recruiter reads as padding when repeated ("Agile"). A real
+    skill shown in several roles is stronger evidence, so it is never capped
+    (issue #14 -- the ceiling used to apply to every keyword).
+    """
+    raw = getattr(settings.selection.bullets, "capped_keywords", None) or ()
     return tuple(str(t) for t in raw)
 
 
@@ -484,6 +499,13 @@ def select_entry_bullets(
     floor = min(int(cfg.min_per_entry), cap)
     kw_cap = int(getattr(cfg, "max_keyword_renders", 0) or 0)
     kw_seen = {} if rendered_keywords is None else rendered_keywords
+    c_terms = capped_terms()
+    capped: dict[str, bool] = {}
+
+    def _is_capped(tok: str) -> bool:
+        if tok not in capped:
+            capped[tok] = any(hit(c, norm(tok)) for c in c_terms)
+        return capped[tok]
 
     # A gated bullet renders only when the advert asked for its subject, and only
     # once on the whole page. `gated_seen` is the page-level ledger; it is None
@@ -516,17 +538,20 @@ def select_entry_bullets(
             gated_seen.append(b.id)
 
     def _spent(tokens: set[str]) -> set[str]:
-        """Drop tokens already claimed their maximum number of times on this page.
+        """Drop CAPPED tokens already claimed their maximum number of times.
 
         The method permits a keyword to repeat across entries, and that stays true
-        -- this is a ceiling, not a ban. Measured: "Agile" rendered in four of six
-        entries, each time in a genuinely different sentence, so no text-similarity
-        rule could see it. The repetition lives in the keyword, so the ceiling has
-        to live there too.
+        -- this is a ceiling, not a ban, and only for the filler words in
+        ``capped_keywords``. Measured: "Agile" rendered in four of six entries,
+        each time in a genuinely different sentence, so no text-similarity rule
+        could see it. The repetition lives in the keyword, so the ceiling has to
+        live there too. Every other keyword passes untouched (issue #14).
         """
-        if not kw_cap:
+        if not kw_cap or not c_terms:
             return tokens
-        return {t for t in tokens if kw_seen.get(t, 0) < kw_cap}
+        return {
+            t for t in tokens if not _is_capped(t) or kw_seen.get(t, 0) < kw_cap
+        }
 
     block = lead_block(entry, jd, keywords)
     block_scores = {
@@ -935,6 +960,7 @@ def build_jd_context(
     posted_at: datetime | None = None,
     scraped_at: datetime | None = None,
     scrape_window_hours: float | None = None,
+    applicants_count: int | None = None,
     embed_batch_fn=None,
 ) -> JDContext:
     """Embed a parsed JD into the query facets Layer 4 scores against.
@@ -965,4 +991,5 @@ def build_jd_context(
         posted_at=posted_at,
         scraped_at=scraped_at,
         scrape_window_hours=scrape_window_hours,
+        applicants_count=applicants_count,
     )
