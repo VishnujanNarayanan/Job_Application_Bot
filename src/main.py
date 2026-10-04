@@ -293,6 +293,7 @@ def _run(dry_run: bool, log) -> int:
                 scraped_at=job.scraped_at,
                 scrape_window_hours=hours_old,
                 applicants_count=job.applicants_count,
+                jd_text=job.jd_text,
             )
             jd_kws = jd_keywords(parsed)
             result = evaluate(profile, jd_context, keywords=jd_kws)
