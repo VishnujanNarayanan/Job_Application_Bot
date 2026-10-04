@@ -71,6 +71,12 @@ class AllJobs(Base):
     salary_min_lpa: Mapped[float | None] = mapped_column(Float)
     salary_max_lpa: Mapped[float | None] = mapped_column(Float)
     salary_currency: Mapped[str | None] = mapped_column(Text)
+    # LinkedIn's applicant caption at scrape time ("139 applicants", "Over 200
+    # applicants", "Be among the first 25 applicants") and its parsed count.
+    # The capped forms store the nearest bound (24, 201). Null when the portal
+    # shows none -- only LinkedIn does. Drives success_prob (fewer = better).
+    applicants_text: Mapped[str | None] = mapped_column(Text)
+    applicants_count: Mapped[int | None] = mapped_column(Integer)
     outcome: Mapped[str | None] = mapped_column(Text)
     # The original this JD duplicates (>0.95 cosine). Self-referential FK:
     # the DB guarantees the target row exists, so the scraper must insert +
