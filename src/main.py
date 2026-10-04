@@ -238,6 +238,15 @@ def _run(dry_run: bool, log) -> int:
         short_circuit = int(cfg.scraper.short_circuit_count)
 
         for job in passing:
+            # End any open transaction BEFORE the slow part. Neon terminates a
+            # session left idle inside a transaction for 5 minutes
+            # (idle_in_transaction_session_timeout), and the parse/build calls
+            # below can idle that long when providers fall back: run
+            # 37198108418 (2026-10-04) lost its connection mid-run and rolled
+            # back every verdict (#28). Committing per job also keeps the jobs
+            # already processed if a later one crashes.
+            session.commit()
+
             # --- Layer 3: parse ---
             try:
                 parsed = parse(job)
