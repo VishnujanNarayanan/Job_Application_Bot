@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.config import settings
-from src.scorer.apply_decision import evaluate, recency_score, seniority_score
+from src.scorer.apply_decision import evaluate, recency_score
 from src.scorer.keywords import Keyword
 from src.scorer.ordering import _recency_key, order_entries
 from src.scorer.selector import (
@@ -48,6 +48,7 @@ def _jd(vec_role=None, vec_match=None, **kw) -> JDContext:
         posted_at=kw.get("posted_at"),
         scraped_at=kw.get("scraped_at"),
         scrape_window_hours=kw.get("scrape_window_hours"),
+        applicants_count=kw.get("applicants_count"),
     )
 
 
@@ -1092,10 +1093,40 @@ def test_recency_key_present_sorts_newest() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_seniority_score_from_config_and_unknown() -> None:
-    assert seniority_score("junior") == 1.0
-    assert seniority_score("lead") == 0.15
-    assert seniority_score(None) == 0.80  # YAML null key → unknown == mid
+@pytest.mark.parametrize("count,expected", [
+    (0, 1.00), (24, 1.00),        # "Be among the first 25" is stored as 24
+    (25, 0.85), (49, 0.85),
+    (50, 0.65), (139, 0.40),
+    (199, 0.40), (201, 0.15),     # "Over 200" is stored as 201
+    (None, 0.50),                 # no count: neutral, not punished
+])
+def test_applicant_score_bands(count, expected) -> None:
+    from src.scorer.apply_decision import applicant_score
+
+    assert applicant_score(count) == expected
+
+
+def test_success_prob_is_the_applicant_score_and_recency_is_not_scored() -> None:
+    """Each factor counts once: no recency term in final, none inside success_prob."""
+    from src.scorer.apply_decision import applicant_score
+
+    assert set(settings.scoring.final.as_dict()) == {"fit", "success_prob"}
+    fresh = evaluate(_full_profile(), _jd(posted_at=NOW, applicants_count=10),
+                     keywords=_kw("Python"), now=NOW)
+    stale = evaluate(_full_profile(),
+                     _jd(posted_at=NOW - timedelta(days=30), applicants_count=10),
+                     keywords=_kw("Python"), now=NOW)
+    assert fresh.success_prob == applicant_score(10)
+    # Time since posting is still recorded...
+    assert fresh.recency > stale.recency
+    # ...but does not move the score.
+    assert fresh.final_score == pytest.approx(stale.final_score)
+
+
+def test_fewer_applicants_scores_higher() -> None:
+    quiet = evaluate(_full_profile(), _jd(applicants_count=10), keywords=_kw("Python"), now=NOW)
+    busy = evaluate(_full_profile(), _jd(applicants_count=500), keywords=_kw("Python"), now=NOW)
+    assert quiet.final_score > busy.final_score
 
 
 def test_recency_score_bands() -> None:
@@ -1149,24 +1180,6 @@ def test_no_timestamp_at_all_scores_neutral_not_worst() -> None:
     assert unknown < 1.00, "nor as the freshest — it is neutral, not a bonus"
 
 
-def test_recency_discriminates_across_the_scrape_window() -> None:
-    """The bands must actually separate jobs inside `scraper.hours_old`.
-
-    Regression for the live run of 2026-08-08: the old bands topped out at
-    "over_12h", so once the lookback widened to 24h every scraped job landed in
-    the final band and recency became a constant 0.20 instead of a signal —
-    silently docking every job up to 0.08 of final score.
-    """
-    from src.config import settings
-
-    now = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
-    window = float(settings.scraper.hours_old.peak)
-    scores = {
-        recency_score(now - timedelta(hours=h), now)
-        for h in (0.5, window / 4, window / 2, window - 0.5)
-    }
-
-    assert len(scores) > 1, "recency does not vary within the scrape window"
 
 
 def test_recency_bands_are_read_in_ascending_order() -> None:
@@ -1236,9 +1249,38 @@ def test_coverage_is_the_union_and_lead_is_the_first_entry_alone() -> None:
 def test_fit_is_experience_plus_coverage() -> None:
     result = evaluate(_full_profile(), _jd(posted_at=NOW), keywords=_kw("Python"), now=NOW)
     cfg = settings.scoring.fit
-    best = max(e.score for e in result.work)
-    expected = cfg.best_experience * best + cfg.keyword_coverage * result.keyword_coverage
+    best = result.entries[0].score
+    expected = (
+        cfg.best_experience * best
+        + cfg.keyword_coverage * result.keyword_coverage
+        + cfg.keyword_repetition * result.keyword_repetition
+    )
     assert result.fit == pytest.approx(expected)
+
+
+def test_a_project_that_leads_the_page_sets_best_experience() -> None:
+    """Experience is graded on the entry a recruiter reads first, whatever its kind."""
+    profile = Profile(
+        work=[_simple_entry("e1", "Nothing relevant."),
+              _simple_entry("e2", "Nothing relevant either.")],
+        projects=[_entry("p1", "project", blocks=[_block("p1::data", bullets=[
+            _bullet("p1_0", "Kept the data current.", summary=True, block="p1::data"),
+            _bullet("p1_1", "Built pipelines in Python and Docker.", block="p1::data"),
+        ])], link="http://x")],
+        skills=[],
+    )
+    result = evaluate(
+        profile, _jd(posted_at=NOW), keywords=_kw("Python", "Docker"), now=NOW,
+    )
+    assert result.entries[0].kind == "project"
+    lead = result.entries[0].score
+    assert lead > max(e.score for e in result.work)
+    cfg = settings.scoring.fit
+    assert result.fit == pytest.approx(
+        cfg.best_experience * lead
+        + cfg.keyword_coverage * result.keyword_coverage
+        + cfg.keyword_repetition * result.keyword_repetition
+    )
 
 
 def test_evaluate_weak_match_skips_with_low_score() -> None:
@@ -1309,3 +1351,95 @@ def test_a_repeating_extra_is_barred_like_any_other_bullet() -> None:
             _kw("Python", "SQL", "Regression"), now=NOW,
         )
     assert "x1" not in [b.id for b in out.bullets]
+
+
+# ---------------------------------------------------------------------------
+# Cross-entry keyword ceiling: filler words only (issue #14)
+# ---------------------------------------------------------------------------
+
+
+def _one_bullet_entry(text):
+    return _entry("e9", blocks=[_block("e9::data", bullets=[
+        _bullet("e9_0", "Kept the data current.", summary=True, block="e9::data"),
+        _bullet("e9_1", text, block="e9::data"),
+    ])])
+
+
+def test_a_real_skill_is_never_capped_across_entries() -> None:
+    """Python already shown in two entries still counts in a third: a skill used
+    in several roles is evidence, not padding."""
+    result = select_entry_bullets(
+        _one_bullet_entry("Built pipelines in Python."), _jd(), _kw("Python"),
+        now=NOW, rendered_keywords={"Python": 2},
+    )
+    assert "Python" in result.covered
+
+
+def test_agile_is_still_capped_at_two_entries() -> None:
+    result = select_entry_bullets(
+        _one_bullet_entry("Ran Agile sprints with the team."), _jd(), _kw("Agile"),
+        now=NOW, rendered_keywords={"Agile": 2},
+    )
+    assert "Agile" not in result.covered
+
+
+def test_agile_counts_while_under_the_cap() -> None:
+    result = select_entry_bullets(
+        _one_bullet_entry("Ran Agile sprints with the team."), _jd(), _kw("Agile"),
+        now=NOW, rendered_keywords={"Agile": 1},
+    )
+    assert "Agile" in result.covered
+
+
+def test_a_jd_token_containing_a_capped_term_is_capped() -> None:
+    """"Agile/Scrum" is the same filler under another spelling."""
+    result = select_entry_bullets(
+        _one_bullet_entry("Ran Agile/Scrum ceremonies."), _jd(), _kw("Agile/Scrum"),
+        now=NOW, rendered_keywords={"Agile/Scrum": 2},
+    )
+    assert "Agile/Scrum" not in result.covered
+
+
+# ---------------------------------------------------------------------------
+# Keyword repetition (fit)
+# ---------------------------------------------------------------------------
+
+
+def _shown(*covered_sets):
+    from types import SimpleNamespace
+
+    return [SimpleNamespace(covered=set(c)) for c in covered_sets]
+
+
+def test_repetition_rewards_a_skill_shown_in_more_roles() -> None:
+    from src.scorer.apply_decision import repetition_score
+
+    once = repetition_score(_shown({"Python"}, set(), set()), _kw("Python"))
+    thrice = repetition_score(_shown({"Python"}, {"Python"}, {"Python"}), _kw("Python"))
+    assert once == pytest.approx(1 / 3)
+    assert thrice == pytest.approx(1.0)
+
+
+def test_repetition_is_capped() -> None:
+    from src.scorer.apply_decision import repetition_score
+
+    five = repetition_score(_shown(*[{"Python"}] * 5), _kw("Python"))
+    assert five == pytest.approx(1.0)
+
+
+def test_repetition_ignores_uncovered_keywords() -> None:
+    """Coverage already charges a missing keyword; repetition must not again."""
+    from src.scorer.apply_decision import repetition_score
+
+    assert repetition_score(_shown({"Python"}, {"Python"}, {"Python"}),
+                            _kw("Python", "Kafka")) == pytest.approx(1.0)
+    assert repetition_score(_shown(set()), _kw("Kafka")) == 0.0
+
+
+def test_repetition_counts_required_keywords_only() -> None:
+    from src.scorer.apply_decision import repetition_score
+
+    kws = (Keyword("Python", 1.0), Keyword("Docker", 0.5))
+    # Docker repeats three times but is a nice-to-have: it does not count.
+    score = repetition_score(_shown({"Python", "Docker"}, {"Docker"}, {"Docker"}), kws)
+    assert score == pytest.approx(1 / 3)

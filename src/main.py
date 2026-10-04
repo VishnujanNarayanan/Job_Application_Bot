@@ -287,11 +287,13 @@ def _run(dry_run: bool, log) -> int:
             # --- Layer 4: scoring ---
             # scraped_at + the window this run used let recency be inferred for
             # the listings that carry no posting date (almost all of them).
+            # Recency is recorded, not scored; the applicant count is scored.
             jd_context = build_jd_context(
                 parsed,
                 posted_at=job.posted_at,
                 scraped_at=job.scraped_at,
                 scrape_window_hours=hours_old,
+                applicants_count=job.applicants_count,
             )
             jd_kws = jd_keywords(parsed)
             result = evaluate(profile, jd_context, keywords=jd_kws)
@@ -314,6 +316,8 @@ def _run(dry_run: bool, log) -> int:
                 fit=round(result.fit, 3),
                 success_prob=round(result.success_prob, 3),
                 recency=round(result.recency, 3),
+                applicants=job.applicants_count,
+                keyword_repetition=round(result.keyword_repetition, 3),
                 project=round(result.project_score, 3),
                 role_level=parsed.role_level,
                 years_required=parsed.years_required,

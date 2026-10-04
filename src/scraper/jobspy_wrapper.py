@@ -95,6 +95,98 @@ def _job_id(site: str, raw_id: Any, job_url: str | None) -> str:
     return f"{site}-{digest}"
 
 
+# ---------------------------------------------------------------------------
+# LinkedIn applicant count
+# ---------------------------------------------------------------------------
+#
+# JobSpy returns no applicant count, but the public job page it already fetches
+# for the description (`linkedin_fetch_description`) shows one in its top card:
+# "Be among the first 25 applicants", "139 applicants", "Over 200 applicants".
+# JobSpy parses that page internally and discards the caption, so
+# :func:`install_applicant_capture` wraps its detail fetch to read the caption
+# from the SAME response -- no extra request, so no added throttle risk (hard
+# rule #4). Captions land in ``_APPLICANTS`` keyed by JobSpy's row id
+# (``li-<id>``) and are merged onto the rows in :func:`scrape`.
+
+_CAPTION = re.compile(
+    r'num-applicants__caption[^>]*>\s*([^<]+?)\s*<', re.IGNORECASE
+)
+_FIRST_N = re.compile(r"first\s+([\d,]+)", re.IGNORECASE)
+_OVER_N = re.compile(r"over\s+([\d,]+)", re.IGNORECASE)
+_N = re.compile(r"([\d,]+)\s+applicant", re.IGNORECASE)
+
+_APPLICANTS: dict[str, str] = {}
+_capture_installed = False
+
+
+def parse_applicants(caption: str | None) -> int | None:
+    """LinkedIn's applicant caption -> a count, or None when it carries none.
+
+    The two capped forms are stored as the nearest bound, so band edges stay
+    honest: "Be among the first 25" means FEWER than 25 and becomes 24; "Over
+    200" means MORE than 200 and becomes 201. The raw caption is kept alongside
+    (``applicants_text``) so the reading can always be audited.
+    """
+    if not caption:
+        return None
+    for pattern, shift in ((_FIRST_N, -1), (_OVER_N, 1), (_N, 0)):
+        m = pattern.search(caption)
+        if m:
+            return int(m.group(1).replace(",", "")) + shift
+    return None
+
+
+def applicant_caption(html: str) -> str | None:
+    """The applicant caption from a LinkedIn job page's HTML, if present."""
+    m = _CAPTION.search(html or "")
+    return " ".join(m.group(1).split()) if m else None
+
+
+def install_applicant_capture() -> None:
+    """Wrap JobSpy's LinkedIn detail fetch so it records the applicant caption.
+
+    Idempotent. The wrapper swaps the scraper's session ``get`` for the duration
+    of ONE original call, keeps the response it returns, and restores it -- the
+    original parsing runs untouched. Any failure here is swallowed: a missing
+    applicant count must never cost the description.
+    """
+    global _capture_installed
+    if _capture_installed:
+        return
+    try:
+        from jobspy.linkedin import LinkedIn
+    except ImportError as exc:  # a JobSpy layout change: lose the count, not the run
+        log.warning("applicants_capture_unavailable", error=str(exc))
+        return
+
+    original = LinkedIn._get_job_details
+
+    def _get_job_details(self, job_id: str) -> dict:
+        seen: list[Any] = []
+        real_get = self.session.get
+
+        def _get(*args, **kwargs):
+            resp = real_get(*args, **kwargs)
+            seen.append(resp)
+            return resp
+
+        self.session.get = _get
+        try:
+            details = original(self, job_id)
+        finally:
+            self.session.get = real_get
+        try:
+            caption = applicant_caption(seen[-1].text) if seen else None
+            if caption:
+                _APPLICANTS[f"li-{job_id}"] = caption
+        except Exception as exc:  # never let the count cost the description
+            log.warning("applicants_capture_failed", job_id=job_id, error=str(exc))
+        return details
+
+    LinkedIn._get_job_details = _get_job_details
+    _capture_installed = True
+
+
 def _row_to_job(row: dict[str, Any]) -> AllJobs | None:
     """Map one JobSpy row (as a dict) to an ``AllJobs``; None if unusable.
 
@@ -117,6 +209,8 @@ def _row_to_job(row: dict[str, Any]) -> AllJobs | None:
         posted_at=_as_posted_at(row.get("date_posted")),
         jd_text=_as_str(row.get("description")),
         job_type=_as_str(row.get("job_type")),
+        applicants_text=_as_str(row.get("applicants_text")),
+        applicants_count=parse_applicants(_as_str(row.get("applicants_text"))),
     )
 
 
@@ -210,6 +304,9 @@ def scrape(
     """
     from jobspy import scrape_jobs  # lazy: heavy import, network-bound
 
+    if linkedin_fetch_description and "linkedin" in sites:
+        install_applicant_capture()
+
     site_list = list(sites)
     site_groups: list[list[str]] = [[s] for s in site_list] if per_site else [site_list]
 
@@ -239,6 +336,9 @@ def scrape(
 
         # DataFrame → list[dict] keeps _row_to_job pure and pandas-agnostic.
         for record in df.to_dict(orient="records"):
+            caption = _APPLICANTS.pop(_as_str(record.get("id")) or "", None)
+            if caption:
+                record["applicants_text"] = caption
             job = _row_to_job(record)
             if job is None or job.job_id in seen:
                 continue

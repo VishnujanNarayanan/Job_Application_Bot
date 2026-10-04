@@ -144,23 +144,13 @@ def test_config_no_role_clusters_yaml(repo_root: Path) -> None:
     assert not (repo_root / "config" / "role_clusters.yaml").exists()
 
 
-def test_success_prob_weights_sum_to_one(config_path: Path) -> None:
-    """success_prob weights must sum to 1.0 (seniority + recency)."""
-    with config_path.open() as f:
-        config = yaml.safe_load(f)
-
-    sp = config["scoring"]["success_prob"]
-    total = sp["weight_seniority"] + sp["weight_recency"]
-    assert abs(total - 1.0) < 1e-9, f"success_prob weights sum to {total}, expected 1.0"
-
-
 def test_final_score_weights_sum_to_one(config_path: Path) -> None:
     """Final score weights must sum to 1.0."""
     with config_path.open() as f:
         config = yaml.safe_load(f)
 
     fw = config["scoring"]["final"]
-    total = fw["fit"] + fw["success_prob"] + fw["recency"] + fw["project"]
+    total = sum(fw.values())
     assert abs(total - 1.0) < 1e-9, f"final score weights sum to {total}, expected 1.0"
 
 
