@@ -7,6 +7,26 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Added
+
+- Keyword families (#23). `keywords.matches` widens the literal matcher, and
+  coverage, selection, bold and gap skills now use it:
+  - **Spelling rules** for any phrase: spacing and hyphens, a `.js`/`js` suffix,
+    a plural on the last word, RESTful = REST. Derived from the 142 variant groups
+    found in 7,619 distinct skill phrases across 979 parsed adverts, and covering
+    future spellings of the same shape.
+  - **`config/keyword_families.yaml`** for meaning: **variants** match both ways
+    (Postgres = PostgreSQL, k8s = Kubernetes, GCP = Google Cloud); **members**
+    imply the family one way only (a MongoDB bullet covers "NoSQL", never the
+    reverse).
+  - JD checklists de-duplicate by family ("REST APIs" + "RESTful APIs" count once).
+  - Bold marks the spelling the bullet uses ("React.js" bolds "React").
+  - **Gap skills** read the bullets as well as the skills pool, with the same
+    matcher: 316 false gaps gone across 177 matched jobs ("CI/CD pipelines" was a
+    gap in 32 of them).
+  - `hit` is unchanged, so grader parity holds; coverage now deliberately counts
+    more than the offline grader does.
+
 ### Changed
 
 - Applicant multiplier (#26): being early now **lifts** a score instead of only
