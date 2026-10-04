@@ -230,8 +230,7 @@ def _run(dry_run: bool, log) -> int:
             embeddings = embed_documents(jd_texts)
             for job, emb in zip(passing, embeddings):
                 job.jd_embedding = emb
-            session.add_all(passing)
-            session.flush()
+            passing = _upsert_scraped(session, passing)
 
         matched_count = 0
         skipped_count = 0
@@ -541,6 +540,55 @@ def _write_not_applied(session, queue: list, now: datetime, *, dry_run: bool = F
             final_score=scores.final_score if scores else None,
             not_applied_at=now,
         ))
+
+
+#: Columns a fresh scrape is allowed to refresh on a row already in all_jobs.
+#: Everything else (the parsed fields) is left for this run's re-parse to
+#: overwrite, so a parse that fails this time cannot blank what an earlier run
+#: learned.
+_SCRAPED_FIELDS = (
+    "company", "role", "site", "location", "job_url", "posted_at", "scraped_at",
+    "jd_text", "jd_embedding", "job_type", "applicants_text", "applicants_count",
+)
+
+
+def _upsert_scraped(session, jobs: list) -> list:
+    """Persist this run's passing jobs; return the instances to work on.
+
+    ``existing_job_ids`` skips only jobs already NOTIFIED, so a job rejected by
+    an earlier run comes back here to be re-scored -- and its row is already in
+    all_jobs. Adding a fresh instance for it violated the primary key and
+    crashed the whole run (2026-10-04, two runs 17 minutes apart under the
+    1-hour window, both returning the same Haystack listing). An existing row is
+    instead refreshed in place from the scrape, and that persistent row is what
+    the rest of the run mutates.
+    """
+    from sqlalchemy import select
+
+    from src.state.models import AllJobs
+
+    if not jobs:
+        return []
+    present = {
+        row.job_id: row
+        for row in session.scalars(
+            select(AllJobs).where(AllJobs.job_id.in_([j.job_id for j in jobs]))
+        )
+    }
+    out = []
+    for job in jobs:
+        row = present.get(job.job_id)
+        if row is None:
+            session.add(job)
+            out.append(job)
+            continue
+        for field in _SCRAPED_FIELDS:
+            value = getattr(job, field)
+            if value is not None:
+                setattr(row, field, value)
+        out.append(row)
+    session.flush()
+    return out
 
 
 def _ensure_all_jobs_rows(session, jobs: list) -> None:
