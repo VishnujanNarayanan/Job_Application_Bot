@@ -186,14 +186,19 @@ def applicant_score(count: int | None) -> float:
 
 
 def repetition_score(entries: list[SelectedEntry], keywords: tuple[Keyword, ...]) -> float:
-    """How many roles on the page show each required keyword the page covers.
+    """How many roles on the page show each REQUIRED keyword of the JD.
 
     A required skill demonstrated in three roles is stronger evidence than the
-    same skill in one. Per covered required keyword: ``min(entries showing it,
-    cap) / cap``, averaged. Keywords the page does not cover are left out on
-    purpose -- coverage already scores their absence, and counting it again here
-    would double-charge it. With no required keywords in the checklist, every
-    keyword stands in.
+    same skill in one. Per required keyword: ``min(entries showing it, cap) /
+    cap``, averaged over ALL required keywords -- one the page does not show
+    counts 0. With no required keywords in the checklist, every keyword stands in.
+
+    It used to average over the COVERED keywords only, which saturated: the
+    common ones (Python, SQL, Git) sit in nearly every entry, so repetition read
+    ~0.92 on every job and added a near-constant 0.11. On 2026-10-04 a Snowflake
+    Engineer advert missing Snowflake, PySpark and dbt still scored 0.917.
+    Counting the misses makes this track how many of the advert's requirements
+    the page shows AND how deeply.
 
     ``entry.covered`` is what that entry's SELECTED bullets were credited with,
     so a filler word held by ``capped_keywords`` stops counting here exactly
@@ -203,11 +208,11 @@ def repetition_score(entries: list[SelectedEntry], keywords: tuple[Keyword, ...]
     required = {k.token for k in keywords if k.weight >= 1.0} or {
         k.token for k in keywords
     }
-    counts = {t: sum(1 for e in entries if t in e.covered) for t in required}
-    shown = [n for n in counts.values() if n > 0]
-    if not shown:
+    if not required:
         return 0.0
-    return sum(min(n, cap) / cap for n in shown) / len(shown)
+    return sum(
+        min(sum(1 for e in entries if t in e.covered), cap) / cap for t in required
+    ) / len(required)
 
 
 def evaluate(

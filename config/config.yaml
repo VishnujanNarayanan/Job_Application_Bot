@@ -385,9 +385,10 @@ scoring:
     #
     # best_experience is the score of the entry that LEADS the page, of any kind
     # (a project led 70 of 84 stored resumes). keyword_repetition rewards a
-    # required skill shown in several roles: for each required JD keyword the
-    # page covers, min(entries showing it, repetition_cap) / repetition_cap,
-    # averaged. Filler words are capped separately (selection.bullets.
+    # required skill shown in several roles: for EVERY required JD keyword,
+    # min(entries showing it, repetition_cap) / repetition_cap, averaged -- a
+    # keyword the page misses counts 0, so this cannot max out on Python/SQL/Git
+    # alone. Filler words are capped separately (selection.bullets.
     # capped_keywords), so they cannot farm this term.
     best_experience: 0.45
     keyword_coverage: 0.35
