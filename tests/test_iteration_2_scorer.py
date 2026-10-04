@@ -1427,13 +1427,15 @@ def test_repetition_is_capped() -> None:
     assert five == pytest.approx(1.0)
 
 
-def test_repetition_ignores_uncovered_keywords() -> None:
-    """Coverage already charges a missing keyword; repetition must not again."""
+def test_a_missing_required_keyword_counts_zero() -> None:
+    """Averaged over every required keyword, so common skills alone cannot max it
+    out (2026-10-04: a Snowflake advert missing Snowflake scored 0.917)."""
     from src.scorer.apply_decision import repetition_score
 
     assert repetition_score(_shown({"Python"}, {"Python"}, {"Python"}),
-                            _kw("Python", "Kafka")) == pytest.approx(1.0)
+                            _kw("Python", "Kafka")) == pytest.approx(0.5)
     assert repetition_score(_shown(set()), _kw("Kafka")) == 0.0
+    assert repetition_score(_shown({"Python"}), ()) == 0.0
 
 
 def test_repetition_counts_required_keywords_only() -> None:

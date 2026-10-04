@@ -23,7 +23,9 @@ and this project loosely tracks iterations rather than semver.
     The lead entry is the one that heads the page, of any kind; it used to be
     salaried employment only, though a project led 70 of 84 stored resumes.
     Keyword repetition rewards a required JD skill shown in several roles (capped
-    at 3). The separate `project` term is gone.
+    at 3), averaged over **every** required keyword, with a missing one counting 0.
+    Averaging over covered keywords only saturated at ~0.92 on every job. The
+    separate `project` term is gone.
 - Years filter: reject only when the JD explicitly asks for **more than 6** years
   (was 5). A JD stating no years parses to 0 and passes.
 - Keyword ceiling (#14): `max_keyword_renders` now applies only to
