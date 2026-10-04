@@ -305,10 +305,9 @@ class JDParsed(BaseModel):
         full call against a token-per-day cap that the same run went on to
         exhaust.
 
-        "mid" is not a guess dressed as data — it is the same value
-        ``scoring.success_prob.seniority_scores`` already assigns to the
-        ``null`` key (0.80), so the score is identical to treating it as
-        unknown. This only makes that agreement survive the type system.
+        "mid" is not a guess dressed as data: role_level no longer feeds the
+        score at all (success_prob is recency only), so this only keeps an
+        unstated level from costing the whole call.
         """
         return "mid" if value is None else value
 

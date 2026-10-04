@@ -142,6 +142,7 @@ def backfill(limit: int | None = None, dry_run: bool = False) -> dict[str, int]:
                     parsed,
                     posted_at=job.posted_at,
                     scraped_at=job.scraped_at,
+                    applicants_count=job.applicants_count,
                 ),
                 keywords=jd_keywords(parsed),
             )

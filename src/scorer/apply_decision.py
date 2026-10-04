@@ -9,11 +9,17 @@ quotas and NO top-N picking (CLAUDE.md hard rule #14).
 
 Formulas (PIVOT_V3.md D6 + config.scoring):
 
-    fit          = best_experience*0.55 + keyword_coverage*0.45
-    success_prob = seniority*0.60 + recency*0.40
-    recency      = banded on hours since posted
-    final        = fit*0.55 + success_prob*0.30 + recency*0.10 + project*0.05
-    apply        = final >= 0.50
+    fit          = lead_entry*0.45 + keyword_coverage*0.35 + keyword_repetition*0.20
+    success_prob = applicant score, banded on LinkedIn's applicant count
+    final        = fit*0.60 + success_prob*0.40
+    apply        = final >= scoring.apply_threshold
+
+Each factor is counted once (issue #13). Recency used to enter both inside
+success_prob and as its own 0.10 term -- an undeclared 22% of the score -- and the
+1-hour scrape window then made it identical for every job. It is still computed
+and recorded (``recency``), but no longer scored. success_prob also carried a
+role_level seniority term, removed so the years ceiling is the only experience
+gate.
 
 ``keyword_coverage`` replaced ``selected_summary*0.20 + avg_skill_pool_match*0.30``.
 Both of those measured cosine against content the Headless template does not put on
@@ -55,6 +61,7 @@ class SelectionResult:
     final_score: float
     fit: float
     success_prob: float
+    #: Time since posting, banded. RECORDED, NOT SCORED (see module docstring).
     recency: float
     project_score: float
     #: Work entries then project entries, in render order.
@@ -69,13 +76,8 @@ class SelectionResult:
     lead_entry_coverage: float
     jd_keywords: tuple[Keyword, ...] = ()
     reason_category: str | None = None
-
-
-def seniority_score(role_level: str | None) -> float:
-    """Map a Gemini-parsed role_level to its seniority weight (config)."""
-    scores = settings.scoring.success_prob.seniority_scores.as_dict()
-    # YAML `null:` parses to a None key — used when role_level is unknown.
-    return float(scores.get(role_level, scores.get(None, 0.80)))
+    #: Mean over covered required keywords of min(entries showing it, cap) / cap.
+    keyword_repetition: float = 0.0
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -165,6 +167,49 @@ def recency_score(
     return float(cfg.default)
 
 
+def applicant_score(count: int | None) -> float:
+    """Band LinkedIn's applicant count: fewer applicants scores higher.
+
+    Bands come from ``scoring.success_prob.applicant_bands`` (first ``under``
+    that the count is below wins); 200+ scores ``default``. No count at all --
+    a non-LinkedIn portal, a page without the caption, or a row from before
+    capture existed -- scores ``unknown``, a neutral midpoint, because an absent
+    measurement is not a crowded posting.
+    """
+    cfg = settings.scoring.success_prob
+    if count is None:
+        return float(cfg.unknown)
+    for band in sorted(cfg.applicant_bands, key=lambda b: int(b["under"])):
+        if count < int(band["under"]):
+            return float(band["score"])
+    return float(cfg.default)
+
+
+def repetition_score(entries: list[SelectedEntry], keywords: tuple[Keyword, ...]) -> float:
+    """How many roles on the page show each required keyword the page covers.
+
+    A required skill demonstrated in three roles is stronger evidence than the
+    same skill in one. Per covered required keyword: ``min(entries showing it,
+    cap) / cap``, averaged. Keywords the page does not cover are left out on
+    purpose -- coverage already scores their absence, and counting it again here
+    would double-charge it. With no required keywords in the checklist, every
+    keyword stands in.
+
+    ``entry.covered`` is what that entry's SELECTED bullets were credited with,
+    so a filler word held by ``capped_keywords`` stops counting here exactly
+    where it stops counting for coverage.
+    """
+    cap = max(1, int(settings.scoring.fit.repetition_cap))
+    required = {k.token for k in keywords if k.weight >= 1.0} or {
+        k.token for k in keywords
+    }
+    counts = {t: sum(1 for e in entries if t in e.covered) for t in required}
+    shown = [n for n in counts.values() if n > 0]
+    if not shown:
+        return 0.0
+    return sum(min(n, cap) / cap for n in shown) / len(shown)
+
+
 def evaluate(
     profile: Profile,
     jd: JDContext,
@@ -184,7 +229,6 @@ def evaluate(
     entries = order_entries(select_top(profile, jd, keywords, now=now))
     work = [e for e in entries if e.kind != "project"]
     projects = [e for e in entries if e.kind == "project"]
-    jobs = [e for e in work if e.employment_type == "employment"]
 
     # The cross-entry keyword ceiling applies to what actually RENDERS, so it runs
     # here rather than inside scoring: entries were ranked on their own merits,
@@ -215,9 +259,15 @@ def evaluate(
         work = [e for e in entries if e.kind != "project"]
         projects = [e for e in entries if e.kind == "project"]
 
-    # Only real employment sets the experience score. A freelance engagement that
-    # happens to match well should not stand in for having held the job.
-    best_experience = max((e.score for e in jobs), default=0.0)
+    # The entry that leads the page sets the experience score, whatever its kind.
+    # It used to be salaried employment only, but a project led 70 of 84 stored
+    # resumes (2026-10-04): fit was graded on an entry sitting second or lower
+    # while the one a recruiter reads first went uncounted. order_entries sorts by
+    # score and only ever promotes the job to position 2, so entries[0] is also
+    # the best-scoring entry of any kind.
+    best_experience = entries[0].score if entries else 0.0
+    # Reported for the logs only; it no longer enters the score (the lead entry
+    # already is the best project whenever a project leads).
     best_project = max((e.score for e in projects), default=0.0)
 
     # The union of the per-entry covered sets, not a re-scan of the text: an
@@ -229,29 +279,26 @@ def evaluate(
     lead_entry_coverage = entries[0].coverage if entries else 0.0
 
     fit_cfg = settings.scoring.fit
+    keyword_repetition = repetition_score(entries, keywords)
     fit = (
         fit_cfg.best_experience * best_experience
         + fit_cfg.keyword_coverage * keyword_coverage
+        + fit_cfg.keyword_repetition * keyword_repetition
     )
 
-    sp_cfg = settings.scoring.success_prob
+    # Recorded for every job, never scored.
     recency = recency_score(
         jd.posted_at,
         now,
         scraped_at=jd.scraped_at,
         window_hours=jd.scrape_window_hours,
     )
-    success_prob = (
-        sp_cfg.weight_seniority * seniority_score(jd.role_level)
-        + sp_cfg.weight_recency * recency
-    )
+    success_prob = applicant_score(jd.applicants_count)
 
     final_cfg = settings.scoring.final
     final_score = (
         final_cfg.fit * fit
         + final_cfg.success_prob * success_prob
-        + final_cfg.recency * recency
-        + final_cfg.project * best_project
     )
 
     apply = final_score >= settings.scoring.apply_threshold
@@ -267,6 +314,7 @@ def evaluate(
         projects=projects,
         keyword_coverage=keyword_coverage,
         lead_entry_coverage=lead_entry_coverage,
+        keyword_repetition=keyword_repetition,
         jd_keywords=keywords,
         reason_category=None if apply else LOW_SCORE,
     )
