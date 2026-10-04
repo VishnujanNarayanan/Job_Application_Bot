@@ -406,15 +406,14 @@ scoring:
     # when fit started grading the lead entry of ANY kind: with a project leading,
     # the same score would have counted twice.
     #
-    # final = fit x (applicant_floor + (1 - applicant_floor) x success_prob)
+    # final = min(max_score, fit x success_prob)
     #
-    # Applicants MULTIPLY fit rather than add to it (#16). As an added 0.40 term
-    # they were a near-constant: in live runs nearly every job reads "first 25",
-    # so every job started at ~0.42 and scores bunched at 0.55-0.75. As a
-    # multiplier, a job with under 25 applicants keeps 100% of its fit and the
-    # most crowded keeps `applicant_floor` of it -- so a strong fit always
-    # outranks a weak fit with few applicants, and the spread comes from fit.
-    applicant_floor: 0.65  # was 0.70; lowered to reward early applicants more (#18)
+    # success_prob is the APPLICANT MULTIPLIER (#26): it boosts early postings and
+    # penalises crowded ones, neutral at `scoring.success_prob.neutral_at`
+    # applicants. It used to cap at x1.0 (#16, #18), which made being early a
+    # protection but never a reward -- a near-miss fit (Staffnix 0.450, first 25)
+    # could not pass however early. Now an early posting can lift it over.
+    max_score: 1.0
   # How many DISTINCT job ads a term must appear in before it joins the
   # technology vocabulary that Layer 3 scans each JD against. Recurrence is
   # what separates a technology from a hallucination: an invented skill does
@@ -435,12 +434,11 @@ scoring:
   # provisional caveat as the selection thresholds above — re-measure after the
   # bullet-extract re-run.
   #
-  # PROVISIONAL 0.50 (2026-10-04), set for the first live run of the #13
-  # scoring rework (final = 0.60 fit + 0.40 applicant score). The 0.372 p95 was
-  # measured on the old formula and would pass most jobs under the new one: a
-  # typical fit contributes ~0.24 and the applicant score up to 0.40. Re-measure
-  # from the job_scored logs once real applicant counts have accumulated.
-  apply_threshold: 0.50
+  # 0.65 (2026-10-04, #26), set with the 0.5-1.5 applicant multiplier: a
+  # first-25 posting needs fit 0.43 (~18% of scored jobs), one at 100
+  # applicants needs 0.65 (~4%). Re-measure from the job_scored logs once the
+  # coverage fixes (#23, #24, #25) shift the fit distribution.
+  apply_threshold: 0.65
 
   fit:
     # Weights sum to 1.0.
@@ -478,29 +476,26 @@ scoring:
       low: 0.22
       high: 0.40
 
-  # success_prob = applicant score, and nothing else: FEWER applicants scores
-  # higher. Read from LinkedIn's public job page at scrape time
-  # (all_jobs.applicants_count). Seniority was dropped from scoring --
-  # years_ceiling is the only experience gate -- and time since posting moved
-  # out of the score because the 1-hour scrape window made it identical for
-  # every job (issue #13). Bands: first match wins, ascending by `under`.
-  # "Be among the first 25" is stored as 24 and "Over 200" as 201.
+  # success_prob = the applicant multiplier, and nothing else: FEWER applicants
+  # scores higher. Read from LinkedIn's public job page at scrape time
+  # (all_jobs.applicants_count). Linear in the count between three anchors:
+  # at or below `boost_full_at` -> `max`, at `neutral_at` -> 1.0, at or above
+  # `penalty_full_at` -> `min`. "Be among the first 25" is stored as 24 and
+  # "Over 200" as 201. Seniority and time since posting are not scored (#13).
+  #
+  # With apply_threshold 0.65: a first-25 posting needs fit 0.43, one at 100
+  # applicants needs 0.65, and past ~185 applicants nothing can pass -- crowded
+  # postings are filtered out in effect (accepted, #26).
   success_prob:
-    applicant_bands:
-      - under: 25
-        score: 1.00
-      - under: 50
-        score: 0.85
-      - under: 100
-        score: 0.65
-      - under: 200
-        score: 0.40
-    # 200 or more.
-    default: 0.15
+    max: 1.50
+    min: 0.50
+    boost_full_at: 24
+    neutral_at: 100
+    penalty_full_at: 200
     # No count: a non-LinkedIn portal, a page without the caption, or a row
     # scraped before counts were captured. Neutral -- an absent measurement
     # neither rewards nor punishes a job.
-    unknown: 0.50
+    unknown: 1.00
 
   # RECORDED, NOT SCORED. Time since posting is still computed for every job and
   # stored in applied/not_applied.recency_score (and logged), so it stays
