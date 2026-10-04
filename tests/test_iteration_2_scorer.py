@@ -1110,7 +1110,7 @@ def test_success_prob_is_the_applicant_score_and_recency_is_not_scored() -> None
     """Each factor counts once: no recency term in final, none inside success_prob."""
     from src.scorer.apply_decision import applicant_score
 
-    assert set(settings.scoring.final.as_dict()) == {"fit", "success_prob"}
+    assert set(settings.scoring.final.as_dict()) == {"applicant_floor"}
     fresh = evaluate(_full_profile(), _jd(posted_at=NOW, applicants_count=10),
                      keywords=_kw("Python"), now=NOW)
     stale = evaluate(_full_profile(),
@@ -1246,12 +1246,15 @@ def test_coverage_is_the_union_and_lead_is_the_first_entry_alone() -> None:
     assert result.keyword_coverage < 1.0
 
 
-def test_fit_is_experience_plus_coverage() -> None:
+def test_fit_is_lead_entry_plus_coverage_plus_repetition() -> None:
+    from src.scorer.apply_decision import lead_entry_score
+
     result = evaluate(_full_profile(), _jd(posted_at=NOW), keywords=_kw("Python"), now=NOW)
     cfg = settings.scoring.fit
-    best = result.entries[0].score
+    lead, _ = lead_entry_score(result.entries[0])
+    assert result.lead_entry == pytest.approx(lead)
     expected = (
-        cfg.best_experience * best
+        cfg.lead_entry * lead
         + cfg.keyword_coverage * result.keyword_coverage
         + cfg.keyword_repetition * result.keyword_repetition
     )
@@ -1273,11 +1276,13 @@ def test_a_project_that_leads_the_page_sets_best_experience() -> None:
         profile, _jd(posted_at=NOW), keywords=_kw("Python", "Docker"), now=NOW,
     )
     assert result.entries[0].kind == "project"
-    lead = result.entries[0].score
-    assert lead > max(e.score for e in result.work)
+    assert result.entries[0].score > max(e.score for e in result.work)
+    from src.scorer.apply_decision import lead_entry_score
+
+    lead, _ = lead_entry_score(result.entries[0])
     cfg = settings.scoring.fit
     assert result.fit == pytest.approx(
-        cfg.best_experience * lead
+        cfg.lead_entry * lead
         + cfg.keyword_coverage * result.keyword_coverage
         + cfg.keyword_repetition * result.keyword_repetition
     )
@@ -1427,13 +1432,15 @@ def test_repetition_is_capped() -> None:
     assert five == pytest.approx(1.0)
 
 
-def test_repetition_ignores_uncovered_keywords() -> None:
-    """Coverage already charges a missing keyword; repetition must not again."""
+def test_a_missing_required_keyword_counts_zero() -> None:
+    """Averaged over every required keyword, so common skills alone cannot max it
+    out (2026-10-04: a Snowflake advert missing Snowflake scored 0.917)."""
     from src.scorer.apply_decision import repetition_score
 
     assert repetition_score(_shown({"Python"}, {"Python"}, {"Python"}),
-                            _kw("Python", "Kafka")) == pytest.approx(1.0)
+                            _kw("Python", "Kafka")) == pytest.approx(0.5)
     assert repetition_score(_shown(set()), _kw("Kafka")) == 0.0
+    assert repetition_score(_shown({"Python"}), ()) == 0.0
 
 
 def test_repetition_counts_required_keywords_only() -> None:
@@ -1443,3 +1450,48 @@ def test_repetition_counts_required_keywords_only() -> None:
     # Docker repeats three times but is a nice-to-have: it does not count.
     score = repetition_score(_shown({"Python", "Docker"}, {"Docker"}, {"Docker"}), kws)
     assert score == pytest.approx(1 / 3)
+
+
+# ---------------------------------------------------------------------------
+# Calibration and the applicant multiplier (#16)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (0.10, 0.0), (0.22, 0.0),      # at or below the measured p5 -> 0
+    (0.31, 0.5),                   # midpoint of 0.22-0.40
+    (0.40, 1.0), (0.60, 1.0),      # at or above p95 -> 1, clamped
+])
+def test_similarity_is_scaled_to_its_measured_range(raw, expected) -> None:
+    from src.scorer.apply_decision import scale_similarity
+
+    assert scale_similarity(raw) == pytest.approx(expected)
+
+
+def test_lead_entry_blends_scaled_similarity_and_lead_coverage() -> None:
+    from types import SimpleNamespace
+
+    from src.scorer.apply_decision import lead_entry_score
+
+    lead, sim = lead_entry_score(SimpleNamespace(similarity=0.31, coverage=0.8))
+    assert sim == pytest.approx(0.5)
+    assert lead == pytest.approx(0.5 * 0.5 + 0.5 * 0.8)
+    assert lead_entry_score(None) == (0.0, 0.0)
+
+
+def test_applicants_multiply_fit_between_the_floor_and_one() -> None:
+    quiet = evaluate(_full_profile(), _jd(applicants_count=10), keywords=_kw("Python"), now=NOW)
+    busy = evaluate(_full_profile(), _jd(applicants_count=500), keywords=_kw("Python"), now=NOW)
+    floor = float(settings.scoring.final.applicant_floor)
+    # Under 25 applicants keeps all of fit...
+    assert quiet.final_score == pytest.approx(quiet.fit)
+    # ...the most crowded keeps floor + (1 - floor) x 0.15 of it.
+    assert busy.final_score == pytest.approx(busy.fit * (floor + (1 - floor) * 0.15))
+
+
+def test_a_strong_fit_outranks_a_weak_fit_with_few_applicants() -> None:
+    """The multiplier lets crowding separate similar fits, never rescue a poor one."""
+    floor = float(settings.scoring.final.applicant_floor)
+    strong_crowded = 0.60 * (floor + (1 - floor) * 0.15)
+    weak_quiet = 0.40 * (floor + (1 - floor) * 1.00)
+    assert strong_crowded > weak_quiet

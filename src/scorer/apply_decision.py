@@ -9,10 +9,16 @@ quotas and NO top-N picking (CLAUDE.md hard rule #14).
 
 Formulas (PIVOT_V3.md D6 + config.scoring):
 
+    similarity_s = clamp((lead similarity - 0.22) / (0.40 - 0.22), 0, 1)
+    lead_entry   = similarity_s*0.50 + lead_coverage*0.50
     fit          = lead_entry*0.45 + keyword_coverage*0.35 + keyword_repetition*0.20
     success_prob = applicant score, banded on LinkedIn's applicant count
-    final        = fit*0.60 + success_prob*0.40
+    final        = fit * (0.70 + 0.30*success_prob)
     apply        = final >= scoring.apply_threshold
+
+Similarity is calibrated to its measured range and applicants multiply fit
+rather than adding to it (#16): raw similarity barely moved the score, and an
+added applicant term was a near-constant +0.40 that bunched every live score.
 
 Each factor is counted once (issue #13). Recency used to enter both inside
 success_prob and as its own 0.10 term -- an undeclared 22% of the score -- and the
@@ -76,8 +82,11 @@ class SelectionResult:
     lead_entry_coverage: float
     jd_keywords: tuple[Keyword, ...] = ()
     reason_category: str | None = None
-    #: Mean over covered required keywords of min(entries showing it, cap) / cap.
+    #: Mean over required keywords of min(entries showing it, cap) / cap.
     keyword_repetition: float = 0.0
+    #: The lead entry's fit part and the calibrated similarity inside it.
+    lead_entry: float = 0.0
+    similarity_scaled: float = 0.0
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -185,15 +194,43 @@ def applicant_score(count: int | None) -> float:
     return float(cfg.default)
 
 
+def scale_similarity(similarity: float) -> float:
+    """Map raw cosine onto its measured range: ``low`` -> 0, ``high`` -> 1, clamped.
+
+    Bullet-vs-JD cosine lives in a narrow band (0.22-0.40 for 90% of jobs), so a
+    weight on the raw number buys almost no influence. Calibrating first makes
+    the weight mean what it says.
+    """
+    cfg = settings.scoring.fit.similarity_scale
+    low, high = float(cfg.low), float(cfg.high)
+    if high <= low:
+        return 0.0
+    return min(1.0, max(0.0, (similarity - low) / (high - low)))
+
+
+def lead_entry_score(lead: SelectedEntry | None) -> tuple[float, float]:
+    """``(lead_entry, similarity_scaled)`` for the entry heading the page."""
+    if lead is None:
+        return 0.0, 0.0
+    w = settings.scoring.fit.lead_entry_weights
+    sim = scale_similarity(float(lead.similarity))
+    return float(w.similarity) * sim + float(w.coverage) * float(lead.coverage), sim
+
+
 def repetition_score(entries: list[SelectedEntry], keywords: tuple[Keyword, ...]) -> float:
-    """How many roles on the page show each required keyword the page covers.
+    """How many roles on the page show each REQUIRED keyword of the JD.
 
     A required skill demonstrated in three roles is stronger evidence than the
-    same skill in one. Per covered required keyword: ``min(entries showing it,
-    cap) / cap``, averaged. Keywords the page does not cover are left out on
-    purpose -- coverage already scores their absence, and counting it again here
-    would double-charge it. With no required keywords in the checklist, every
-    keyword stands in.
+    same skill in one. Per required keyword: ``min(entries showing it, cap) /
+    cap``, averaged over ALL required keywords -- one the page does not show
+    counts 0. With no required keywords in the checklist, every keyword stands in.
+
+    It used to average over the COVERED keywords only, which saturated: the
+    common ones (Python, SQL, Git) sit in nearly every entry, so repetition read
+    ~0.92 on every job and added a near-constant 0.11. On 2026-10-04 a Snowflake
+    Engineer advert missing Snowflake, PySpark and dbt still scored 0.917.
+    Counting the misses makes this track how many of the advert's requirements
+    the page shows AND how deeply.
 
     ``entry.covered`` is what that entry's SELECTED bullets were credited with,
     so a filler word held by ``capped_keywords`` stops counting here exactly
@@ -203,11 +240,11 @@ def repetition_score(entries: list[SelectedEntry], keywords: tuple[Keyword, ...]
     required = {k.token for k in keywords if k.weight >= 1.0} or {
         k.token for k in keywords
     }
-    counts = {t: sum(1 for e in entries if t in e.covered) for t in required}
-    shown = [n for n in counts.values() if n > 0]
-    if not shown:
+    if not required:
         return 0.0
-    return sum(min(n, cap) / cap for n in shown) / len(shown)
+    return sum(
+        min(sum(1 for e in entries if t in e.covered), cap) / cap for t in required
+    ) / len(required)
 
 
 def evaluate(
@@ -259,13 +296,12 @@ def evaluate(
         work = [e for e in entries if e.kind != "project"]
         projects = [e for e in entries if e.kind == "project"]
 
-    # The entry that leads the page sets the experience score, whatever its kind.
-    # It used to be salaried employment only, but a project led 70 of 84 stored
-    # resumes (2026-10-04): fit was graded on an entry sitting second or lower
-    # while the one a recruiter reads first went uncounted. order_entries sorts by
-    # score and only ever promotes the job to position 2, so entries[0] is also
-    # the best-scoring entry of any kind.
-    best_experience = entries[0].score if entries else 0.0
+    # The entry that leads the page is graded in fit (lead_entry_score below),
+    # whatever its kind. It used to be salaried employment only, but a project led
+    # 70 of 84 stored resumes (2026-10-04): fit was graded on an entry sitting
+    # second or lower while the one a recruiter reads first went uncounted.
+    # order_entries sorts by score and only ever promotes the job to position 2,
+    # so entries[0] is also the best-scoring entry of any kind.
     # Reported for the logs only; it no longer enters the score (the lead entry
     # already is the best project whenever a project leads).
     best_project = max((e.score for e in projects), default=0.0)
@@ -280,8 +316,9 @@ def evaluate(
 
     fit_cfg = settings.scoring.fit
     keyword_repetition = repetition_score(entries, keywords)
+    lead_entry, similarity_scaled = lead_entry_score(entries[0] if entries else None)
     fit = (
-        fit_cfg.best_experience * best_experience
+        fit_cfg.lead_entry * lead_entry
         + fit_cfg.keyword_coverage * keyword_coverage
         + fit_cfg.keyword_repetition * keyword_repetition
     )
@@ -295,11 +332,8 @@ def evaluate(
     )
     success_prob = applicant_score(jd.applicants_count)
 
-    final_cfg = settings.scoring.final
-    final_score = (
-        final_cfg.fit * fit
-        + final_cfg.success_prob * success_prob
-    )
+    floor = float(settings.scoring.final.applicant_floor)
+    final_score = fit * (floor + (1.0 - floor) * success_prob)
 
     apply = final_score >= settings.scoring.apply_threshold
     return SelectionResult(
@@ -315,6 +349,8 @@ def evaluate(
         keyword_coverage=keyword_coverage,
         lead_entry_coverage=lead_entry_coverage,
         keyword_repetition=keyword_repetition,
+        lead_entry=lead_entry,
+        similarity_scaled=similarity_scaled,
         jd_keywords=keywords,
         reason_category=None if apply else LOW_SCORE,
     )
