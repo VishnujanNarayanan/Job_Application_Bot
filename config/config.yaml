@@ -344,8 +344,16 @@ scoring:
     # an undeclared 22% of the score. The separate `project` term (0.05) went
     # when fit started grading the lead entry of ANY kind: with a project leading,
     # the same score would have counted twice.
-    fit: 0.60
-    success_prob: 0.40
+    #
+    # final = fit x (applicant_floor + (1 - applicant_floor) x success_prob)
+    #
+    # Applicants MULTIPLY fit rather than add to it (#16). As an added 0.40 term
+    # they were a near-constant: in live runs nearly every job reads "first 25",
+    # so every job started at ~0.42 and scores bunched at 0.55-0.75. As a
+    # multiplier, a job with under 25 applicants keeps 100% of its fit and the
+    # most crowded keeps `applicant_floor` of it -- so a strong fit always
+    # outranks a weak fit with few applicants, and the spread comes from fit.
+    applicant_floor: 0.70
   # How many DISTINCT job ads a term must appear in before it joins the
   # technology vocabulary that Layer 3 scans each JD against. Recurrence is
   # what separates a technology from a hallucination: an invented skill does
@@ -383,17 +391,31 @@ scoring:
     # weighted fraction of the JD's own qualifications that the SELECTED bullets
     # literally contain (src/scorer/keywords.py).
     #
-    # best_experience is the score of the entry that LEADS the page, of any kind
-    # (a project led 70 of 84 stored resumes). keyword_repetition rewards a
+    # lead_entry grades the entry that LEADS the page, of any kind (a project
+    # led 70 of 84 stored resumes), on two things: is it the same KIND of work
+    # (similarity, calibrated below) and does it state the JD's keywords (its
+    # own coverage). keyword_repetition rewards a
     # required skill shown in several roles: for EVERY required JD keyword,
     # min(entries showing it, repetition_cap) / repetition_cap, averaged -- a
     # keyword the page misses counts 0, so this cannot max out on Python/SQL/Git
     # alone. Filler words are capped separately (selection.bullets.
     # capped_keywords), so they cannot farm this term.
-    best_experience: 0.45
+    lead_entry: 0.45
     keyword_coverage: 0.35
     keyword_repetition: 0.20
     repetition_cap: 3
+    # lead_entry = similarity x scaled + coverage x lead coverage.
+    lead_entry_weights:
+      similarity: 0.50
+      coverage: 0.50
+    # Similarity is calibrated to its MEASURED range before it is weighted (#16).
+    # Raw bullet-vs-JD cosine sits in 0.22-0.40 for 90% of jobs (p5 / p95 over
+    # 648 scored jobs, 2026-10-04), so used raw it moved the final score by
+    # ~0.007 whatever its weight. Rescaled, `low` maps to 0 and `high` to 1
+    # (clamped). Re-measure as the corpus grows.
+    similarity_scale:
+      low: 0.22
+      high: 0.40
 
   # success_prob = applicant score, and nothing else: FEWER applicants scores
   # higher. Read from LinkedIn's public job page at scrape time

@@ -9,6 +9,15 @@ and this project loosely tracks iterations rather than semver.
 
 ### Changed
 
+- Scoring calibration (#16). Scores bunched at 0.55–0.75 because applicants
+  were an added, near-constant +0.40 and raw similarity barely moved anything.
+  - `final = fit × (0.70 + 0.30 × applicant_score)`: applicants **multiply** fit.
+    Under 25 applicants keeps 100% of fit; 200+ keeps 74.5%. A strong fit always
+    outranks a weak fit with few applicants.
+  - `lead_entry = 0.50 × similarity_scaled + 0.50 × lead_coverage`, where
+    similarity is rescaled from its measured p5–p95 (0.22–0.40) onto 0–1.
+    `fit = 0.45 × lead_entry + 0.35 × coverage + 0.20 × repetition`.
+
 - Scoring rework (#13). `final = 0.60 × fit + 0.40 × success_prob`; every factor
   now counts once.
   - `success_prob` is the **applicant score**: LinkedIn's applicant count, banded so

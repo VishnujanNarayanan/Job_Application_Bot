@@ -316,6 +316,8 @@ def _run(dry_run: bool, log) -> int:
                 success_prob=round(result.success_prob, 3),
                 recency=round(result.recency, 3),
                 applicants=job.applicants_count,
+                lead_entry=round(result.lead_entry, 3),
+                similarity_scaled=round(result.similarity_scaled, 3),
                 keyword_repetition=round(result.keyword_repetition, 3),
                 project=round(result.project_score, 3),
                 role_level=parsed.role_level,
