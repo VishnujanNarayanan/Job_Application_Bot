@@ -13,7 +13,7 @@ Formulas (PIVOT_V3.md D6 + config.scoring):
     lead_entry   = similarity_s*0.50 + lead_coverage*0.50
     fit          = lead_entry*0.45 + keyword_coverage*0.35 + keyword_repetition*0.20
     success_prob = applicant score, banded on LinkedIn's applicant count
-    final        = fit * (0.70 + 0.30*success_prob)
+    final        = fit * (0.65 + 0.35*success_prob)
     apply        = final >= scoring.apply_threshold
 
 Similarity is calibrated to its measured range and applicants multiply fit
