@@ -27,7 +27,7 @@ def test_operator_block_present_and_personal_gone() -> None:
 
 def test_attribute_access_is_recursive() -> None:
     # Dotted access works several levels deep (CLAUDE.md convention).
-    assert settings.scoring.final.applicant_floor == 0.70
+    assert settings.scoring.final.applicant_floor == 0.65
     assert isinstance(settings.filters.disallowed_regions, list)
 
 

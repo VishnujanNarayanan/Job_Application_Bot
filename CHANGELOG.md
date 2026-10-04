@@ -11,8 +11,9 @@ and this project loosely tracks iterations rather than semver.
 
 - Scoring calibration (#16). Scores bunched at 0.55–0.75 because applicants
   were an added, near-constant +0.40 and raw similarity barely moved anything.
-  - `final = fit × (0.70 + 0.30 × applicant_score)`: applicants **multiply** fit.
-    Under 25 applicants keeps 100% of fit; 200+ keeps 74.5%. A strong fit always
+  - `final = fit × (0.65 + 0.35 × applicant_score)`: applicants **multiply** fit.
+    Under 25 applicants keeps 100% of fit; 200+ keeps 70.25% (floor 0.70 in #16,
+    lowered to 0.65 in #18 to reward early applicants more). A strong fit always
     outranks a weak fit with few applicants.
   - `lead_entry = 0.50 × similarity_scaled + 0.50 × lead_coverage`, where
     similarity is rescaled from its measured p5–p95 (0.22–0.40) onto 0–1.
