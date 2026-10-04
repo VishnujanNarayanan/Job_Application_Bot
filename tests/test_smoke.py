@@ -144,8 +144,8 @@ def test_config_no_role_clusters_yaml(repo_root: Path) -> None:
     assert not (repo_root / "config" / "role_clusters.yaml").exists()
 
 
-def test_fit_weights_sum_to_one_and_applicant_floor_is_a_fraction(config_path: Path) -> None:
-    """fit's three parts sum to 1.0; the applicant floor sits in (0, 1]."""
+def test_fit_weights_sum_to_one_and_the_multiplier_brackets_neutral(config_path: Path) -> None:
+    """fit's three parts sum to 1.0; the applicant multiplier spans min <= 1 <= max."""
     with config_path.open() as f:
         config = yaml.safe_load(f)
 
@@ -154,7 +154,9 @@ def test_fit_weights_sum_to_one_and_applicant_floor_is_a_fraction(config_path: P
     assert abs(total - 1.0) < 1e-9, f"fit weights sum to {total}, expected 1.0"
     lead = fit["lead_entry_weights"]
     assert abs(lead["similarity"] + lead["coverage"] - 1.0) < 1e-9
-    assert 0.0 < config["scoring"]["final"]["applicant_floor"] <= 1.0
+    sp = config["scoring"]["success_prob"]
+    assert 0.0 < sp["min"] <= 1.0 <= sp["max"]
+    assert sp["boost_full_at"] < sp["neutral_at"] < sp["penalty_full_at"]
 
 
 def test_master_profile_stub_importable() -> None:

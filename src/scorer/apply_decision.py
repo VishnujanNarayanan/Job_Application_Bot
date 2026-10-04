@@ -12,13 +12,15 @@ Formulas (PIVOT_V3.md D6 + config.scoring):
     similarity_s = clamp((lead similarity - 0.22) / (0.40 - 0.22), 0, 1)
     lead_entry   = similarity_s*0.50 + lead_coverage*0.50
     fit          = lead_entry*0.45 + keyword_coverage*0.35 + keyword_repetition*0.20
-    success_prob = applicant score, banded on LinkedIn's applicant count
-    final        = fit * (0.65 + 0.35*success_prob)
+    success_prob = applicant multiplier, 1.5 (<=24) -> 1.0 (100) -> 0.5 (>=200)
+    final        = min(1.0, fit * success_prob)
     apply        = final >= scoring.apply_threshold
 
 Similarity is calibrated to its measured range and applicants multiply fit
 rather than adding to it (#16): raw similarity barely moved the score, and an
 added applicant term was a near-constant +0.40 that bunched every live score.
+The multiplier boosts early postings as well as penalising crowded ones (#26),
+so an early near-miss can pass; it used to cap at x1.0.
 
 Each factor is counted once (issue #13). Recency used to enter both inside
 success_prob and as its own 0.10 term -- an undeclared 22% of the score -- and the
@@ -176,22 +178,28 @@ def recency_score(
     return float(cfg.default)
 
 
-def applicant_score(count: int | None) -> float:
-    """Band LinkedIn's applicant count: fewer applicants scores higher.
+def applicant_multiplier(count: int | None) -> float:
+    """Boost an early posting, penalise a crowded one: ``max`` -> 1.0 -> ``min``.
 
-    Bands come from ``scoring.success_prob.applicant_bands`` (first ``under``
-    that the count is below wins); 200+ scores ``default``. No count at all --
-    a non-LinkedIn portal, a page without the caption, or a row from before
-    capture existed -- scores ``unknown``, a neutral midpoint, because an absent
+    Linear in LinkedIn's applicant count between three anchors from
+    ``scoring.success_prob``: at or below ``boost_full_at`` the full boost, at
+    ``neutral_at`` exactly 1.0, at or above ``penalty_full_at`` the full penalty.
+    No count at all -- a non-LinkedIn portal, a page without the caption, a row
+    from before capture existed -- is ``unknown`` (neutral), because an absent
     measurement is not a crowded posting.
     """
     cfg = settings.scoring.success_prob
     if count is None:
         return float(cfg.unknown)
-    for band in sorted(cfg.applicant_bands, key=lambda b: int(b["under"])):
-        if count < int(band["under"]):
-            return float(band["score"])
-    return float(cfg.default)
+    hi, lo = float(cfg.max), float(cfg.min)
+    start, mid, end = int(cfg.boost_full_at), int(cfg.neutral_at), int(cfg.penalty_full_at)
+    if count <= start:
+        return hi
+    if count >= end:
+        return lo
+    if count <= mid:
+        return hi - (hi - 1.0) * (count - start) / (mid - start)
+    return 1.0 - (1.0 - lo) * (count - mid) / (end - mid)
 
 
 def scale_similarity(similarity: float) -> float:
@@ -330,10 +338,9 @@ def evaluate(
         scraped_at=jd.scraped_at,
         window_hours=jd.scrape_window_hours,
     )
-    success_prob = applicant_score(jd.applicants_count)
+    success_prob = applicant_multiplier(jd.applicants_count)
 
-    floor = float(settings.scoring.final.applicant_floor)
-    final_score = fit * (floor + (1.0 - floor) * success_prob)
+    final_score = min(float(settings.scoring.final.max_score), fit * success_prob)
 
     apply = final_score >= settings.scoring.apply_threshold
     return SelectionResult(
