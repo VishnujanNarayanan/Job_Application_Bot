@@ -267,6 +267,67 @@ selection:
       - "Copilot"
       - "Model Context Protocol"
       - "MCP"
+    # Wordings that ALSO open the gate (#21). Adverts usually ask for AI tooling
+    # without naming one of the tools above -- "AI-assisted development tools",
+    # "AI coding assistants" -- and the parser can summarise the phrase away, so
+    # these are matched literally against the RAW advert text as well as the
+    # parsed fields. Mined from 1,053 stored adverts (2026-10-04): 39 distinct
+    # phrasings, each kept only where its contexts meant USING AI to build
+    # software. Deliberately absent, though frequent:
+    #   * "prompt engineering" (78 adverts) -- almost always building LLM apps
+    #     (RAG, re-ranking, guardrails), not using a coding assistant;
+    #   * bare "AI tools" (90) -- as often "generative AI tools (LangChain,
+    #     Hugging Face)" as Cursor/Copilot;
+    #   * bare "AI" (603) -- mostly AI/ML work.
+    # Tool names that no bullet mentions sit here rather than in jd_gated_terms,
+    # because a gated term also marks which bullets are gated.
+    jd_gate_openers:
+      # generic wordings
+      - "AI-assisted"
+      - "AI-augmented"
+      - "AI coding"
+      - "AI coding assistant"
+      - "AI coding assistants"
+      - "AI coding tools"
+      - "AI assistant"
+      - "AI assistants"
+      - "AI copilot"
+      - "AI copilots"
+      - "AI tooling"
+      - "AI pair programming"
+      - "AI pair programmer"
+      - "AI-powered developer tools"
+      - "AI-powered engineering tools"
+      - "AI-powered assistants"
+      - "AI-driven development tools"
+      - "AI-driven tools"
+      - "AI development tools"
+      - "AI development tooling"
+      - "AI productivity tools"
+      - "AI-first development"
+      - "coding assistant"
+      - "coding assistants"
+      - "code assistant"
+      - "GenAI tools"
+      - "Gen AI tools"
+      - "generative AI tools"
+      - "LLM tools"
+      - "LLM tooling"
+      - "LLM assistants"
+      - "agentic coding"
+      - "agentic development"
+      - "agentic engineering"
+      - "agentic software development"
+      - "vibe coding"
+      # tools named in adverts that no bullet names
+      - "ChatGPT"
+      - "Windsurf"
+      - "Kiro"
+      - "Amazon Q Developer"
+      - "Amazon Q"
+      - "Tabnine"
+      - "CodeWhisperer"
+      - "Gemini Code Assist"
 
   # --- Entry scoring ---------------------------------------------------------
   entry:

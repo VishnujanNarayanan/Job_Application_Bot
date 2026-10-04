@@ -184,6 +184,17 @@ def keyword_spans(
     return sorted(kept), shown
 
 
+def literal_hit(tok: str, norm_text: str) -> bool:
+    """``hit`` without the prose fallback: the literal, boundary-guarded match only.
+
+    For phrases that must appear as written -- a gate opener like "AI-assisted"
+    must not fire because "assisted" and "AI" turn up three sentences apart.
+    ``norm_text`` MUST already be normalised.
+    """
+    t = norm(tok).strip()
+    return bool(t) and bool(_boundary_re(t).search(norm_text))
+
+
 def tokens_of(lines: Iterable[str]) -> list[str]:
     """Split qualification lines into individually searchable tokens.
 

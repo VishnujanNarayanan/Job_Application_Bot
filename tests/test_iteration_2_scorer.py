@@ -564,6 +564,102 @@ def test_a_gated_bullet_renders_at_most_once_on_a_page() -> None:
     assert f"e2_x" not in picked[1], "the second entry may not repeat the line"
 
 
+_WISSEN = (
+    "Incorporate AI best practices (e.g., AI-assisted development tools, prompt "
+    "engineering, or LLM-driven pipelines) into software development processes."
+)
+
+
+@pytest.mark.parametrize("text", [
+    _WISSEN,
+    "Experience with AI coding assistants is a plus.",
+    "Comfortable with GenAI tools in the daily workflow.",
+    "Uses Claude Code and Cursor daily.",          # the literal names still count
+])
+def test_generic_ai_tooling_wording_is_recognised(text) -> None:
+    from src.scorer.selector import ai_tooling_asked
+
+    assert ai_tooling_asked(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Build AI/ML models for fraud detection.",
+    "Strong background in machine learning and AI research.",
+    "Assisted the AI team with data labelling.",   # words apart, not the phrase
+    "",
+])
+def test_ai_work_is_not_ai_tooling(text) -> None:
+    """A bare "AI" means AI/ML work in most adverts; it must not open the gate."""
+    from src.scorer.selector import ai_tooling_asked
+
+    assert not ai_tooling_asked(text)
+
+
+def test_the_raw_advert_opens_the_gate_when_the_parse_dropped_the_phrase() -> None:
+    """#21: the parser summarised the Wissen line to 'Incorporate AI best
+    practices'... which still opens it; and the raw text alone must too."""
+    from types import SimpleNamespace
+
+    parsed = SimpleNamespace(required_skills=["Python", "AI"], nice_to_have=[],
+                             responsibilities=["Ship features"], role_summary="Backend role",
+                             role_category=None, role_level=None)
+    fake = lambda texts: [[1.0, 0.0, 0.0]] * len(texts)
+    assert not build_jd_context(parsed, embed_batch_fn=fake).ai_tooling_asked
+    assert build_jd_context(parsed, jd_text=_WISSEN, embed_batch_fn=fake).ai_tooling_asked
+
+
+def test_a_gated_bullet_renders_when_the_advert_asks_generically() -> None:
+    """The Wissen case: no tool named, but the advert asks for AI-assisted work."""
+    jd = JDContext(vec_role=V, vec_match=V, role_category=None, role_level=None,
+                   posted_at=None, scraped_at=None, scrape_window_hours=None,
+                   ai_tooling_asked=True)
+    out = select_entry_bullets(_ai_entry(), jd, _kw("Python", "AI"), now=NOW)
+    assert "e1_x" in [b.id for b in out.bullets]
+
+
+def test_the_line_renders_even_when_its_incidental_words_are_already_covered() -> None:
+    """#21, the real failure: another bullet already said "AI" and "GitHub", so
+    the zero-repeat rule dropped the AI-tooling line before it was weighed. When
+    the advert asks, the line is credited with answering the ASK instead."""
+    entry = _entry(blocks=[_block(bullets=[
+        _bullet("b0", "Built the service in Python.", summary=True),
+        _bullet("b1", "Shipped an AI feature with GitHub Actions CI."),
+        _bullet("b2", "Queried the warehouse in SQL."),
+        _bullet("b3", "Deployed the service on AWS."),
+        _bullet("x1", "Used AI coding tools — Claude Code and GitHub Copilot — "
+                      "scoping context tightly.", extra=True),
+    ])])
+    asked = JDContext(vec_role=V, vec_match=V, role_category=None, role_level=None,
+                      posted_at=None, scraped_at=None, scrape_window_hours=None,
+                      ai_tooling_asked=True)
+    kws = _kw("Python", "AI", "GitHub", "SQL", "AWS")
+    # A floor of 1: the entry is full of keyword-adding bullets, so nothing may
+    # sneak the line in by filling empty slots -- only the ask can.
+    with _cfg(min_per_entry=1):
+        on = select_entry_bullets(entry, asked, kws, now=NOW)
+        off = select_entry_bullets(entry, _jd(), kws, now=NOW)
+    assert "x1" in [b.id for b in on.bullets]
+    assert "x1" not in [b.id for b in off.bullets]
+    # The pseudo-keyword never leaks into reported coverage.
+    from src.scorer.selector import AI_TOOLING_ASK
+
+    assert AI_TOOLING_ASK not in on.covered
+
+
+def test_a_generic_ask_still_renders_the_line_at_most_once() -> None:
+    jd = JDContext(vec_role=V, vec_match=V, role_category=None, role_level=None,
+                   posted_at=None, scraped_at=None, scrape_window_hours=None,
+                   ai_tooling_asked=True)
+    ledger: list[str] = []
+    picked = [
+        [b.id for b in select_entry_bullets(
+            _ai_entry(eid), jd, _kw("Python", "AI"), now=NOW, rendered_gated=ledger,
+        ).bullets]
+        for eid in ("e1", "e2")
+    ]
+    assert "e1_x" in picked[0] and "e2_x" not in picked[1]
+
+
 # ---------------------------------------------------------------------------
 # Phase 2 — the title's own qualification checklist
 # ---------------------------------------------------------------------------
