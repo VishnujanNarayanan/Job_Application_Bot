@@ -343,7 +343,7 @@ def _run(dry_run: bool, log) -> int:
             # Gap skills: JD required skills not in operator's pool
             skills_pool = [sc.skill for sc in profile.skills]
             gap_skills = _compute_gap_skills(
-                list(parsed.required_skills or []), skills_pool
+                list(parsed.required_skills or []), skills_pool, _bullet_texts(profile)
             )
 
             selection = build_selection(
@@ -500,14 +500,37 @@ def _run(dry_run: bool, log) -> int:
     return 2 if budget_exhausted else 0
 
 
-def _compute_gap_skills(required: list[str], pool: list[str]) -> list[str]:
-    """Required skills not present in the skills pool (substring match)."""
-    pool_lower = {s.casefold() for s in pool}
-    return [
-        s for s in required
-        if s.casefold() not in pool_lower
-        and not any(s.casefold() in p for p in pool_lower)
-    ]
+def _compute_gap_skills(required: list[str], pool: list[str], bullets: tuple[str, ...] = ()) -> list[str]:
+    """Required skills the operator shows NOWHERE: not in the skills pool, not in
+    any bullet, in any spelling or family form (``keywords.matches``, #23).
+
+    It used to be a one-way substring test against the pool alone, which called
+    "CI/CD pipelines" a gap in 32 matched jobs although the profile states CI/CD
+    throughout, and disagreed with coverage, which reads the bullets.
+    """
+    import re
+
+    from src.scorer.keywords import matches, norm
+
+    # Split "Python (NumPy, pandas)" into its parts, but keep a LEADING dot:
+    # keywords.tokens_of strips it, which turns ".NET" into the plain word "net"
+    # and lets any bullet saying "net" clear it.
+    tokens = list(dict.fromkeys(
+        p.strip(" ;:") for line in required for p in re.split(r"[,()]", line or "")
+        if len(p.strip(" ;:")) >= 2
+    ))
+    evidence = [norm(s) for s in pool] + list(bullets)
+    return [t for t in tokens if not any(matches(t, e) for e in evidence)]
+
+
+def _bullet_texts(profile) -> tuple[str, ...]:
+    """Every bullet the operator could render, normalised, de-duplicated."""
+    return tuple(dict.fromkeys(
+        b.norm_text
+        for e in (*profile.work, *profile.projects)
+        for blk in e.blocks
+        for b in blk.bullets
+    ))
 
 
 def _write_not_applied(session, queue: list, now: datetime, *, dry_run: bool = False) -> None:

@@ -73,7 +73,7 @@ def backfill(limit: int | None = None, dry_run: bool = False) -> dict[str, int]:
     from src.llm.client import LLMBudgetError, LLMError
     from src.parser import apply_to_row, parse
     from src.builder.llm_call import build as build_selection
-    from src.main import _compute_gap_skills
+    from src.main import _bullet_texts, _compute_gap_skills
     from src.reasons import (
         BUILD_FAILURE, HARD_FILTER_LAYER_3, LOW_SCORE, PARSE_FAILURE,
     )
@@ -87,7 +87,9 @@ def backfill(limit: int | None = None, dry_run: bool = False) -> dict[str, int]:
 
     def _gap_skills(parsed, profile):
         pool = [sc.skill for sc in profile.skills]
-        return _compute_gap_skills(list(parsed.required_skills or []), pool)
+        return _compute_gap_skills(
+            list(parsed.required_skills or []), pool, _bullet_texts(profile)
+        )
 
     counts = {"found": 0, "scored": 0, "matched": 0, "failed": 0, "aborted": 0}
     now = datetime.now(timezone.utc)
