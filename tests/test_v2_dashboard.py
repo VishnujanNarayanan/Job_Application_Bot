@@ -143,7 +143,8 @@ def test_dashboard_refreshes_the_csv_index(client):
 
 def test_skipped_page_flags_near_misses(client):
     rows = [
-        {"job_id": "a", "company": "A Co", "title": "Dev", "score": 0.48,
+        {"job_id": "a", "company": "A Co", "title": "Dev",
+         "score": float(settings.scoring.apply_threshold) - 0.02,
          "location": "Pune", "source": "linkedin", "apply_url": "", "skipped_at": None},
         {"job_id": "b", "company": "B Co", "title": "Eng", "score": 0.20,
          "location": "Chennai", "source": "linkedin", "apply_url": "", "skipped_at": None},
@@ -152,7 +153,7 @@ def test_skipped_page_flags_near_misses(client):
     with p1, p2, p3, p4:
         body = client.get("/dashboard/skipped").text
 
-    # 0.48 is within 0.05 of the 0.50 line, 0.20 is not.
+    # threshold - 0.02 is within 0.05 of the line; 0.20 is not.
     assert "miss--near" in body
     assert body.count("miss--near") == 1
 

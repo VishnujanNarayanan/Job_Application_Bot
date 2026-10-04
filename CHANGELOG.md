@@ -7,6 +7,16 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Changed
+
+- Applicant multiplier (#26): being early now **lifts** a score instead of only
+  avoiding a penalty. `final = min(1.0, fit × multiplier)`, with the multiplier
+  linear in LinkedIn's applicant count: **1.5** at ≤24 ("first 25"), **1.0** at
+  100, **0.5** at ≥200 (unknown → 1.0). `apply_threshold` 0.50 → **0.65**: a
+  first-25 posting needs fit 0.43, one at 100 applicants needs 0.65, and past
+  ~185 applicants nothing can pass. Replaces the `applicant_floor` multiplier
+  (#16, #18).
+
 ### Fixed
 
 - AI-tooling bullets (Claude Code, Codex, Cursor, Copilot, MCP) now render when an
