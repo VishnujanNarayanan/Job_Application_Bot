@@ -1,0 +1,209 @@
+# Keyword families (#23): one skill, many spellings.
+#
+# The matcher (src/scorer/keywords.py: matches) already treats these as the same,
+# with no entry here:
+#   * case, spacing and hyphens       Power BI = PowerBI, Infrastructure-as-Code
+#   * a ".js"/"js" suffix             React.js = ReactJS = React, Node.js = Node
+#   * a plural on the last word       REST APIs = REST API, code reviews = code review
+#   * RESTful = REST
+# Those rules were derived from, and cover, the 142 variant groups found across
+# 7,619 distinct skill phrases in 979 parsed adverts (2026-10-04) -- and any
+# future spelling of the same shape.
+#
+# This file holds what rules cannot know: MEANING.
+#   variants: the same skill, equivalent both ways (Postgres <-> PostgreSQL).
+#   members:  specific skills that IMPLY the family, one way only. A MongoDB
+#             bullet covers an advert asking for "NoSQL"; a bullet that only says
+#             "NoSQL" does NOT cover an advert asking for MongoDB. That asymmetry
+#             is what keeps the resume from claiming a tool it never names.
+#
+# Seeded from the most frequent required/nice-to-have skills in stored adverts
+# (counts are adverts, 2026-10-04). Add a family when an advert's wording keeps
+# missing a bullet that does say the same thing.
+
+families:
+  # --- languages ----------------------------------------------------------------
+  - head: JavaScript           # 82
+    variants: [JS, ECMAScript, ES6]
+  - head: TypeScript           # 84
+    variants: [TS]
+  - head: Go                   # 61
+    variants: [Golang]         # 19
+  - head: C#
+    variants: [C Sharp, CSharp]
+  - head: C++
+    variants: [CPP]
+  - head: HTML                 # 28
+    variants: [HTML5]          # 24
+  - head: CSS                  # 29
+    variants: [CSS3]           # 23
+  - head: shell scripting      # 12
+    variants: [shell scripts, Bash scripting, scripting in Bash]
+    members: [Bash, PowerShell, Zsh]
+  - head: OOP
+    variants: [object-oriented programming, object oriented programming, OOPs, object-oriented design]
+
+  # --- web / backend ------------------------------------------------------------
+  - head: REST APIs            # 62 (+ restful apis 34, rest api 10 via rules)
+    variants: [REST, RESTful services, REST services, REST endpoints]
+  - head: APIs                 # 34
+    variants: [API development, web APIs, backend APIs]   # api development 17
+    members: [REST APIs, RESTful APIs, GraphQL, gRPC, FastAPI, Flask, Express, Django REST Framework]
+  - head: API design           # 18 (+ rest api design 11)
+    variants: [REST API design, API architecture]
+    members: [REST APIs, RESTful APIs, GraphQL, OpenAPI]
+  - head: backend development  # 11
+    variants: [back-end development, backend engineering, server-side development]
+  - head: frontend development
+    variants: [front-end development, frontend engineering]
+  - head: full stack development
+    variants: [full stack, full-stack, fullstack]
+  - head: web applications     # 24
+    variants: [web apps, web app]
+  - head: microservices        # 65
+    variants: [microservices architecture, microservice architecture]   # 32
+  - head: .NET                 # 24 ("net" 24 is the same token split by the parser)
+    variants: [dotnet, .NET Framework]
+  - head: Spring Boot          # 42
+    variants: [SpringBoot]
+
+  # --- data stores ----------------------------------------------------------------
+  - head: PostgreSQL           # 72
+    variants: [Postgres, PSQL]   # 10
+  - head: SQL Server           # 30
+    variants: [MS SQL, MSSQL, Microsoft SQL Server]
+  - head: relational databases # 30
+    variants: [relational database, RDBMS, SQL databases]   # 9
+    members: [PostgreSQL, Postgres, MySQL, SQLite, SQL Server, Oracle, MariaDB]
+  - head: NoSQL                # 30
+    variants: [NoSQL databases]  # 22
+    members: [MongoDB, Redis, DynamoDB, Cassandra, Firestore, Couchbase]
+  - head: databases            # 19
+    members: [PostgreSQL, Postgres, MySQL, SQLite, SQL Server, MongoDB, Redis, DynamoDB, Oracle]
+  - head: vector databases     # 43
+    variants: [vector database, vector DB, vector store, vector stores, vector search]
+    members: [pgvector, FAISS, Pinecone, Chroma, ChromaDB, Qdrant, Weaviate, Milvus]
+
+  # --- cloud / devops ---------------------------------------------------------------
+  - head: AWS                  # 217
+    variants: [Amazon Web Services, AWS cloud services, AWS cloud]   # 13
+    members: [S3, EC2, Lambda, CloudWatch, IAM, DynamoDB, RDS, SageMaker, Bedrock, EKS, ECS, CloudFormation]
+  - head: S3                   # 32
+    variants: [AWS S3, Amazon S3]   # 8
+  - head: Lambda               # 22
+    variants: [AWS Lambda]     # 11
+  - head: GCP                  # 100
+    variants: [Google Cloud, Google Cloud Platform]   # 21, 9
+  - head: Azure                # 167
+    variants: [Microsoft Azure]  # 13
+  - head: cloud platforms      # 60
+    variants: [cloud platform, cloud services, cloud computing, cloud environments, public cloud]
+    members: [AWS, GCP, Azure, Google Cloud, Amazon Web Services, Microsoft Azure]
+  - head: Kubernetes           # 170
+    variants: [K8s]
+  - head: container orchestration   # 14
+    members: [Kubernetes, K8s, EKS, AKS, GKE, ECS, Docker Swarm, OpenShift]
+  - head: containerization     # 37
+    variants: [containers, containerisation, containerized, containerised]   # 25
+    members: [Docker, Podman]
+  - head: CI/CD                # 138
+    variants: [CI/CD pipelines, CI/CD pipeline, CI CD, CICD, continuous integration, continuous delivery, continuous deployment, CI/CD tools, CI/CD workflows]   # 98, 15
+    members: [GitHub Actions, Jenkins, GitLab CI, CircleCI, Travis CI, Azure Pipelines, Argo CD]
+  - head: Infrastructure as Code   # 43
+    variants: [IaC]            # 27
+    members: [Terraform, CloudFormation, Pulumi, AWS CDK, Ansible]
+  - head: version control      # 40
+    variants: [version control systems, source control]   # 8
+    members: [Git, GitHub, GitLab, Bitbucket]
+  - head: Git/GitHub           # 11
+    members: [Git, GitHub]
+  - head: observability        # 71
+    members: [CloudWatch, Prometheus, Grafana, OpenTelemetry, Datadog, New Relic, structured logging, distributed tracing]
+  - head: monitoring           # 77
+    members: [CloudWatch, Prometheus, Grafana, Datadog, New Relic, Splunk]
+  - head: logging              # 39
+    members: [structured logging, structlog, CloudWatch Logs, ELK, Splunk]
+
+  # --- testing -------------------------------------------------------------------------
+  - head: automated testing    # 32
+    variants: [test automation, automation testing]
+    members: [pytest, Playwright, Selenium, Jest, Cypress, JUnit]
+  - head: unit testing         # 26
+    variants: [unit tests]
+    members: [pytest, Jest, JUnit, unittest]
+  - head: TDD                  # 10
+    variants: [test-driven development, test driven development]
+
+  # --- data / ML / AI ---------------------------------------------------------------------
+  - head: machine learning     # 72
+    variants: [ML]             # 27
+  - head: AI/ML                # 36
+    variants: [AI and ML, ML/AI, AI & ML]
+    members: [machine learning, artificial intelligence]
+  - head: artificial intelligence   # 9
+    variants: [AI]
+  - head: Generative AI        # 46
+    variants: [GenAI, Gen AI]  # 21
+  - head: LLMs                 # 54
+    variants: [LLM, large language models, large language model]   # 12, 29
+  - head: NLP                  # 35
+    variants: [natural language processing]   # 17
+  - head: RAG                  # 43
+    variants: [retrieval augmented generation, retrieval-augmented generation]
+  - head: MCP                  # 16
+    variants: [Model Context Protocol]   # 10
+  - head: AI agents            # 28
+    variants: [agentic AI, AI agent, agentic systems, agentic workflows, agent-based systems]   # 35
+  - head: LLM frameworks
+    members: [LangChain, LangGraph, LlamaIndex, CrewAI, AutoGen, Semantic Kernel]
+  - head: embeddings           # 24
+    variants: [embedding, vector embeddings, text embeddings, sentence embeddings]
+  - head: Hugging Face         # 17
+    variants: [Hugging Face Transformers, HuggingFace Transformers]
+  - head: scikit-learn
+    variants: [sklearn]
+  - head: Spark                # 41
+    variants: [Apache Spark]   # 15
+    members: [PySpark]
+  - head: Airflow              # 22
+    variants: [Apache Airflow]   # 8
+  - head: Kafka                # 55
+    variants: [Apache Kafka]
+  - head: ETL                  # 18
+    variants: [ELT, ETL/ELT, ETL pipelines, ELT pipelines]
+  - head: data pipelines       # 33
+    variants: [data pipeline, ETL pipelines]
+    members: [Airflow, ETL, ELT]
+  - head: statistics           # 44
+    variants: [statistical analysis, statistical modeling, statistical modelling]   # 15
+  - head: data visualization   # 18
+    variants: [data visualisation, data viz, data visualization tools]
+    members: [matplotlib, seaborn, Plotly, Tableau, Power BI, dashboards]
+  - head: EDA
+    variants: [exploratory data analysis]
+  - head: BI
+    variants: [business intelligence]
+    members: [Power BI, Tableau, Looker]
+  - head: gradient boosting
+    members: [XGBoost, LightGBM, CatBoost]
+  - head: data structures and algorithms
+    variants: [DSA]
+    members: [data structures, algorithms]
+
+  # --- practices --------------------------------------------------------------------------
+  - head: SDLC                 # 8
+    variants: [software development lifecycle, software development life cycle]
+  - head: Agile                # 65
+    variants: [Agile development, Agile methodologies, Agile methodology, Agile environments, Agile delivery, Agile practices]   # 17, 11
+  - head: debugging            # 48
+    variants: [troubleshooting]  # 51
+  - head: performance optimization   # 28
+    variants: [performance tuning, performance optimisation]   # 26
+  - head: technical documentation    # 17
+    variants: [documentation]  # 11
+  - head: communication        # 32
+    variants: [communication skills, written communication, verbal communication, written and verbal communication, verbal and written communication]   # 23
+  - head: problem solving      # 14
+    variants: [problem-solving skills, problem solving skills, analytical and problem solving skills]
+  - head: Excel                # 28
+    variants: [Microsoft Excel, MS Excel]

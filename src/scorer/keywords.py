@@ -107,6 +107,138 @@ def hit(tok: str, text: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Keyword families (#23): one skill, many spellings
+# ---------------------------------------------------------------------------
+#
+# ``hit`` is the grader-parity primitive and is deliberately left untouched.
+# ``matches`` widens it in two ways, and is what coverage, selection and the bold
+# pass use:
+#
+#   * RULES, applied to any phrase: spacing and hyphens, a ".js"/"js" suffix, a
+#     plural on the last word, RESTful = REST. Both the advert's token and every
+#     1-5 word window of the bullet are folded to a compact KEY, so "React.js"
+#     meets "React", "REST APIs" meets "RESTful API", "Power BI" meets "PowerBI".
+#   * FAMILIES (config/keyword_families.yaml) for meaning the rules cannot see:
+#     variants match both ways (Postgres = PostgreSQL); members imply the family
+#     one way only (a MongoDB bullet covers "NoSQL", never the reverse).
+#
+# Measured over 979 parsed adverts (2026-10-04): 7,619 distinct skill phrases,
+# 142 groups of spelling variants -- "React.js" alone was missing every bullet
+# that says "React".
+
+_JS_SUFFIX = re.compile(r"(?<=[a-z0-9])\.?js$")
+_MAX_NGRAM = 5
+
+
+def _plural_to_singular(word: str) -> str:
+    if len(word) <= 3 or word.endswith("ss") or not word.endswith("s"):
+        return word
+    if word.endswith("ies") and len(word) > 4:
+        return word[:-3] + "y"
+    if word.endswith("es") and word[:-2].endswith(("ch", "sh", "x", "ss")):
+        return word[:-2]
+    return word[:-1]
+
+
+def _key_words(words: Sequence[str]) -> str:
+    """Fold already-normalised words to the compact matching key."""
+    out = []
+    for w in words:
+        # Sentence punctuation clings to the last word ("…in PostgreSQL."), since
+        # norm keeps "." for names like Node.js. Trailing only: a LEADING dot is
+        # load-bearing (".NET" must not become the word "net").
+        w = w.rstrip("./")
+        w = "rest" if w == "restful" else w
+        w = _JS_SUFFIX.sub("", w) or w
+        out.append(w)
+    if out:
+        out[-1] = _plural_to_singular(out[-1])
+    return "".join(out)
+
+
+def phrase_key(phrase: str) -> str:
+    """The compact key of a phrase: what spelling variants have in common."""
+    return _key_words(norm(phrase).split())
+
+
+@lru_cache(maxsize=8192)
+def _ngram_keys(norm_text: str) -> frozenset[str]:
+    words = norm_text.split()
+    return frozenset(
+        _key_words(words[i:i + n])
+        for i in range(len(words))
+        for n in range(1, _MAX_NGRAM + 1)
+        if i + n <= len(words)
+    )
+
+
+@lru_cache(maxsize=1)
+def _families() -> tuple[dict[str, set[int]], list[frozenset[str]], list[frozenset[str]]]:
+    """(key -> family ids, per-family equivalent keys, per-family member keys)."""
+    import yaml
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "config" / "keyword_families.yaml"
+    raw = yaml.safe_load(path.read_text()) if path.exists() else {}
+    index: dict[str, set[int]] = {}
+    forms: list[frozenset[str]] = []
+    members: list[frozenset[str]] = []
+    for i, fam in enumerate((raw or {}).get("families") or []):
+        keys = {phrase_key(fam["head"])} | {phrase_key(v) for v in fam.get("variants") or []}
+        keys.discard("")
+        forms.append(frozenset(keys))
+        members.append(frozenset(k for k in (phrase_key(m) for m in fam.get("members") or []) if k))
+        for k in keys:
+            index.setdefault(k, set()).add(i)
+    return index, forms, members
+
+
+@lru_cache(maxsize=8192)
+def match_keys(tok: str) -> frozenset[str]:
+    """Every key whose presence in a text covers ``tok``: its own spellings, its
+    family's variants, and the family's members (one-way)."""
+    k = phrase_key(tok)
+    if not k:
+        return frozenset()
+    index, forms, members = _families()
+    out = {k}
+    for i in index.get(k, ()):
+        out |= forms[i] | members[i]
+    return frozenset(out)
+
+
+def canonical_key(tok: str) -> str:
+    """One key per family, for de-duplicating an advert's checklist."""
+    k = phrase_key(tok)
+    index, forms, _ = _families()
+    ids = index.get(k)
+    return min(min(forms[i]) for i in ids) if ids else k
+
+
+def matches(tok: str, norm_text: str) -> bool:
+    """``hit``, widened by spelling rules and keyword families. ``norm_text`` MUST
+    already be normalised."""
+    if hit(tok, norm_text):
+        return True
+    keys = match_keys(tok)
+    return bool(keys) and not keys.isdisjoint(_ngram_keys(norm_text))
+
+
+def _family_span(norm_text: str, keys: frozenset[str]) -> tuple[int, int] | None:
+    """First word window of ``norm_text`` whose key is in ``keys`` (norm offsets)."""
+    spans = [(m.start(), m.end()) for m in re.finditer(r"\S+", norm_text)]
+    words = [norm_text[a:b] for a, b in spans]
+    for i in range(len(words)):
+        for n in range(_MAX_NGRAM, 0, -1):
+            if i + n <= len(words) and _key_words(words[i:i + n]) in keys:
+                start, end = spans[i][0], spans[i + n - 1][1]
+                while end > start and norm_text[end - 1] in "./":
+                    end -= 1  # leave the sentence's full stop unbolded
+                return start, end
+    return None
+
+
 def _norm_with_offsets(s: str) -> tuple[str, list[int]]:
     """``norm(s)`` plus, for every output character, the index it came from in ``s``.
 
@@ -153,8 +285,9 @@ def keyword_spans(
     """Where ``tokens`` literally appear in ``text``, as original-text offsets.
 
     Returns ``(spans, shown)``: non-overlapping ``(start, end)`` pairs sorted by
-    start, and the tokens those spans display. Uses only the literal,
-    boundary-guarded branch of :func:`hit` -- never the prose fallback, which
+    start, and the tokens those spans display. Uses the literal, boundary-guarded
+    branch of :func:`hit`, then the keyword-family spellings (#23) so an advert's
+    "React.js" bolds the bullet's "React" -- never the prose fallback, which
     matches scattered content words and would mark fragments, not a keyword.
 
     Each token is located at its first occurrence. Overlaps resolve longest-first,
@@ -169,8 +302,9 @@ def keyword_spans(
         if not t:
             continue
         m = _boundary_re(t).search(norm_text)
-        if m:
-            start, end = _whole_dotted_name(text, src[m.start()], src[m.end() - 1] + 1)
+        span = (m.start(), m.end()) if m else _family_span(norm_text, match_keys(tok))
+        if span:
+            start, end = _whole_dotted_name(text, src[span[0]], src[span[1] - 1] + 1)
             found.append((start, end, tok))
     found.sort(key=lambda s: (-(s[1] - s[0]), s[0]))
     kept: list[tuple[int, int]] = []
@@ -244,32 +378,40 @@ def jd_keywords(parsed) -> tuple[Keyword, ...]:
     """
     cfg = settings.selection.keywords
     required = tokens_of(list(parsed.required_skills or []))
-    out = [Keyword(t, float(cfg.weight_required)) for t in required]
+    # De-duplicate on the family key, not the spelling: "REST APIs" and
+    # "RESTful APIs" in one checklist are one requirement, not two (#23).
+    seen: set[str] = set()
+
+    def _fresh(tokens):
+        for t in tokens:
+            k = canonical_key(t)
+            if k and k not in seen:
+                seen.add(k)
+                yield t
+
+    out = [Keyword(t, float(cfg.weight_required)) for t in _fresh(required)]
 
     nice_weight = float(cfg.weight_nice_to_have)
     if nice_weight > 0:
-        seen = {norm(t).strip() for t in required}
         out += [
             Keyword(t, nice_weight)
-            for t in tokens_of(list(parsed.nice_to_have or []))
-            if norm(t).strip() not in seen
+            for t in _fresh(tokens_of(list(parsed.nice_to_have or [])))
         ]
 
     if cfg.include_responsibilities:
         # Off by default and documented above as the wrong choice; the key exists so
         # the decision is auditable and reversible rather than buried in code.
-        seen = {norm(k.token).strip() for k in out}
         out += [
             Keyword(t, nice_weight)
-            for t in tokens_of(list(parsed.responsibilities or []))
-            if norm(t).strip() not in seen
+            for t in _fresh(tokens_of(list(parsed.responsibilities or [])))
         ]
     return tuple(out)
 
 
 def covered_by(norm_text: str, keywords: Sequence[Keyword]) -> set[str]:
-    """Which keywords appear in already-normalised ``norm_text``."""
-    return {k.token for k in keywords if hit(k.token, norm_text)}
+    """Which keywords appear in already-normalised ``norm_text``, in any spelling
+    or family form (:func:`matches`)."""
+    return {k.token for k in keywords if matches(k.token, norm_text)}
 
 
 def coverage_of(covered: set[str], keywords: Sequence[Keyword]) -> float:
