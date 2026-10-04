@@ -191,7 +191,7 @@ class JDContext:
     scraped_at: datetime | None
     scrape_window_hours: float | None
     #: LinkedIn's applicant count at scrape time (None when the portal shows
-    #: none). Drives success_prob; see apply_decision.applicant_score.
+    #: none). Drives success_prob; see apply_decision.applicant_multiplier.
     applicants_count: int | None = None
     #: The advert asks for AI-assisted development in generic terms (see
     #: ``ai_tooling_asked``). Opens the AI-tooling gate alongside a literal tool

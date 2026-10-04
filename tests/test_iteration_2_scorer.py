@@ -1190,29 +1190,30 @@ def test_recency_key_present_sorts_newest() -> None:
 
 
 @pytest.mark.parametrize("count,expected", [
-    (0, 1.00), (24, 1.00),        # "Be among the first 25" is stored as 24
-    (25, 0.85), (49, 0.85),
-    (50, 0.65), (139, 0.40),
-    (199, 0.40), (201, 0.15),     # "Over 200" is stored as 201
-    (None, 0.50),                 # no count: neutral, not punished
+    (0, 1.50), (24, 1.50),        # "Be among the first 25" is stored as 24
+    (62, 1.25),                   # halfway between 24 and the neutral 100
+    (100, 1.00),                  # neutral
+    (150, 0.75),                  # halfway to 200
+    (200, 0.50), (201, 0.50),     # "Over 200" is stored as 201
+    (None, 1.00),                 # no count: neutral, not punished
 ])
-def test_applicant_score_bands(count, expected) -> None:
-    from src.scorer.apply_decision import applicant_score
+def test_applicant_multiplier_boosts_early_and_penalises_crowded(count, expected) -> None:
+    from src.scorer.apply_decision import applicant_multiplier
 
-    assert applicant_score(count) == expected
+    assert applicant_multiplier(count) == pytest.approx(expected)
 
 
 def test_success_prob_is_the_applicant_score_and_recency_is_not_scored() -> None:
     """Each factor counts once: no recency term in final, none inside success_prob."""
-    from src.scorer.apply_decision import applicant_score
+    from src.scorer.apply_decision import applicant_multiplier
 
-    assert set(settings.scoring.final.as_dict()) == {"applicant_floor"}
+    assert set(settings.scoring.final.as_dict()) == {"max_score"}
     fresh = evaluate(_full_profile(), _jd(posted_at=NOW, applicants_count=10),
                      keywords=_kw("Python"), now=NOW)
     stale = evaluate(_full_profile(),
                      _jd(posted_at=NOW - timedelta(days=30), applicants_count=10),
                      keywords=_kw("Python"), now=NOW)
-    assert fresh.success_prob == applicant_score(10)
+    assert fresh.success_prob == applicant_multiplier(10)
     # Time since posting is still recorded...
     assert fresh.recency > stale.recency
     # ...but does not move the score.
@@ -1575,19 +1576,28 @@ def test_lead_entry_blends_scaled_similarity_and_lead_coverage() -> None:
     assert lead_entry_score(None) == (0.0, 0.0)
 
 
-def test_applicants_multiply_fit_between_the_floor_and_one() -> None:
+def test_applicants_boost_or_penalise_fit() -> None:
     quiet = evaluate(_full_profile(), _jd(applicants_count=10), keywords=_kw("Python"), now=NOW)
+    neutral = evaluate(_full_profile(), _jd(applicants_count=100), keywords=_kw("Python"), now=NOW)
     busy = evaluate(_full_profile(), _jd(applicants_count=500), keywords=_kw("Python"), now=NOW)
-    floor = float(settings.scoring.final.applicant_floor)
-    # Under 25 applicants keeps all of fit...
-    assert quiet.final_score == pytest.approx(quiet.fit)
-    # ...the most crowded keeps floor + (1 - floor) x 0.15 of it.
-    assert busy.final_score == pytest.approx(busy.fit * (floor + (1 - floor) * 0.15))
+    cap = float(settings.scoring.final.max_score)
+    assert quiet.final_score == pytest.approx(min(cap, quiet.fit * 1.5))
+    assert neutral.final_score == pytest.approx(neutral.fit)
+    assert busy.final_score == pytest.approx(busy.fit * 0.5)
 
 
-def test_a_strong_fit_outranks_a_weak_fit_with_few_applicants() -> None:
-    """The multiplier lets crowding separate similar fits, never rescue a poor one."""
-    floor = float(settings.scoring.final.applicant_floor)
-    strong_crowded = 0.60 * (floor + (1 - floor) * 0.15)
-    weak_quiet = 0.40 * (floor + (1 - floor) * 1.00)
-    assert strong_crowded > weak_quiet
+def test_an_early_near_miss_is_lifted_over_the_threshold() -> None:
+    """#26: being early is a reward, not just the absence of a penalty. Staffnix
+    (fit 0.450, first 25) could not pass while the multiplier capped at 1.0."""
+    from src.scorer.apply_decision import applicant_multiplier
+
+    threshold = float(settings.scoring.apply_threshold)
+    assert 0.450 < threshold
+    assert 0.450 * applicant_multiplier(24) >= threshold
+
+
+def test_the_final_score_is_capped() -> None:
+    from src.scorer.apply_decision import applicant_multiplier
+
+    cap = float(settings.scoring.final.max_score)
+    assert min(cap, 0.9 * applicant_multiplier(24)) == cap
