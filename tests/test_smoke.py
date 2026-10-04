@@ -144,14 +144,17 @@ def test_config_no_role_clusters_yaml(repo_root: Path) -> None:
     assert not (repo_root / "config" / "role_clusters.yaml").exists()
 
 
-def test_final_score_weights_sum_to_one(config_path: Path) -> None:
-    """Final score weights must sum to 1.0."""
+def test_fit_weights_sum_to_one_and_applicant_floor_is_a_fraction(config_path: Path) -> None:
+    """fit's three parts sum to 1.0; the applicant floor sits in (0, 1]."""
     with config_path.open() as f:
         config = yaml.safe_load(f)
 
-    fw = config["scoring"]["final"]
-    total = sum(fw.values())
-    assert abs(total - 1.0) < 1e-9, f"final score weights sum to {total}, expected 1.0"
+    fit = config["scoring"]["fit"]
+    total = fit["lead_entry"] + fit["keyword_coverage"] + fit["keyword_repetition"]
+    assert abs(total - 1.0) < 1e-9, f"fit weights sum to {total}, expected 1.0"
+    lead = fit["lead_entry_weights"]
+    assert abs(lead["similarity"] + lead["coverage"] - 1.0) < 1e-9
+    assert 0.0 < config["scoring"]["final"]["applicant_floor"] <= 1.0
 
 
 def test_master_profile_stub_importable() -> None:
