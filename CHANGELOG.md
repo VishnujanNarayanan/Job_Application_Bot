@@ -7,6 +7,22 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Fixed
+
+- AI-tooling bullets (Claude Code, Codex, Cursor, Copilot, MCP) now render when an
+  advert asks for AI-assisted development **in any wording** (#21). Two causes:
+  - The gate opened only for a literal tool name in the parsed checklist.
+    `selection.bullets.jd_gate_openers` adds the wordings mined from 1,053 stored
+    adverts ("AI-assisted", "AI coding assistants", "AI-powered developer tools",
+    ChatGPT, Windsurf, Kiro, Amazon Q, …), matched literally against the **raw**
+    advert text (markdown escapes removed). The gate now opens for 183 stored
+    adverts, up from 102. "Prompt engineering" and bare "AI tools" / "AI" are
+    deliberately excluded: in context they mostly mean building AI products.
+  - With the gate open, the zero-repeat rule still dropped the line, because
+    its incidental words ("AI", "GitHub") were already covered. When the advert
+    asks, the line is now credited with answering the ask itself. Still at most
+    once per page.
+
 ### Changed
 
 - Scoring calibration (#16). Scores bunched at 0.55–0.75 because applicants

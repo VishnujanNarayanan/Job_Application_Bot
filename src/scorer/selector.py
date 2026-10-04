@@ -52,7 +52,9 @@ import structlog
 from src.config import settings
 from src.llm.schemas import JDParsed
 from src.scorer.embeddings import Vector, add, cosine, embed_batch
-from src.scorer.keywords import Keyword, covered_by, coverage_of, hit, norm, weight_of
+from src.scorer.keywords import (
+    Keyword, covered_by, coverage_of, hit, literal_hit, norm, weight_of,
+)
 from src.scorer.qualifications import canonical_covered, canonical_overlap
 
 log = structlog.get_logger(__name__)
@@ -191,6 +193,10 @@ class JDContext:
     #: LinkedIn's applicant count at scrape time (None when the portal shows
     #: none). Drives success_prob; see apply_decision.applicant_score.
     applicants_count: int | None = None
+    #: The advert asks for AI-assisted development in generic terms (see
+    #: ``ai_tooling_asked``). Opens the AI-tooling gate alongside a literal tool
+    #: name in the checklist.
+    ai_tooling_asked: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +235,39 @@ def gated_terms() -> tuple[str, ...]:
     """
     raw = getattr(settings.selection.bullets, "jd_gated_terms", None) or ()
     return tuple(str(t) for t in raw)
+
+
+#: Pseudo-keyword a gated (AI-tooling) bullet covers when the advert asks for AI
+#: tooling. Selection-only: it is stripped from the entry's reported coverage.
+AI_TOOLING_ASK = "AI-assisted development (asked)"
+
+
+def gate_openers() -> tuple[str, ...]:
+    """Generic phrases that mean "use AI coding tools" without naming one."""
+    raw = getattr(settings.selection.bullets, "jd_gate_openers", None) or ()
+    return tuple(str(t) for t in raw)
+
+
+def ai_tooling_asked(*texts: str | None) -> bool:
+    """Does the advert ask for AI-assisted development, in any wording?
+
+    The gate on the AI-tooling bullets used to open only for a literal tool name
+    in the skill checklist. Adverts usually ask generically -- "AI-assisted
+    development tools, prompt engineering, or LLM-driven pipelines" -- and the
+    parser can summarise that away entirely ("Incorporate AI best practices";
+    #21, Wissen, 2026-10-04). So both the tool names and the generic openers are
+    matched LITERALLY against the raw advert text and the parsed fields. A bare
+    "AI" is deliberately not an opener: most adverts saying it mean AI/ML work.
+    """
+    terms = (*gated_terms(), *gate_openers())
+    if not terms:
+        return False
+    # Stored adverts are markdown with escaped punctuation ("AI\\-assisted");
+    # unescape before folding, and collapse the runs of spaces ``norm`` leaves,
+    # or a hyphenated phrase never matches its own advert.
+    raw = " ".join(t for t in texts if t).replace("\\", "")
+    text = " ".join(norm(raw).split())
+    return any(literal_hit(" ".join(norm(t).split()), text) for t in terms)
 
 
 def capped_terms() -> tuple[str, ...]:
@@ -513,8 +552,10 @@ def select_entry_bullets(
     # during the render pass, so the best-placed entry keeps the line.
     g_terms = gated_terms()
     gated_seen = rendered_gated
-    allow_gated = bool(g_terms) and jd_wants_gated(keywords, g_terms) and not (
-        gated_seen or []
+    allow_gated = (
+        bool(g_terms)
+        and (jd_wants_gated(keywords, g_terms) or jd.ai_tooling_asked)
+        and not (gated_seen or [])
     )
     #: Set once this entry has spent its single gated slot. Tracked per entry as
     #: well as per page, because one entry's pool can hold two gated bullets (the
@@ -606,6 +647,19 @@ def select_entry_bullets(
     # Hit sets are computed ONCE here rather than per candidate per iteration, which
     # is also why the beam runs faster than the greedy it replaces.
     hits_of = {b.id: covered_by(b.norm_text, keywords) for b in remaining}
+    # When the advert asks for AI tooling, the AI-tooling line answers THAT ask
+    # (#21). Credit it with the ask itself, plus any keyword that is a tool name,
+    # and NOT with the incidental words it also contains ("AI", "GitHub"): those
+    # are usually covered already, and the zero-repeat rule then dropped the line
+    # before it was ever weighed -- the Wissen advert asked and got nothing.
+    rank_kws = keywords
+    if allow_gated:
+        rank_kws = (*keywords, Keyword(AI_TOOLING_ASK, 1.0))
+        for b in remaining:
+            if _gated(b):
+                hits_of[b.id] = {AI_TOOLING_ASK} | {
+                    t for t in hits_of[b.id] if is_gated(norm(t), g_terms)
+                }
     canon_of = {
         b.id: canonical_covered(b.norm_text, block.checklist) for b in remaining
     }
@@ -633,7 +687,7 @@ def select_entry_bullets(
             # from blocks this JD is about beats one reaching across the entry.
             # Coverage first, always.
             return (
-                round(weight_of(set(self.covered), keywords), 9),
+                round(weight_of(set(self.covered), rank_kws), 9),
                 -self.extras,
                 round(self.rel_sum, 9),
                 round(self.sim_sum, 9),
@@ -705,7 +759,7 @@ def select_entry_bullets(
     ordered = sorted(
         (b for b, _ in best.picks),
         key=lambda b: (
-            round(weight_of(hits_of[b.id], keywords), 9),
+            round(weight_of(hits_of[b.id], rank_kws), 9),
             not b.is_extra,
             sim_of[b.id],
         ),
@@ -829,7 +883,7 @@ def select_entry_bullets(
         header_right=right_text,
         header_link=right_link,
         bullets=chosen,
-        covered=covered,
+        covered=covered - {AI_TOOLING_ASK},
         coverage=coverage_of(covered, keywords),
         similarity=0.0,
         score=0.0,
@@ -961,6 +1015,7 @@ def build_jd_context(
     scraped_at: datetime | None = None,
     scrape_window_hours: float | None = None,
     applicants_count: int | None = None,
+    jd_text: str | None = None,
     embed_batch_fn=None,
 ) -> JDContext:
     """Embed a parsed JD into the query facets Layer 4 scores against.
@@ -992,4 +1047,11 @@ def build_jd_context(
         scraped_at=scraped_at,
         scrape_window_hours=scrape_window_hours,
         applicants_count=applicants_count,
+        ai_tooling_asked=ai_tooling_asked(
+            jd_text,
+            " ".join(parsed.required_skills or []),
+            " ".join(parsed.nice_to_have or []),
+            " ".join(parsed.responsibilities or []),
+            parsed.role_summary,
+        ),
     )
