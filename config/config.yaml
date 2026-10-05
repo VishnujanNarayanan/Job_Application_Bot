@@ -639,69 +639,30 @@ llm:
   # merely appears in a docs page or a list_models() call is not necessarily
   # callable (Gemini listed a retired model that 404'd on every request):
   #     python -m src.cli.llm_check --list
-  # Local inference leads. It has no daily cap (Groq allows 100,000 tokens/day,
-  # about 45 parses) and no per-minute limit, and it reads the WHOLE ad rather
-  # than a clipped one. It answers only while this machine is awake, so every
-  # remote run falls straight through to Groq — see max_attempts below.
-  provider: "ollama"
-  base_url: "${OLLAMA_BASE_URL}"
-  api_key_env: "OLLAMA_API_KEY"
-  # 3b, not 7b. The 7B is 5.12 GB against a 6141 MiB RTX 4050 that already
-  # holds the desktop: only 4.19 GB fit, so ~18% of its layers ran on the CPU.
-  # That cost 92-250s per parse AND froze the laptop on 2026-08-19, because the
-  # spilled layers fight WSL (which takes half of system RAM by default) for
-  # what is left. The 3B fits VRAM whole, so nothing spills.
-  model: "qwen2.5:3b-instruct"
-  # One attempt: a local model is either reachable or it is not. On a GitHub
-  # Actions runner this laptop is unreachable, and five backoffs per job spent
-  # rediscovering that would dwarf the run.
-  max_attempts: 1
-  # Reask budget for schema mistakes, which `max_attempts` cannot fix — it
-  # re-sends the same prompt, where a reask tells the model what it got wrong.
-  # qwen2.5:7b answers `job_type: hybrid` (a location_type value) often enough
-  # to matter, and one corrective reask is local, free and ~30s.
-  validation_reask: 2
-  jd_text:
-    head_chars: 100000
-    tail_chars: 0
+  # Groq leads. Ollama led until 2026-10-05 (#33): it answered only while the
+  # operator's laptop was awake, so every GitHub Actions run opened on
+  # `llm_provider_unusable` and fell through -- and it is no longer used at all.
+  #
+  # Groq free tier: 200,000 tokens/day and a per-minute token cap on
+  # openai/gpt-oss-120b. The per-minute cap, not the daily one, is what a
+  # single run hits (37 TPM 429s on run 37324500555), so Groq now SHARES the
+  # load with OpenRouter -- see `rotation` below -- instead of carrying every
+  # parse until it breaks.
+  #
+  # llama-3.3-70b-versatile was retired and 404'd every request on 2026-08-19.
+  # Of what the key can call, gpt-oss-120b was the strongest that parses a JD
+  # correctly (4/4 skills, years and level right) in TOOLS mode, 1.9s.
+  # gpt-oss-20b also passes at 1.0s if this one is ever retired too;
+  # qwen3.6-27b needs JSON_SCHEMA -- it 400s in TOOLS mode.
+  provider: "groq"
+  base_url: "https://api.groq.com/openai/v1"
+  api_key_env: "GROQ_API_KEY"
+  model: "openai/gpt-oss-120b"
   # Instructor strategy. TOOLS works on providers with function calling (Groq,
   # Cerebras, OpenAI); JSON_SCHEMA where native schema enforcement exists; JSON
   # is the lowest common denominator. Verify with llm_check after changing it.
-  # JSON_SCHEMA, not JSON. Ollama 0.32.6's /v1 honours
-  # `response_format: {"type": "json_schema", ...}` — re-measured 2026-08-09,
-  # correcting an earlier note that said it was ignored — so generation is
-  # grammar-constrained AND Instructor states the schema in the prompt.
-  #
-  # That second half is what fixed extraction. Handed only a grammar in which
-  # required_skills was optional, qwen2.5:7b omitted it (plus nice_to_have and
-  # responsibilities) on 71% of real JDs, which zeroed the skill component of
-  # `fit` — 0.165 of the final score. Told in the prompt that the fields exist,
-  # the same model populated 5 of 5.
-  instructor_mode: "JSON_SCHEMA"
-  # 0.6, chosen by sweeping recall against a hand-checked answer key rather
-  # than by how tidy the output looks (python -m src.cli.temp_sweep).
-  # Over 30 technologies read off two real ads, 3 runs each:
-  #
-  #     0     67%      0.4   76%      0.6   87%      default  77%
-  #     0.2   67%      0.5   87%
-  #
-  # Both extremes lose. At 0 the model writes the category and stops — it
-  # found none of "(LoRA, QLoRA, SFT, DPO)" while higher settings found them —
-  # and the earlier claim that 0 was faster AND better came from a single ad on
-  # a simplified schema. The model's own default is noisier without being more
-  # complete. 0.6 was also the fastest of the three.
-  #
-  # Recall is the right target, not tidiness: Layer 4 scores each pool skill
-  # against the BEST single JD skill, so a spurious skill never matches and
-  # costs nothing, while a missing one silently costs a match.
-  temperature: 0.6
-  # 180, not 600. A generous ceiling was meant to accommodate a slow local
-  # model, but it converts an occasional hang into a stalled run: on
-  # 2026-08-19 one 7.5k-char ad hung Ollama for the full 600s, then fell
-  # through the chain, and that single job took 630s. A parse that has not
-  # finished in 180s is not slow, it is stuck — and the chain has a hosted
-  # fallback precisely so giving up early is cheap.
-  request_timeout_seconds: 180
+  instructor_mode: "TOOLS"
+  request_timeout_seconds: 60
   max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
 
   # Shared default, used by any provider that does not override it. Kept
@@ -730,6 +691,20 @@ llm:
     head_chars: 3000
     tail_chars: 1500
 
+  # Rotation: which free provider LEADS a parse. Every `every` parses (one
+  # parse per job, max_calls_per_job above) the lead passes to the next name
+  # here; the others follow it in this order, then the rest of the chain
+  # (Gemini, metered) as before. Each job still falls back to the other free
+  # provider before anything is paid for.
+  #
+  # Why: Groq alone carried every parse and hit its per-minute token cap
+  # dozens of times a run, and every parse it then gave up on went to Gemini.
+  # Alternating halves Groq's rate and keeps OpenRouter's daily allowance in
+  # play. Names are `provider` values; an empty list turns rotation off.
+  rotation:
+    providers: ["groq", "openrouter"]
+    every: 2
+
   # Providers tried, in order, when the one before gives up. Both of the
   # 2026-08-08 failures were provider-wide rather than per-job — a retired
   # model 404'd every request, and a spend cap 429'd every request — so either
@@ -740,26 +715,28 @@ llm:
   # downstream for nothing. Only permanent errors and budget exhaustion do.
   #
   # ORDER IS COST, cheapest first: free providers must be exhausted before a
-  # metered one is touched. Groq (free) leads; Gemini is metered and sits last.
+  # metered one is touched. Groq and OpenRouter (free) lead; Gemini is metered
+  # and sits last.
   # Disabled entries are skipped entirely, so a provider can sit here ready to
   # switch on without affecting a single run.
   fallbacks:
-    # Groq — the hosted safety net, and the ONLY provider a remote run can
-    # reach. Free tier: 1,000 requests/day and 100,000 tokens/day.
+    # OpenRouter -- free models (ids ending ":free"; $0 per call). Limits: ~20
+    # requests/minute and 50/day, or 1,000/day once $10 of credit has ever been
+    # bought. A free variant can be withdrawn without notice, which is why
+    # Gemini stays behind it. Re-check with: python -m src.cli.llm_check openrouter
     #
-    # llama-3.3-70b-versatile was retired and 404'd every request on
-    # 2026-08-19, taking a whole run down exactly as the retired Gemini model
-    # did on 2026-08-08. Re-measured the live catalogue that day; of what the
-    # key can actually call, gpt-oss-120b was the strongest that parses a JD
-    # correctly (4/4 skills, years and level right) in TOOLS mode, 1.9s.
-    # gpt-oss-20b also passes at 1.0s if this one is ever retired too;
-    # qwen3.6-27b needs JSON_SCHEMA — it 400s in TOOLS mode.
+    # `openrouter/free`, not a named model: OpenRouter's router picks one of
+    # the free models available AT THE TIME of each call (priced 0/0), so a
+    # free variant being withdrawn -- gpt-oss-120b:free already was, for this
+    # key -- cannot break the chain or move it onto a paid model. It only
+    # routes to models supporting what the request needs (structured output).
+    # JSON mode: the lowest common denominator across whichever model answers.
     - enabled: true
-      provider: "groq"
-      base_url: "https://api.groq.com/openai/v1"
-      api_key_env: "GROQ_API_KEY"
-      model: "openai/gpt-oss-120b"
-      instructor_mode: "TOOLS"
+      provider: "openrouter"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: "OPENROUTER_API_KEY"
+      model: "openrouter/free"
+      instructor_mode: "JSON"
       request_timeout_seconds: 60
 
     # Cerebras — OFF, and it must stay off: verified 2026-08-08 that the API

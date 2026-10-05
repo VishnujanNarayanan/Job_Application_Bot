@@ -289,10 +289,13 @@ def test_the_clip_follows_the_provider_that_will_answer():
     jd = "A" * 11_815   # the longest real listing in the database
 
     bounded = clip_jd_text(jd)
-    unbounded = clip_jd_text(jd, provider_cfg=provider_config("ollama"))
+    # A provider may raise its own bound (Ollama did, until #33 removed it).
+    unbounded = clip_jd_text(
+        jd, provider_cfg={"jd_text": {"head_chars": 100_000, "tail_chars": 0}})
 
     assert len(bounded) < 6_000, "a metered provider must stay clipped"
-    assert unbounded == jd, "a local provider should see the whole description"
+    assert unbounded == jd, "a provider's own jd_text overrides the default"
+    assert clip_jd_text(jd, provider_cfg=provider_config("groq")) == bounded
 
 
 def test_the_prompt_builder_is_handed_to_the_client_per_provider():
