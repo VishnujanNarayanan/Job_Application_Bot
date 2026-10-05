@@ -242,6 +242,56 @@ _OUTCOME_LABELS = (
 )
 
 
+def _outcome_lines(outcomes: dict[str, int]) -> list[str]:
+    """``Label: n`` for each non-zero outcome, in pipeline order."""
+    outcomes = dict(outcomes)
+    known = {key for key, _label in _OUTCOME_LABELS}
+    rows = [(label, outcomes.pop(key)) for key, label in _OUTCOME_LABELS if outcomes.get(key)]
+    rows += sorted((key, n) for key, n in outcomes.items() if key not in known and n)
+    return [f"{label}: {n}" for label, n in rows]
+
+
+# --- Progress messages: what a run is doing, while it does it --------------
+
+def run_started_text(terms: list[str], *, dry_run: bool) -> str:
+    return (f"*Job Bot — {'Dry run' if dry_run else 'Run'} started*\n"
+            f"Searching: {', '.join(terms)}")
+
+
+def scrape_done_text(term: str, *, found: int, remote: int, new: int) -> str:
+    """One per search term. ``remote``: found only by the remote search."""
+    parts = [f"{found} jobs"]
+    if remote:
+        parts.append(f"{remote} of them from the remote search")
+    if new != found:
+        parts.append(f"{found - new} already found by an earlier term")
+    return f"Found for \"{term}\": " + ", ".join(parts)
+
+
+def prechecks_done_text(
+    *, checked: int, to_parse: int, backlog: int, outcomes: dict[str, int]
+) -> str:
+    """After the checks that need no LLM: what goes on to be parsed and scored."""
+    lines = [f"*Pre-checks done* — {to_parse} of {checked} going on to scoring"]
+    if backlog:
+        lines.append(f"({checked - backlog} scraped + {backlog} carried over from earlier runs)")
+    skipped = _outcome_lines(outcomes)
+    if skipped:
+        lines += ["", "Skipped before parsing:"] + skipped
+    return "\n".join(lines)
+
+
+def send_status(text: str) -> None:
+    """Best-effort progress message. Never raises: a progress line that fails
+    to send must not cost the run, which matters far more than the line."""
+    if not settings.notifications.get("progress", True):
+        return
+    try:
+        asyncio.run(_send(text))
+    except Exception as exc:  # noqa: BLE001 - any send failure is non-fatal
+        log.warning("telegram_status_error", error=str(exc))
+
+
 def run_summary_text(
     *,
     scraped: int,
@@ -264,12 +314,9 @@ def run_summary_text(
         f"Scraped: {scraped}" + (f" (+{backlog} carried over)" if backlog else ""),
         f"Matched: {applied}",
     ]
-    known = {key for key, _label in _OUTCOME_LABELS}
-    rows = [(label, outcomes.pop(key)) for key, label in _OUTCOME_LABELS if outcomes.get(key)]
-    rows += sorted((key, n) for key, n in outcomes.items() if key not in known and n)
+    rows = _outcome_lines(outcomes)
     if rows:
-        lines.append("")
-        lines += [f"{label}: {n}" for label, n in rows]
+        lines += [""] + rows
     return "\n".join(lines)
 
 
