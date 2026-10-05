@@ -725,16 +725,17 @@ llm:
     # bought. A free variant can be withdrawn without notice, which is why
     # Gemini stays behind it. Re-check with: python -m src.cli.llm_check openrouter
     #
-    # PROVISIONAL (2026-10-05): gpt-oss-120b:free is not offered to this key.
-    # gemma-4-31b-it is the largest non-reasoning instruct model on the free
-    # list; JSON mode because tool calling varies by OpenRouter's upstream
-    # host. The comparison against real JDs could not run -- the key's free
-    # daily allowance was already spent -- so verify before trusting it.
+    # `openrouter/free`, not a named model: OpenRouter's router picks one of
+    # the free models available AT THE TIME of each call (priced 0/0), so a
+    # free variant being withdrawn -- gpt-oss-120b:free already was, for this
+    # key -- cannot break the chain or move it onto a paid model. It only
+    # routes to models supporting what the request needs (structured output).
+    # JSON mode: the lowest common denominator across whichever model answers.
     - enabled: true
       provider: "openrouter"
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: "OPENROUTER_API_KEY"
-      model: "google/gemma-4-31b-it:free"
+      model: "openrouter/free"
       instructor_mode: "JSON"
       request_timeout_seconds: 60
 
