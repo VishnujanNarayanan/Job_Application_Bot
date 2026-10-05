@@ -106,6 +106,16 @@ scraper:
   # LinkedIn jobs get flagged as duplicates of the first. Fetching costs more
   # requests → higher throttle risk, bounded by the rate_limit settings below.
   linkedin_fetch_description: true
+  # Remote roles. The plain search returns LinkedIn's top listings for
+  # `location`, almost all on-site or hybrid: of 1,182 parsed jobs only 98
+  # (8%) were remote. This adds one LinkedIn call per term with the Remote
+  # filter on, so remote roles in `location` arrive whether or not they rank.
+  # A wider window than the plain search's: remote listings are sparse, and
+  # ones already seen are skipped as duplicates before they cost a parse.
+  # results_wanted 0 turns it off.
+  remote:
+    results_wanted: 15
+    hours_old: 24
   # Anti-rate-limit measures (recoverable scraper-IP throttling, hard rule #4).
   rate_limit:
     # Scrape each site in its own JobSpy call so one site's throttling or
