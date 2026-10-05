@@ -297,6 +297,55 @@ def test_scrape_linkedin_cap_and_fetch_flag(monkeypatch) -> None:
     assert seen["indeed"]["results_wanted"] == 50
 
 
+def test_scrape_remote_pass(monkeypatch) -> None:
+    """remote_results_wanted adds one LinkedIn call with the Remote filter on,
+    its own cap and window; rows it shares with the plain search are dropped."""
+    monkeypatch.setattr("src.scraper.jobspy_wrapper.time.sleep", lambda *_: None)
+    calls: list[dict] = []
+
+    def fake_scrape_jobs(**kwargs):
+        calls.append(kwargs)
+        ids = ["2", "3"] if kwargs.get("is_remote") else ["1", "2"]
+        return _FakeDF([{"site": "linkedin", "id": i, "company": "A", "title": "DE"}
+                        for i in ids])
+
+    fake_module = types.ModuleType("jobspy")
+    fake_module.scrape_jobs = fake_scrape_jobs
+    monkeypatch.setitem(sys.modules, "jobspy", fake_module)
+
+    from src.scraper.jobspy_wrapper import scrape
+
+    jobs = scrape(
+        "data engineer",
+        sites=["linkedin"],
+        country="india",
+        results_wanted=50,
+        hours_old=1,
+        linkedin_results_wanted=25,
+        remote_results_wanted=15,
+        remote_hours_old=24,
+    )
+    assert [j.job_id for j in jobs] == ["linkedin-1", "linkedin-2", "linkedin-3"]
+    plain, remote = calls
+    assert "is_remote" not in plain and plain["hours_old"] == 1
+    assert remote["is_remote"] is True
+    assert remote["results_wanted"] == 15 and remote["hours_old"] == 24
+
+
+def test_scrape_remote_pass_off_by_default(monkeypatch) -> None:
+    """No remote_results_wanted, no extra call."""
+    calls: list[dict] = []
+    fake_module = types.ModuleType("jobspy")
+    fake_module.scrape_jobs = lambda **kw: calls.append(kw) or _FakeDF([])
+    monkeypatch.setitem(sys.modules, "jobspy", fake_module)
+
+    from src.scraper.jobspy_wrapper import scrape
+
+    scrape("data engineer", sites=["linkedin"], country="india",
+           results_wanted=50, hours_old=1)
+    assert len(calls) == 1 and "is_remote" not in calls[0]
+
+
 # ---------------------------------------------------------------------------
 # LinkedIn applicant count (issue #13)
 # ---------------------------------------------------------------------------
