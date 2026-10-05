@@ -194,3 +194,72 @@ def test_remote_search_share_is_counted(monkeypatch):
     scrape("de", sites=["linkedin"], country="india", results_wanted=5, hours_old=1,
            remote_results_wanted=5, stats=stats)
     assert stats == {"remote": 1}   # "2" was already found by the plain search
+
+
+# --- Backlog applicant refresh ----------------------------------------------
+
+class _Resp:
+    def __init__(self, text, url="https://www.linkedin.com/jobs/view/1"):
+        self.text, self.url = text, url
+
+    def raise_for_status(self):
+        pass
+
+
+def _li(job_id, count):
+    return AllJobs(job_id=f"linkedin-li-{job_id}", company="A", role="DE",
+                   site="linkedin", applicants_count=count)
+
+
+def test_a_carried_over_job_is_judged_on_its_current_applicant_count(monkeypatch):
+    import requests
+
+    from src.scraper.jobspy_wrapper import refresh_applicants
+
+    pages = {
+        "1": '<figcaption class="num-applicants__caption"> 110 applicants </figcaption>',
+        "2": "<p>No longer accepting applications</p>",
+    }
+
+    def fake_get(url, **_kw):
+        jid = url.rsplit("/", 1)[1]
+        if jid == "3":
+            raise requests.ConnectionError("down")
+        return _Resp(pages[jid])
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    grew, closed, unreachable = _li("1", 92), _li("2", 40), _li("3", 50)
+    other_site = AllJobs(job_id="indeed-9", company="B", role="DE", site="indeed")
+
+    stats = refresh_applicants([grew, closed, unreachable, other_site], delay_seconds=0)
+
+    assert grew.applicants_count == 110
+    assert getattr(closed, "closed", False) is True
+    assert unreachable.applicants_count == 50, "a failed fetch keeps the stale count"
+    assert stats == {"refreshed": 2, "changed": 1, "closed": 1, "failed": 1}
+
+
+def test_a_missing_api_key_is_tried_once_per_run_not_per_job(monkeypatch):
+    from pydantic import BaseModel
+
+    from src.llm import client as llm_client
+
+    class Dummy(BaseModel):
+        value: str
+
+    llm_client.reset_clients()
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    for var in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    calls = []
+    real = llm_client._api_key
+    monkeypatch.setattr(llm_client, "_api_key",
+                        lambda cfg, which: calls.append(which) or real(cfg, which))
+
+    for _ in range(3):
+        with pytest.raises(llm_client.LLMError):
+            llm_client.complete(Dummy, "p")
+
+    # Three providers, each found keyless exactly once -- then skipped.
+    assert sorted(calls) == ["fallback:0", "fallback:1", "primary"]
+    llm_client.reset_clients()

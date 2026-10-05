@@ -187,6 +187,66 @@ def install_applicant_capture() -> None:
     _capture_installed = True
 
 
+# LinkedIn's guest job page for a posting that has closed.
+_CLOSED = re.compile(r"no longer accepting applications", re.IGNORECASE)
+
+
+def _linkedin_id(job: AllJobs) -> str | None:
+    """LinkedIn's numeric job id from our ``linkedin-li-<id>`` key."""
+    m = re.fullmatch(r"linkedin-li-(\d+)", job.job_id or "")
+    return m.group(1) if m else None
+
+
+def refresh_applicants(jobs: Sequence[AllJobs], *, delay_seconds: float = 1.5) -> dict[str, int]:
+    """Re-read the applicant count of LinkedIn ``jobs`` from their job pages.
+
+    For the backlog: a job carried over from an earlier run still holds the
+    count it was scraped with, which can be hours stale -- and the applicant
+    check, and the score, should judge the posting as it is NOW. One GET per
+    job, the same public page and headers JobSpy's own description fetch uses,
+    paced by ``delay_seconds`` (hard rule #4).
+
+    Updates ``applicants_text``/``applicants_count`` in place when the page
+    shows a caption; marks ``job.closed = True`` (a plain attribute, not a
+    column) when LinkedIn says the posting no longer accepts applications.
+    Any failure leaves the job as it was: a stale count beats no job.
+    Returns ``{"refreshed": n, "changed": n, "closed": n, "failed": n}``.
+    """
+    import requests
+
+    from jobspy.linkedin.constant import headers
+
+    stats = {"refreshed": 0, "changed": 0, "closed": 0, "failed": 0}
+    linkedin = [(job, _linkedin_id(job)) for job in jobs]
+    linkedin = [(job, jid) for job, jid in linkedin if jid]
+    for i, (job, jid) in enumerate(linkedin):
+        if i and delay_seconds:
+            time.sleep(delay_seconds + random.uniform(0, delay_seconds))
+        try:
+            resp = requests.get(f"https://www.linkedin.com/jobs/view/{jid}",
+                                headers=headers, timeout=10)
+            resp.raise_for_status()
+            if "linkedin.com/signup" in resp.url:
+                raise RuntimeError("redirected to signup")
+        except Exception as exc:  # noqa: BLE001 - keep the stale count
+            stats["failed"] += 1
+            log.warning("applicants_refresh_failed", job_id=job.job_id, error=str(exc))
+            continue
+        stats["refreshed"] += 1
+        if _CLOSED.search(resp.text):
+            job.closed = True
+            stats["closed"] += 1
+            continue
+        caption = applicant_caption(resp.text)
+        count = parse_applicants(caption)
+        if count is not None and count != job.applicants_count:
+            log.info("applicants_refreshed", job_id=job.job_id,
+                     was=job.applicants_count, now=count)
+            job.applicants_text, job.applicants_count = caption, count
+            stats["changed"] += 1
+    return stats
+
+
 def _row_to_job(row: dict[str, Any]) -> AllJobs | None:
     """Map one JobSpy row (as a dict) to an ``AllJobs``; None if unusable.
 

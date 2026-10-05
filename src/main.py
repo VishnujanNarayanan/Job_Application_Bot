@@ -103,7 +103,7 @@ def _run(dry_run: bool, log) -> int:
         JOB_TYPE_DISALLOWED,
         LOCATION_DISALLOWED,
         LOW_SCORE,
-        PARSE_FAILURE,
+        JOB_CLOSED,
         TITLE_DISALLOWED,
         TOO_MANY_APPLICANTS,
     )
@@ -210,8 +210,14 @@ def _run(dry_run: bool, log) -> int:
         backlog = _load_backlog(
             session, now, int(cfg.scraper.get("backlog_days", 0) or 0), seen_job_ids
         )
+        refreshed_changed = 0
         if backlog:
             log.info("backlog_loaded", count=len(backlog))
+            # A carried-over job holds the applicant count it was scraped with,
+            # which can be hours stale; judge it on the posting as it is now.
+            refresh = jobspy_wrapper.refresh_applicants(backlog)
+            refreshed_changed = refresh["changed"]
+            log.info("backlog_refreshed", **refresh)
             raw_jobs = backlog + raw_jobs
 
         # --- Layer 2: hard filters (raw fields) ---
@@ -248,6 +254,9 @@ def _run(dry_run: bool, log) -> int:
                 log.info("empty_jd_skipped", job_id=job.job_id, site=job.site)
                 empty_jd_count += 1
                 continue
+            if getattr(job, "closed", False):
+                not_applied_queue.append((job, JOB_CLOSED, None, None))
+                continue
             if filters.location_disallowed(job.location, disallowed):
                 not_applied_queue.append((job, LOCATION_DISALLOWED, job.location, None))
                 continue
@@ -276,7 +285,7 @@ def _run(dry_run: bool, log) -> int:
             prefilter_outcomes["EMPTY_JD"] = empty_jd_count
         send_status(prechecks_done_text(
             checked=len(raw_jobs), to_parse=len(passing), backlog=len(backlog),
-            outcomes=prefilter_outcomes))
+            outcomes=prefilter_outcomes, refreshed=refreshed_changed))
 
         # --- Layer 2: embed JD texts in a single batch ---
         if passing:
@@ -298,6 +307,7 @@ def _run(dry_run: bool, log) -> int:
         short_circuit = int(cfg.scraper.get("short_circuit_count", 0) or 0)
         time_budget = 60.0 * float(cfg.scraper.get("time_budget_minutes", 0) or 0)
         not_reached = 0
+        parse_failed = 0
 
         for index, job in enumerate(passing):
             # Stop STARTING jobs once the time budget is spent, so the run ends
@@ -339,13 +349,16 @@ def _run(dry_run: bool, log) -> int:
                 not_reached = len(passing) - index
                 break
             except LLMError as exc:
+                # No verdict: a job whose parse failed has not been judged, so
+                # it stays in the backlog and the next run tries again. Writing
+                # PARSE_FAILURE made it final -- a local run with two keys
+                # missing would have closed out all 48 jobs it scraped.
                 log.error(
-                    "gemini_failure",
-                    reason=PARSE_FAILURE,
+                    "parse_failed_carried_over",
                     job_id=job.job_id,
                     error=str(exc),
                 )
-                not_applied_queue.append((job, PARSE_FAILURE, str(exc), None))
+                parse_failed += 1
                 skipped_count += 1
                 continue
 
@@ -556,6 +569,8 @@ def _run(dry_run: bool, log) -> int:
         outcomes[reason] = outcomes.get(reason, 0) + 1
     if empty_jd_count:
         outcomes["EMPTY_JD"] = empty_jd_count
+    if parse_failed:
+        outcomes["PARSE_FAILED"] = parse_failed
     if not_reached:
         outcomes["NOT_REACHED"] = not_reached
     try:
