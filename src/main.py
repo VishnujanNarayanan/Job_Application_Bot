@@ -22,7 +22,8 @@ import argparse
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
@@ -88,6 +89,7 @@ def _run(dry_run: bool, log) -> int:
     from src.parser import apply_to_row, grounded_skills, parse
     from src.reasons import (
         BUILD_FAILURE,
+        COMPANY_BLOCKED,
         COMPANY_COOLDOWN,
         DUPLICATE,
         HARD_FILTER_LAYER_3,
@@ -95,6 +97,8 @@ def _run(dry_run: bool, log) -> int:
         LOCATION_DISALLOWED,
         LOW_SCORE,
         PARSE_FAILURE,
+        TITLE_DISALLOWED,
+        TOO_MANY_APPLICANTS,
     )
     from src.scorer.apply_decision import evaluate
     from src.scorer.embeddings import embed_documents
@@ -107,6 +111,7 @@ def _run(dry_run: bool, log) -> int:
 
     cfg = settings
     now = datetime.now(timezone.utc)
+    started = time.monotonic()
 
     with session_scope() as session:
         # --- Layer 7: master profile rebuild (mtime short-circuit) ---
@@ -185,11 +190,25 @@ def _run(dry_run: bool, log) -> int:
             )
 
         log.info("scrape_done", terms=run_terms, raw_count=len(raw_jobs))
+        scraped_count = len(raw_jobs)
+
+        # --- Backlog: earlier jobs that never got a verdict, processed FIRST ---
+        backlog = _load_backlog(
+            session, now, int(cfg.scraper.get("backlog_days", 0) or 0), seen_job_ids
+        )
+        if backlog:
+            log.info("backlog_loaded", count=len(backlog))
+            raw_jobs = backlog + raw_jobs
 
         # --- Layer 2: hard filters (raw fields) ---
         existing_ids = filters.existing_job_ids(session, [j.job_id for j in raw_jobs])
         disallowed = list(cfg.filters.disallowed_regions)
         cooldown_days = int(cfg.scraper.cooldown_days)
+        blocklist = list(cfg.filters.get("company_blocklist") or [])
+        title_patterns = list(cfg.filters.get("title_blocklist") or [])
+        best_fit = float(cfg.filters.get("best_realistic_fit", 1.0))
+        threshold = float(cfg.scoring.apply_threshold)
+        empty_jd_count = 0
 
         passing: list[AllJobs] = []
         # (job, reason, detail, scores) — `scores` is the SelectionResult when
@@ -213,9 +232,22 @@ def _run(dry_run: bool, log) -> int:
                 # 1.0). Not persisted — the empty is usually transient, so it
                 # gets re-scraped (and hopefully fetched) on the next run.
                 log.info("empty_jd_skipped", job_id=job.job_id, site=job.site)
+                empty_jd_count += 1
                 continue
             if filters.location_disallowed(job.location, disallowed):
                 not_applied_queue.append((job, LOCATION_DISALLOWED, job.location, None))
+                continue
+            # Everything below reads only scraped fields, so it runs before any
+            # LLM call: a job that cannot be notified should not cost a parse.
+            if filters.company_blocked(job.company, blocklist):
+                not_applied_queue.append((job, COMPANY_BLOCKED, job.company, None))
+                continue
+            if filters.title_disallowed(job.role, title_patterns):
+                not_applied_queue.append((job, TITLE_DISALLOWED, job.role, None))
+                continue
+            if filters.cannot_reach_threshold(job.applicants_count, best_fit, threshold):
+                not_applied_queue.append(
+                    (job, TOO_MANY_APPLICANTS, str(job.applicants_count), None))
                 continue
             last_notified = filters.company_last_notified(session, job.company)
             if filters.company_in_cooldown(last_notified, now, cooldown_days):
@@ -225,22 +257,36 @@ def _run(dry_run: bool, log) -> int:
 
         # --- Layer 2: embed JD texts in a single batch ---
         if passing:
-            jd_texts = [j.jd_text or "" for j in passing]
+            # Backlog rows were embedded by the run that scraped them.
+            to_embed = [j for j in passing if j.jd_embedding is None]
+            jd_texts = [j.jd_text or "" for j in to_embed]
             # embed_documents, not embed_batch: the model's window holds only
             # ~1,200 characters, and these ads average 4,400. A plain encode
             # would compare openings — which are company boilerplate, and so
             # the worst possible basis for telling two roles apart.
-            embeddings = embed_documents(jd_texts)
-            for job, emb in zip(passing, embeddings):
+            embeddings = embed_documents(jd_texts) if to_embed else []
+            for job, emb in zip(to_embed, embeddings):
                 job.jd_embedding = emb
             passing = _upsert_scraped(session, passing)
 
         matched_count = 0
         skipped_count = 0
         budget_exhausted = False
-        short_circuit = int(cfg.scraper.short_circuit_count)
+        short_circuit = int(cfg.scraper.get("short_circuit_count", 0) or 0)
+        time_budget = 60.0 * float(cfg.scraper.get("time_budget_minutes", 0) or 0)
+        not_reached = 0
 
-        for job in passing:
+        for index, job in enumerate(passing):
+            # Stop STARTING jobs once the time budget is spent, so the run ends
+            # cleanly -- verdicts written, summary sent -- instead of being
+            # killed by the workflow timeout with nothing recorded. The jobs
+            # left over have no verdict, which is exactly what puts them in the
+            # next run's backlog.
+            if time_budget and time.monotonic() - started > time_budget:
+                not_reached = len(passing) - index
+                log.warning("time_budget_reached", not_reached=not_reached,
+                            minutes=round((time.monotonic() - started) / 60, 1))
+                break
             # End any open transaction BEFORE the slow part. Neon terminates a
             # session left idle inside a transaction for 5 minutes
             # (idle_in_transaction_session_timeout), and the parse/build calls
@@ -267,6 +313,7 @@ def _run(dry_run: bool, log) -> int:
                     error=str(exc),
                 )
                 budget_exhausted = True
+                not_reached = len(passing) - index
                 break
             except LLMError as exc:
                 log.error(
@@ -456,8 +503,9 @@ def _run(dry_run: bool, log) -> int:
                 lead_coverage=round(selection.lead_entry_coverage, 3),
             )
 
-            if matched_count + skipped_count >= short_circuit:
-                log.info("short_circuit", threshold=short_circuit)
+            if short_circuit and matched_count + skipped_count >= short_circuit:
+                not_reached = len(passing) - (index + 1)
+                log.info("short_circuit", threshold=short_circuit, not_reached=not_reached)
                 break
 
         # --- Persist not-applied records (+ Layer 9 skipped/near-dup rows) ---
@@ -479,13 +527,22 @@ def _run(dry_run: bool, log) -> int:
         else:
             analytics.export_index(session)
 
-    # --- Layer 8: dry-run summary ---
-    total = len(raw_jobs)
+    # --- Layer 8: run summary -- every job accounted for ---
+    outcomes: dict[str, int] = {}
+    for _job, reason, _detail, _scores in not_applied_queue:
+        outcomes[reason] = outcomes.get(reason, 0) + 1
+    if empty_jd_count:
+        outcomes["EMPTY_JD"] = empty_jd_count
+    if not_reached:
+        outcomes["NOT_REACHED"] = not_reached
     try:
         send_dry_run_summary(
-            scraped=total,
+            scraped=scraped_count,
             skipped=skipped_count,
             applied=matched_count,
+            backlog=len(backlog),
+            outcomes=outcomes,
+            dry_run=dry_run,
         )
     except Exception as exc:
         log.error("telegram_summary_error", error=str(exc))
@@ -493,9 +550,11 @@ def _run(dry_run: bool, log) -> int:
     log.info(
         "run_complete",
         dry_run=dry_run,
-        scraped=total,
+        scraped=scraped_count,
+        backlog=len(backlog),
         matched=matched_count,
         skipped=skipped_count,
+        outcomes=outcomes,
         aborted="llm_budget_exhausted" if budget_exhausted else None,
     )
     # Non-zero so a scheduled run surfaces as failed rather than quietly
@@ -588,6 +647,33 @@ _SCRAPED_FIELDS = (
     "company", "role", "site", "location", "job_url", "posted_at", "scraped_at",
     "jd_text", "jd_embedding", "job_type", "applicants_text", "applicants_count",
 )
+
+
+def _load_backlog(session, now: datetime, days: int, exclude: set[str]) -> list:
+    """Jobs scraped in the last ``days`` that never got a verdict, oldest first.
+
+    A job gets a verdict -- a row in `applied` or `not_applied` -- once it is
+    processed. One without either was scraped and then never reached: the time
+    budget ran out, or every LLM provider was out of budget. The scrape window
+    is an hour, so such a job is almost never scraped again; without this it
+    was dropped for good (10 of 40 on run 37333275047). Jobs this run just
+    scraped are excluded -- they are already in the batch.
+    """
+    from sqlalchemy import exists, select
+
+    from src.state.models import AllJobs, Applied, NotApplied
+
+    if days <= 0:
+        return []
+    rows = session.scalars(
+        select(AllJobs)
+        .where(AllJobs.scraped_at >= now - timedelta(days=days))
+        .where(AllJobs.jd_text.isnot(None), AllJobs.jd_text != "")
+        .where(~exists().where(Applied.job_id == AllJobs.job_id))
+        .where(~exists().where(NotApplied.job_id == AllJobs.job_id))
+        .order_by(AllJobs.scraped_at)
+    ).all()
+    return [row for row in rows if row.job_id not in exclude]
 
 
 def _upsert_scraped(session, jobs: list) -> list:
