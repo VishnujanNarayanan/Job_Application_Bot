@@ -588,3 +588,11 @@ def test_the_hint_is_actually_slept_on():
     assert waits and all(w == 7.5 for w in waits), (
         f"expected the stated 7s (+0.5 margin) every time, got {waits}"
     )
+
+
+def test_openrouter_only_ever_uses_the_free_router():
+    """No surprise bill: `openrouter/free` routes each call to whichever free
+    model is available at the time. A named model -- even a `:free` one --
+    can be withdrawn, and a paid id here would bill the account."""
+    cfg = llm_client.provider_config("openrouter")
+    assert str(cfg.model) == "openrouter/free"
