@@ -64,6 +64,22 @@ LINKS = {
 }
 
 
+# The contact line must survive an ATS, which reads TEXT, not hyperlink
+# targets: a run that says "LinkedIn" gives the parser no URL to extract, and a
+# phone written in an unusual grouping is not recognised as one. So the visible
+# text IS the value -- the link stays on it for human readers.
+def _phone_display(raw: str) -> str:
+    """"+91 98765 43210": country code, then the 10-digit number as 5 + 5."""
+    digits = re.sub(r"\D", "", raw)
+    local, cc = digits[-10:], digits[:-10] or "91"
+    return f"+{cc} {local[:5]} {local[5:]}" if len(local) == 10 else raw
+
+
+def _url_display(url: str) -> str:
+    """linkedin.com/in/name: no scheme, no www, no trailing slash."""
+    return re.sub(r"^https?://(www\.)?", "", url).rstrip("/")
+
+
 def _education_line() -> tuple[str, str]:
     """Degree + institution, plus the right-hand status. First entry only.
 
@@ -154,19 +170,17 @@ def set_paragraph(p, pieces):
     proto = p.runs[0]._r if p.runs else None
     if proto is None:
         return
-    sep_proto = None
-    for r in p.runs:                       # keep the Symbol-font separator run
-        if (r.text or "").strip() == "⎪":
-            sep_proto = r._r
-            break
     for r in list(p._p.findall(qn("w:r"))):
         p._p.remove(r)
     for hl in list(p._p.findall(qn("w:hyperlink"))):
         p._p.remove(hl)
 
     for text, url in pieces:
-        if text == "⎪" and sep_proto is not None:
-            p._p.append(styled_run(sep_proto, " ⎪ ", blue=False, underline=False))
+        # A plain ASCII pipe in the body font. The template's "⎪" (U+23AA, a
+        # Symbol-font bracket piece) is not a delimiter to a parser, so the
+        # phone ran straight into the email and was not extracted.
+        if text == "|":
+            p._p.append(styled_run(proto, " | ", blue=False, underline=False))
             continue
         if url:
             rid = add_hyperlink_rel(url)
@@ -189,10 +203,10 @@ set_paragraph(paras[0], [(NAME, None)])
 
 # --- paragraph 1: contact line ---------------------------------------------
 set_paragraph(paras[1], [
-    (PHONE, LINKS["tel"]), ("⎪", None),
-    (EMAIL, LINKS["mail"]), ("⎪", None),
-    ("Portfolio", LINKS["portfolio"]), ("⎪", None),
-    ("LinkedIn", LINKS["linkedin"]), ("⎪", None),
+    (_phone_display(PHONE), LINKS["tel"]), ("|", None),
+    (EMAIL, LINKS["mail"]), ("|", None),
+    (_url_display(LINKS["portfolio"]), LINKS["portfolio"]), ("|", None),
+    (_url_display(LINKS["linkedin"]), LINKS["linkedin"]), ("|", None),
     ("Certificates", LINKS["certs"]),
 ])
 
