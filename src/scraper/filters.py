@@ -63,6 +63,51 @@ def company_in_cooldown(
     return now - last_notified_at < timedelta(days=cooldown_days)
 
 
+def company_blocked(company: str | None, blocklist: Iterable[str]) -> bool:
+    """True if the company is on the operator's blocklist (case-insensitive,
+    whole name). `filters.company_blocklist` sat in config unread until
+    2026-10-05: a company added there was still scraped, parsed and notified."""
+    if not company:
+        return False
+    name = company.strip().casefold()
+    return any(name == str(b).strip().casefold() for b in blocklist)
+
+
+def title_disallowed(title: str | None, patterns: Iterable[str]) -> bool:
+    """True if the job TITLE names an employment type the operator rejects.
+
+    Checked before the parse, and it catches what the parse misses: across
+    1,221 stored jobs the parser called "Software Developer Intern" full-time,
+    and two internships were notified as matches. A title that says "Intern"
+    is not ambiguous; the description often is.
+    """
+    import re
+
+    if not title:
+        return False
+    return any(re.search(p, title, re.IGNORECASE) for p in patterns)
+
+
+def cannot_reach_threshold(
+    applicants_count: int | None, best_fit: float, threshold: float
+) -> bool:
+    """True if even a ``best_fit`` match could not clear ``threshold`` at this
+    applicant count.
+
+    final_score = fit x applicant multiplier, so a crowded posting needs a fit
+    no stored job has reached: at 200+ applicants the multiplier is 0.5 and a
+    0.45 threshold needs fit 0.90, against a best-ever fit of 0.728. Parsing
+    those spent ~1 in 5 LLM calls on jobs that could not match. Derived from the
+    live threshold and multiplier, so retuning either moves the cut-off with it.
+    An unknown count never qualifies -- an absent measurement is not a crowd.
+    """
+    if applicants_count is None:
+        return False
+    from src.scorer.apply_decision import applicant_multiplier
+
+    return best_fit * applicant_multiplier(applicants_count) < threshold
+
+
 # --- DB-backed lookups (thin; the predicates above do the deciding) --------
 
 
