@@ -33,8 +33,7 @@ def _clean_clients():
     llm_client.reset_clients()
 
 
-# The provider carrying the full retry budget. The primary is a local model
-# with max_attempts=1 — reachable or not, never worth five backoffs.
+# The first fallback (OpenRouter), named in error messages.
 _HOSTED = "fallback:0"
 
 
@@ -70,40 +69,87 @@ def test_fallback_is_enabled_and_points_elsewhere():
 
 
 def test_chain_is_ordered_cheapest_first():
-    """Cost order: uncapped local, then free hosted, then metered.
+    """Cost order: the free hosted providers, then the metered one.
 
-    Local inference has no cap at all; Groq is free but allows 100,000
-    tokens/day; Gemini is metered and already hit a spend cap once. Reordering
-    these would mean paying for work a free provider could have done.
+    Groq and OpenRouter are free (each capped); Gemini is metered and already
+    hit a spend cap once. Reordering these would mean paying for work a free
+    provider could have done.
     """
     providers = [str(cfg.provider) for _, cfg in llm_client.provider_chain()]
 
-    assert providers[0] == "ollama", "the uncapped local provider leads"
-    assert "groq" in providers, "a hosted provider must remain reachable remotely"
+    assert providers[:2] == ["groq", "openrouter"], "the free providers lead"
     assert providers[-1] == "gemini", "the metered provider must be last resort"
 
 
-def test_the_local_provider_gives_up_immediately_when_absent():
-    """A local model is either reachable or it is not.
-
-    Every GitHub Actions run reaches for a laptop that is not there. The retry
-    budget meant for a throttled hosted API would spend five backoffs per job
-    rediscovering that, before every job in the run.
-    """
-    primary = llm_client.provider_config("primary")
-
-    assert str(primary.provider) == "ollama"
-    assert int(primary.get("max_attempts", 99)) == 1
+def test_ollama_is_gone():
+    """#33: Ollama answered only while the laptop was awake, so every GitHub
+    Actions run opened on `llm_provider_unusable`. It is not configured at all,
+    enabled or not."""
+    names = [name for name, _cfg, _enabled in llm_client.all_providers()]
+    assert "ollama" not in names
 
 
-def test_only_the_local_provider_reads_whole_descriptions():
-    """The clip exists to survive a hosted token budget; local has none."""
-    chain = dict(
-        (str(cfg.provider), cfg) for _, cfg in llm_client.provider_chain()
-    )
+def test_hosted_providers_keep_the_global_clip():
+    """The clip exists to survive a hosted token budget; no provider is
+    exempt from it now that the uncapped local one is gone."""
+    for _, cfg in llm_client.provider_chain():
+        assert cfg.get("jd_text") is None, f"{cfg.provider} overrides the clip"
 
-    assert chain["ollama"].get("jd_text") is not None, "local reads everything"
-    assert chain["groq"].get("jd_text") is None, "hosted keeps the global clip"
+
+# ---------------------------------------------------------------------------
+# Rotation
+# ---------------------------------------------------------------------------
+
+def _leads(n):
+    chain = llm_client.provider_chain()
+    return [str(llm_client.rotate(chain, i)[0][1].provider) for i in range(n)]
+
+
+def test_rotation_passes_the_lead_every_two_calls():
+    assert _leads(8) == ["groq", "groq", "openrouter", "openrouter"] * 2
+
+
+def test_rotation_keeps_the_other_free_provider_ahead_of_the_metered_one():
+    chain = llm_client.provider_chain()
+    for i in range(4):
+        order = [str(cfg.provider) for _, cfg in llm_client.rotate(chain, i)]
+        assert sorted(order[:2]) == ["groq", "openrouter"]
+        assert order[2:] == ["gemini"]
+
+
+def test_rotation_is_a_no_op_without_two_members(monkeypatch):
+    chain = llm_client.provider_chain()
+    monkeypatch.setitem(llm_client.settings.llm._data, "rotation",
+                        {"providers": ["groq"], "every": 2})
+    assert llm_client.rotate(chain, 3) == chain
+
+
+def test_complete_alternates_the_serving_provider():
+    """End to end: with both healthy, calls 0-1 go to Groq and 2-3 to
+    OpenRouter -- neither provider carries the whole run."""
+    served = []
+
+    def pick(which="primary"):
+        name = str(llm_client.provider_config(which).provider)
+        stub = MagicMock()
+        stub.chat.completions.create.side_effect = (
+            lambda **_kw: served.append(name) or Dummy(value=name))
+        return stub
+
+    with patch.object(llm_client, "get_client", side_effect=pick):
+        for _ in range(4):
+            llm_client.complete(Dummy, "p")
+
+    assert served == ["groq", "groq", "openrouter", "openrouter"]
+
+
+def test_openrouter_daily_allowance_counts_as_exhausted():
+    """OpenRouter words its free daily cap as a rate limit. Backing off on it
+    would spend five attempts per job on a window that does not reopen."""
+    exc = RuntimeError("Error code: 429 - Rate limit exceeded: "
+                       "free-models-per-day. Add 10 credits to unlock 1000 "
+                       "free model requests per day")
+    assert llm_client._is_budget_exhausted(exc)
 
 
 def test_cerebras_stays_disabled():
