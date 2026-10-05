@@ -1588,12 +1588,15 @@ def test_applicants_boost_or_penalise_fit() -> None:
 
 def test_an_early_near_miss_is_lifted_over_the_threshold() -> None:
     """#26: being early is a reward, not just the absence of a penalty. Staffnix
-    (fit 0.450, first 25) could not pass while the multiplier capped at 1.0."""
+    (fit 0.450, first 25) could not pass while the multiplier capped at 1.0.
+    The near-miss is taken relative to the threshold so the test survives the
+    threshold being retuned (0.65 -> 0.45 put Staffnix's 0.450 exactly on it)."""
     from src.scorer.apply_decision import applicant_multiplier
 
     threshold = float(settings.scoring.apply_threshold)
-    assert 0.450 < threshold
-    assert 0.450 * applicant_multiplier(24) >= threshold
+    near_miss = threshold - 0.01
+    assert near_miss * applicant_multiplier(100) < threshold
+    assert near_miss * applicant_multiplier(24) >= threshold
 
 
 def test_the_final_score_is_capped() -> None:

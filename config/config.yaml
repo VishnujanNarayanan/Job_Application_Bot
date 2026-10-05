@@ -438,7 +438,12 @@ scoring:
   # first-25 posting needs fit 0.43 (~18% of scored jobs), one at 100
   # applicants needs 0.65 (~4%). Re-measure from the job_scored logs once the
   # coverage fixes (#23, #24, #25) shift the fit distribution.
-  apply_threshold: 0.65
+  #
+  # 0.45 (2026-10-05): 0.65 matched 3 of 11 scored jobs on run 37324500555 and
+  # 0 of 18 on 2026-10-04's "software engineer python" run. A first-25 posting
+  # now needs fit 0.30, one at 100 applicants needs 0.45, and one with 200+
+  # needs 0.90. Watch the volume and raise it if it's noisy.
+  apply_threshold: 0.45
 
   fit:
     # Weights sum to 1.0.
@@ -483,9 +488,9 @@ scoring:
   # `penalty_full_at` -> `min`. "Be among the first 25" is stored as 24 and
   # "Over 200" as 201. Seniority and time since posting are not scored (#13).
   #
-  # With apply_threshold 0.65: a first-25 posting needs fit 0.43, one at 100
-  # applicants needs 0.65, and past ~185 applicants nothing can pass -- crowded
-  # postings are filtered out in effect (accepted, #26).
+  # With apply_threshold 0.45: a first-25 posting needs fit 0.30, one at 100
+  # applicants needs 0.45, and one with 200+ needs 0.90 -- crowded postings
+  # are still filtered out in effect (accepted, #26).
   success_prob:
     max: 1.50
     min: 0.50
