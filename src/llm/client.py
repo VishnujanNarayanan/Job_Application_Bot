@@ -116,6 +116,9 @@ _DAILY_QUOTA_MARKERS = (
     "requests per day",
     "tokens per day",
     "per_day",
+    # OpenRouter's free-model allowance: "Rate limit exceeded:
+    # free-models-per-day" (50/day, or 1,000 once $10 of credit is bought).
+    "per-day",
 )
 
 # A quota measured PER MINUTE clears in seconds — the backoff exists for
@@ -304,6 +307,10 @@ _UNEXPANDED_ENV = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 # line per run instead of one per job.
 _DEAD_PROVIDERS: dict[str, str] = {}
 
+# Completions started this run, for `llm.rotation`. One per job: the JD parse
+# is the only LLM call (llm.max_calls_per_job).
+_CALLS = 0
+
 
 def get_client(which: str = "primary"):
     """Build and cache the Instructor-wrapped chat client for one provider.
@@ -354,8 +361,35 @@ def get_client(which: str = "primary"):
 
 def reset_clients() -> None:
     """Drop cached clients (tests, and after a config change)."""
+    global _CALLS
     _CLIENTS.clear()
     _DEAD_PROVIDERS.clear()
+    _CALLS = 0
+
+
+def rotate(chain: list[tuple[str, object]], call_index: int) -> list[tuple[str, object]]:
+    """Reorder ``chain`` so the rotation's current leader goes first.
+
+    ``llm.rotation.providers`` names the providers that take turns leading,
+    and the lead passes to the next one every ``llm.rotation.every`` calls.
+    The others in the rotation follow the leader in their listed order, then
+    every provider outside it (the metered tail) in chain order -- so a job
+    still tries each free provider before anything that costs money.
+
+    A rotation naming fewer than two providers present in the chain is a
+    no-op, as is a missing ``rotation`` block.
+    """
+    rotation = settings.llm.get("rotation") or {}
+    names = [str(n) for n in (rotation.get("providers") or [])]
+    members = [entry for entry in chain if str(entry[1].provider) in names]
+    if len(members) < 2:
+        return chain
+    members.sort(key=lambda entry: names.index(str(entry[1].provider)))
+    every = max(1, int(rotation.get("every") or 1))
+    k = (call_index // every) % len(members)
+    lead = members[k:] + members[:k]
+    lead_ids = {which for which, _cfg in lead}
+    return lead + [entry for entry in chain if entry[0] not in lead_ids]
 
 
 # The bespoke Ollama transport that used to live here is gone. It existed
@@ -581,7 +615,10 @@ def complete(
         messages.append({"role": "user", "content": body})
         return messages
 
+    global _CALLS
     chain = provider_chain() if fallback_enabled() else [("primary", settings.llm)]
+    call_index, _CALLS = _CALLS, _CALLS + 1
+    chain = rotate(chain, call_index)
 
     # Nothing to fall back to: let the provider's own error through untouched,
     # rather than wrapping a single failure in chain language.
@@ -615,6 +652,14 @@ def complete(
                     provider=str(cfg.provider),
                     position=position,
                 )
+            # Which provider actually served the call, and which one was
+            # meant to lead it -- the only way to see the rotation in a log.
+            log.info(
+                "llm_served",
+                provider=str(cfg.provider),
+                lead=str(chain[0][1].provider),
+                call=call_index,
+            )
             return result
 
     detail = " | ".join(
