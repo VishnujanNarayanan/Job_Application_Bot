@@ -71,10 +71,22 @@ jobs:
       # LibreOffice converts the assembled DOCX to PDF. Needed here (unlike a
       # scrape-only runner) because this job pre-renders resumes so the
       # Telegram links work while the laptop is off.
+      # Normally 20-30s. On 2026-10-05 (run 37337756852) apt hung here for
+      # 13+ minutes before the pipeline had done anything. Each attempt is
+      # capped so a stuck mirror costs minutes, not the whole run, and one
+      # retry covers a transient hang.
       - name: Install LibreOffice
+        timeout-minutes: 8
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libreoffice-writer
+          for attempt in 1 2; do
+            if timeout 180 sudo apt-get update -qq -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+              && timeout 240 sudo apt-get install -y --no-install-recommends \
+                   -o Acquire::Retries=3 -o Acquire::http::Timeout=30 libreoffice-writer; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed or timed out; retrying"
+          done
+          exit 1
 
       # MiniLM is ~90 MB and is fetched on first embed; cache it so only the
       # first run pays for it.
