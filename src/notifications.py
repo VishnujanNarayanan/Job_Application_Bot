@@ -227,6 +227,7 @@ async def _send_match(text: str, keyboard=None) -> None:
 # Run-summary wording for each outcome, in the order a job meets them.
 _OUTCOME_LABELS = (
     ("DUPLICATE", "Already notified"),
+    ("JOB_CLOSED", "No longer accepting applications"),
     ("EMPTY_JD", "No description scraped"),
     ("LOCATION_DISALLOWED", "Blocked location"),
     ("COMPANY_BLOCKED", "Blocked company"),
@@ -234,6 +235,7 @@ _OUTCOME_LABELS = (
     ("TOO_MANY_APPLICANTS", "Too many applicants to match"),
     ("COMPANY_COOLDOWN", "Company in cooldown"),
     ("PARSE_FAILURE", "Parse failed"),
+    ("PARSE_FAILED", "Parse failed (carried to next run)"),
     ("JOB_TYPE_DISALLOWED", "Not full-time"),
     ("HARD_FILTER_LAYER_3", "Too many years required"),
     ("LOW_SCORE", "Score below threshold"),
@@ -269,12 +271,15 @@ def scrape_done_text(term: str, *, found: int, remote: int, new: int) -> str:
 
 
 def prechecks_done_text(
-    *, checked: int, to_parse: int, backlog: int, outcomes: dict[str, int]
+    *, checked: int, to_parse: int, backlog: int, outcomes: dict[str, int],
+    refreshed: int = 0,
 ) -> str:
     """After the checks that need no LLM: what goes on to be parsed and scored."""
     lines = [f"*Pre-checks done* — {to_parse} of {checked} going on to scoring"]
     if backlog:
         lines.append(f"({checked - backlog} scraped + {backlog} carried over from earlier runs)")
+    if refreshed:
+        lines.append(f"Applicant counts re-checked on carried-over jobs: {refreshed} changed")
     skipped = _outcome_lines(outcomes)
     if skipped:
         lines += ["", "Skipped before parsing:"] + skipped

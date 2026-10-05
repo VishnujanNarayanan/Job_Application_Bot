@@ -288,7 +288,11 @@ def _api_key(cfg, which: str) -> str:
     var = str(cfg.api_key_env)
     key = os.environ.get(var, "").strip()
     if not key:
-        raise LLMError(
+        # LLMConfigError, not LLMError: a missing key is missing for every job,
+        # so the provider is marked unusable for the run instead of being
+        # retried five times per job (a local run on 2026-10-05 spent ~45s a
+        # job on two absent keys before falling through).
+        raise LLMConfigError(
             f"{var} is not set in .env. The {which} LLM provider is "
             f"'{cfg.provider}'; see .env.example."
         )
