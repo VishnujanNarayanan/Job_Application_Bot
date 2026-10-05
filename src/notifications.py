@@ -224,21 +224,73 @@ async def _send_match(text: str, keyboard=None) -> None:
         await bot.send_message(**kwargs)
 
 
+# Run-summary wording for each outcome, in the order a job meets them.
+_OUTCOME_LABELS = (
+    ("DUPLICATE", "Already notified"),
+    ("EMPTY_JD", "No description scraped"),
+    ("LOCATION_DISALLOWED", "Blocked location"),
+    ("COMPANY_BLOCKED", "Blocked company"),
+    ("TITLE_DISALLOWED", "Intern/contract/part-time title"),
+    ("TOO_MANY_APPLICANTS", "Too many applicants to match"),
+    ("COMPANY_COOLDOWN", "Company in cooldown"),
+    ("PARSE_FAILURE", "Parse failed"),
+    ("JOB_TYPE_DISALLOWED", "Not full-time"),
+    ("HARD_FILTER_LAYER_3", "Too many years required"),
+    ("LOW_SCORE", "Score below threshold"),
+    ("BUILD_FAILURE", "Resume build failed"),
+    ("NOT_REACHED", "Not reached (carried to next run)"),
+)
+
+
+def run_summary_text(
+    *,
+    scraped: int,
+    skipped: int,
+    applied: int,
+    backlog: int = 0,
+    outcomes: dict[str, int] | None = None,
+    dry_run: bool = True,
+) -> str:
+    """The end-of-run Telegram message: every job accounted for.
+
+    It used to say "Dry Run Complete" on every run and list Scraped / Matched /
+    Skipped, where Skipped left out everything filtered before the parse -- a
+    40-job run reported 10 + 11 and the other 19 were nowhere.
+    """
+    outcomes = dict(outcomes or {})
+    lines = [
+        f"*Job Bot — {'Dry Run' if dry_run else 'Run'} Complete*",
+        "",
+        f"Scraped: {scraped}" + (f" (+{backlog} carried over)" if backlog else ""),
+        f"Matched: {applied}",
+    ]
+    known = {key for key, _label in _OUTCOME_LABELS}
+    rows = [(label, outcomes.pop(key)) for key, label in _OUTCOME_LABELS if outcomes.get(key)]
+    rows += sorted((key, n) for key, n in outcomes.items() if key not in known and n)
+    if rows:
+        lines.append("")
+        lines += [f"{label}: {n}" for label, n in rows]
+    return "\n".join(lines)
+
+
 def send_dry_run_summary(
-    *, scraped: int, skipped: int, applied: int
+    *,
+    scraped: int,
+    skipped: int,
+    applied: int,
+    backlog: int = 0,
+    outcomes: dict[str, int] | None = None,
+    dry_run: bool = True,
 ) -> None:
-    """Send a one-line dry-run summary to Telegram.
+    """Send the run summary (see ``run_summary_text``) to Telegram.
 
     Raises ``RuntimeError`` if env vars are missing, or whatever the
     Telegram library raises on network/API failure. The orchestrator
     catches and logs — a failed Telegram send must not roll back the
     DB writes that already happened this run.
     """
-    text = (
-        "*Job Bot — Dry Run Complete*\n"
-        "\n"
-        f"Scraped: {scraped}\n"
-        f"Matched: {applied}\n"
-        f"Skipped: {skipped}"
+    text = run_summary_text(
+        scraped=scraped, skipped=skipped, applied=applied,
+        backlog=backlog, outcomes=outcomes, dry_run=dry_run,
     )
     asyncio.run(_send(text))
