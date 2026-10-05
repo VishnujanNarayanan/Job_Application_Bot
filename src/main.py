@@ -85,7 +85,14 @@ def _run(dry_run: bool, log) -> int:
     from src.config import settings, resolve_endpoint_base_url
     from src.endpoint.cache import prerender
     from src.llm.client import LLMBudgetError, LLMError
-    from src.notifications import send_dry_run_summary, send_match_notification
+    from src.notifications import (
+        prechecks_done_text,
+        run_started_text,
+        scrape_done_text,
+        send_dry_run_summary,
+        send_match_notification,
+        send_status,
+    )
     from src.parser import apply_to_row, grounded_skills, parse
     from src.reasons import (
         BUILD_FAILURE,
@@ -145,6 +152,7 @@ def _run(dry_run: bool, log) -> int:
         log.info(
             "scrape_start", terms=run_terms, hours_old=hours_old, dry_run=dry_run
         )
+        send_status(run_started_text(run_terms, dry_run=dry_run))
         rl = cfg.scraper.rate_limit
         raw_jobs = []
         seen_job_ids: set[str] = set()
@@ -153,6 +161,7 @@ def _run(dry_run: bool, log) -> int:
         term_of: dict[str, str] = {}
         remote_cfg = cfg.scraper.get("remote") or {}
         for term in run_terms:
+            term_stats: dict = {}
             try:
                 term_jobs = jobspy_wrapper.scrape(
                     term,
@@ -170,6 +179,7 @@ def _run(dry_run: bool, log) -> int:
                     proxies=list(rl.proxies),
                     remote_results_wanted=int(remote_cfg.get("results_wanted", 0)),
                     remote_hours_old=remote_cfg.get("hours_old"),
+                    stats=term_stats,
                 )
             except Exception as exc:
                 # One term failing must not discard the other terms' results.
@@ -187,7 +197,11 @@ def _run(dry_run: bool, log) -> int:
                 term=term,
                 raw_count=len(term_jobs),
                 new_count=len(new),
+                remote_count=term_stats.get("remote", 0),
             )
+            send_status(scrape_done_text(
+                term, found=len(term_jobs), remote=term_stats.get("remote", 0),
+                new=len(new)))
 
         log.info("scrape_done", terms=run_terms, raw_count=len(raw_jobs))
         scraped_count = len(raw_jobs)
@@ -254,6 +268,15 @@ def _run(dry_run: bool, log) -> int:
                 not_applied_queue.append((job, COMPANY_COOLDOWN, job.company, None))
                 continue
             passing.append(job)
+
+        prefilter_outcomes: dict[str, int] = {}
+        for _job, reason, _detail, _scores in not_applied_queue:
+            prefilter_outcomes[reason] = prefilter_outcomes.get(reason, 0) + 1
+        if empty_jd_count:
+            prefilter_outcomes["EMPTY_JD"] = empty_jd_count
+        send_status(prechecks_done_text(
+            checked=len(raw_jobs), to_parse=len(passing), backlog=len(backlog),
+            outcomes=prefilter_outcomes))
 
         # --- Layer 2: embed JD texts in a single batch ---
         if passing:
