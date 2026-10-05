@@ -12,6 +12,12 @@ HARD_FILTER_LAYER_2 = "HARD_FILTER_LAYER_2"
 LOCATION_DISALLOWED = "LOCATION_DISALLOWED"
 COMPANY_COOLDOWN = "COMPANY_COOLDOWN"
 DUPLICATE = "DUPLICATE"
+# Company on filters.company_blocklist.
+COMPANY_BLOCKED = "COMPANY_BLOCKED"
+# Title names a rejected employment type (filters.title_blocklist).
+TITLE_DISALLOWED = "TITLE_DISALLOWED"
+# Too many applicants for even a best-case fit to clear the threshold.
+TOO_MANY_APPLICANTS = "TOO_MANY_APPLICANTS"
 # Listing arrived with no description body (e.g. a throttled LinkedIn
 # description fetch). Can't parse or score, and an empty-text embedding is
 # identical to every other empty one — which collapses near-duplicate

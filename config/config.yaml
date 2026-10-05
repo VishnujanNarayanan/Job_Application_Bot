@@ -50,7 +50,30 @@ filters:
     - "Noida"
     - "Ghaziabad"
     - "Faridabad"
-  company_blocklist: []   # no companies currently blocked
+  company_blocklist: []   # whole company names, case-insensitive; checked before the parse
+
+  # Titles that name an employment type the operator rejects. Python regexes,
+  # case-insensitive, checked BEFORE the parse -- and they catch what the parse
+  # misses: the parser called "Software Developer Intern" full-time, and two
+  # internships were notified as matches before this existed.
+  #
+  # Measured over 1,221 stored jobs (2026-10-05): 31 titles hit. Deliberately
+  # NOT here: "trainee" -- "Graduate Engineer Trainee" is a full-time entry
+  # role in India -- and "smart contract", a blockchain specialism, not a
+  # contract.
+  title_blocklist:
+    - '\bintern(s|ship|ships)?\b'
+    - '\bapprentice(s|ship|ships)?\b'
+    - '\bpart[- ]?time\b'
+    - '\bfreelanc(e|er|ers|ing)\b'
+    - '(?<!smart )\bcontract(ual|or|ors)?\b'
+
+  # Skip, before the parse, a job whose applicant count means even this fit
+  # could not clear scoring.apply_threshold. final_score = fit x applicant
+  # multiplier; across 1,221 stored jobs the best fit ever was 0.728 and no
+  # job with 180+ applicants has ever matched. At threshold 0.45 this skips
+  # ~180+ applicants -- about 1 parse in 5. Raise it to skip fewer.
+  best_realistic_fit: 0.75
 
 # ---------------------------------------------------------------------------
 # Salary — informational only (cover letter + notification text). Never
@@ -89,8 +112,20 @@ scraper:
     # manual clicks; widen again if runs come back empty.
     peak: 1
     off_peak: 1
-  # Stop searching when this many jobs have passed hard filters in one run.
-  short_circuit_count: 20
+  # Stop after this many jobs reach a verdict in one run. 0 = off.
+  # Off since 2026-10-05: at 20, run 37333275047 scraped 40 jobs and never
+  # looked at 10 of them -- and with a 1-hour scrape window they were not
+  # scraped again. `time_budget_minutes` is the guard now, and what it does not
+  # reach is carried over (`backlog_days`) rather than dropped.
+  short_circuit_count: 0
+  # Stop STARTING new jobs this far into a run, so it always finishes cleanly
+  # (verdicts written, summary sent) inside the workflow's 50-minute timeout.
+  # A run killed by the timeout writes no not_applied rows and sends nothing.
+  time_budget_minutes: 40
+  # Jobs scraped in the last N days that never got a verdict -- not reached
+  # before the time budget, or abandoned when every LLM was out of budget --
+  # are processed FIRST by the next run. Nothing scraped is silently dropped.
+  backlog_days: 3
   # JobSpy results_wanted cap per query term.
   results_wanted_per_term: 50
   # country_indeed — geo-filters Indeed AND Glassdoor only.
