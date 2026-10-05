@@ -146,6 +146,7 @@ def _run(dry_run: bool, log) -> int:
         # Which term surfaced each job, so `job_scored` can attribute a run's
         # hits and misses to the search term that produced them.
         term_of: dict[str, str] = {}
+        remote_cfg = cfg.scraper.get("remote") or {}
         for term in run_terms:
             try:
                 term_jobs = jobspy_wrapper.scrape(
@@ -162,6 +163,8 @@ def _run(dry_run: bool, log) -> int:
                     backoff_base_seconds=float(rl.backoff_base_seconds),
                     inter_site_delay_seconds=float(rl.inter_site_delay_seconds),
                     proxies=list(rl.proxies),
+                    remote_results_wanted=int(remote_cfg.get("results_wanted", 0)),
+                    remote_hours_old=remote_cfg.get("hours_old"),
                 )
             except Exception as exc:
                 # One term failing must not discard the other terms' results.

@@ -227,6 +227,7 @@ def _scrape_with_retry(
     proxies: Sequence[str] | None,
     max_retries: int,
     backoff_base_seconds: float,
+    is_remote: bool = False,
 ) -> Any | None:
     """Call JobSpy for one site group; retry with exponential backoff + jitter.
 
@@ -249,6 +250,10 @@ def _scrape_with_retry(
         kwargs["location"] = location
     if proxies:
         kwargs["proxies"] = list(proxies)
+    # LinkedIn's "Remote" workplace filter (f_WT=2). Combined with `location`
+    # it means remote roles open to that country.
+    if is_remote:
+        kwargs["is_remote"] = True
 
     last_exc: Exception | None = None
     for attempt in range(1, max(1, max_retries) + 1):
@@ -287,6 +292,8 @@ def scrape(
     backoff_base_seconds: float = 5.0,
     inter_site_delay_seconds: float = 0.0,
     proxies: Sequence[str] | None = None,
+    remote_results_wanted: int = 0,
+    remote_hours_old: int | None = None,
 ) -> list[AllJobs]:
     """Scrape one search term across ``sites`` and return ``AllJobs`` rows.
 
@@ -301,6 +308,13 @@ def scrape(
     JD body per LinkedIn listing (without it ``jd_text`` is empty); LinkedIn's
     request volume is capped separately by ``linkedin_results_wanted`` and runs
     are spaced by ``inter_site_delay_seconds``.
+
+    ``remote_results_wanted`` > 0 adds one more LinkedIn call with the Remote
+    filter on, over ``remote_hours_old`` (default: ``hours_old``). The plain
+    search returns LinkedIn's top listings for the location, which are almost
+    all on-site or hybrid -- ~10% of parsed jobs were remote -- so remote roles
+    only arrive in volume when asked for. Its rows are de-duplicated against
+    the plain search's like any other.
     """
     from jobspy import scrape_jobs  # lazy: heavy import, network-bound
 
@@ -310,13 +324,21 @@ def scrape(
     site_list = list(sites)
     site_groups: list[list[str]] = [[s] for s in site_list] if per_site else [site_list]
 
-    jobs: list[AllJobs] = []
-    seen: set[str] = set()
-    for idx, group in enumerate(site_groups):
+    # (site group, results wanted, hours_old, remote-only)
+    passes: list[tuple[list[str], int, int, bool]] = []
+    for group in site_groups:
         # LinkedIn description-fetch multiplies requests — cap it lower.
         rw = results_wanted
         if linkedin_results_wanted and group == ["linkedin"]:
             rw = linkedin_results_wanted
+        passes.append((group, rw, hours_old, False))
+    if remote_results_wanted > 0 and "linkedin" in site_list:
+        passes.append((["linkedin"], remote_results_wanted,
+                       remote_hours_old or hours_old, True))
+
+    jobs: list[AllJobs] = []
+    seen: set[str] = set()
+    for idx, (group, rw, hours, remote) in enumerate(passes):
 
         df = _scrape_with_retry(
             scrape_jobs,
@@ -325,11 +347,12 @@ def scrape(
             country=country,
             location=location,
             results_wanted=rw,
-            hours_old=hours_old,
+            hours_old=hours,
             linkedin_fetch_description=linkedin_fetch_description,
             proxies=proxies,
             max_retries=max_retries,
             backoff_base_seconds=backoff_base_seconds,
+            is_remote=remote,
         )
         if df is None:
             continue
@@ -345,7 +368,7 @@ def scrape(
             seen.add(job.job_id)
             jobs.append(job)
 
-        if inter_site_delay_seconds and idx < len(site_groups) - 1:
+        if inter_site_delay_seconds and idx < len(passes) - 1:
             time.sleep(inter_site_delay_seconds + random.uniform(0, inter_site_delay_seconds))
 
     return jobs
