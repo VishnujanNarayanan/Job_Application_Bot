@@ -294,6 +294,7 @@ def scrape(
     proxies: Sequence[str] | None = None,
     remote_results_wanted: int = 0,
     remote_hours_old: int | None = None,
+    stats: dict | None = None,
 ) -> list[AllJobs]:
     """Scrape one search term across ``sites`` and return ``AllJobs`` rows.
 
@@ -315,6 +316,9 @@ def scrape(
     all on-site or hybrid -- ~10% of parsed jobs were remote -- so remote roles
     only arrive in volume when asked for. Its rows are de-duplicated against
     the plain search's like any other.
+
+    ``stats``, when given, is filled with ``remote``: how many of the returned
+    jobs only the remote search found (for the run's progress message).
     """
     from jobspy import scrape_jobs  # lazy: heavy import, network-bound
 
@@ -367,6 +371,8 @@ def scrape(
                 continue
             seen.add(job.job_id)
             jobs.append(job)
+            if remote and stats is not None:
+                stats["remote"] = stats.get("remote", 0) + 1
 
         if inter_site_delay_seconds and idx < len(passes) - 1:
             time.sleep(inter_site_delay_seconds + random.uniform(0, inter_site_delay_seconds))

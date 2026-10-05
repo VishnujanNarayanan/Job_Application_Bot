@@ -833,6 +833,10 @@ storage:
 # ---------------------------------------------------------------------------
 notifications:
   digest_hour_ist: 8
+  # Progress messages while a run works: started, found per search term
+  # (with the remote-search share), and what the pre-parse checks skipped.
+  # Match messages and the end-of-run summary are sent either way.
+  progress: true
   # Telegram alert sent immediately when any of these conditions trigger.
   critical_alert_triggers:
     - "gemini_api_failure"

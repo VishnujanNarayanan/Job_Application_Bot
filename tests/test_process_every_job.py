@@ -144,3 +144,53 @@ def test_a_live_run_is_not_called_a_dry_run():
 def test_carried_over_jobs_are_shown():
     text = run_summary_text(scraped=25, skipped=0, applied=0, backlog=10, dry_run=False)
     assert "Scraped: 25 (+10 carried over)" in text
+
+
+# --- Progress messages -------------------------------------------------------
+
+def test_progress_messages_read_correctly():
+    from src.notifications import prechecks_done_text, run_started_text, scrape_done_text
+
+    assert "Run started" in run_started_text(["data engineer"], dry_run=False)
+    assert "Dry run started" in run_started_text(["data engineer"], dry_run=True)
+    assert scrape_done_text("data engineer", found=38, remote=13, new=38) == (
+        'Found for "data engineer": 38 jobs, 13 of them from the remote search')
+    text = prechecks_done_text(checked=49, to_parse=27, backlog=11,
+                               outcomes={"TOO_MANY_APPLICANTS": 5, "LOCATION_DISALLOWED": 4})
+    assert "27 of 49 going on to scoring" in text
+    assert "(38 scraped + 11 carried over" in text
+    assert "Too many applicants to match: 5" in text
+
+
+def test_a_failed_progress_message_never_stops_the_run(monkeypatch):
+    from src import notifications
+
+    async def boom(_text):
+        raise RuntimeError("telegram down")
+
+    monkeypatch.setattr(notifications, "_send", boom)
+    notifications.send_status("hello")   # must not raise
+
+
+def test_remote_search_share_is_counted(monkeypatch):
+    import sys
+    import types
+
+    from src.scraper.jobspy_wrapper import scrape
+
+    class DF:
+        def __init__(self, ids):
+            self.ids = ids
+
+        def to_dict(self, orient):  # noqa: ARG002
+            return [{"site": "linkedin", "id": i, "company": "A", "title": "DE"} for i in self.ids]
+
+    fake = types.ModuleType("jobspy")
+    fake.scrape_jobs = lambda **kw: DF(["2", "3"] if kw.get("is_remote") else ["1", "2"])
+    monkeypatch.setitem(sys.modules, "jobspy", fake)
+    monkeypatch.setattr("src.scraper.jobspy_wrapper.time.sleep", lambda *_: None)
+
+    stats: dict = {}
+    scrape("de", sites=["linkedin"], country="india", results_wanted=5, hours_old=1,
+           remote_results_wanted=5, stats=stats)
+    assert stats == {"remote": 1}   # "2" was already found by the plain search
