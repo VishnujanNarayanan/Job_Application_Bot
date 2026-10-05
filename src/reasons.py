@@ -18,6 +18,8 @@ COMPANY_BLOCKED = "COMPANY_BLOCKED"
 TITLE_DISALLOWED = "TITLE_DISALLOWED"
 # Too many applicants for even a best-case fit to clear the threshold.
 TOO_MANY_APPLICANTS = "TOO_MANY_APPLICANTS"
+# LinkedIn says the posting no longer accepts applications (backlog refresh).
+JOB_CLOSED = "JOB_CLOSED"
 # Listing arrived with no description body (e.g. a throttled LinkedIn
 # description fetch). Can't parse or score, and an empty-text embedding is
 # identical to every other empty one — which collapses near-duplicate
