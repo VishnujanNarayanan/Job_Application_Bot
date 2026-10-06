@@ -52,11 +52,37 @@ def _load_pool_config() -> dict:
 
 _db_cfg = _load_pool_config()
 
+
+def _connect_args(cfg: dict) -> dict:
+    """libpq settings that make a dead connection fail instead of hang.
+
+    A run holds one session for its whole length, so ``pool_pre_ping`` (which
+    only checks at checkout) never re-tests it. When the laptop slept mid-run
+    on 2026-10-06, Neon dropped the idle socket; on wake the next query waited
+    on it forever, and Ctrl+C hung too because psycopg answers it by sending
+    a cancel down the same dead network. Keepalives catch an idle dead socket,
+    ``tcp_user_timeout`` catches one with a query still unacknowledged, and
+    either way the query raises and the job falls back into the backlog.
+
+    No ``statement_timeout``: Neon's pooler rejects the ``options`` startup
+    parameter it would need.
+    """
+    return {
+        "connect_timeout": int(cfg.get("connect_timeout_seconds", 10)),
+        "keepalives": 1,
+        "keepalives_idle": int(cfg.get("keepalives_idle_seconds", 30)),
+        "keepalives_interval": int(cfg.get("keepalives_interval_seconds", 10)),
+        "keepalives_count": int(cfg.get("keepalives_count", 3)),
+        "tcp_user_timeout": int(cfg.get("tcp_user_timeout_ms", 60000)),
+    }
+
+
 engine = create_engine(
     _resolve_database_url(),
     pool_size=_db_cfg.get("pool_size", 2),
     max_overflow=_db_cfg.get("max_overflow", 5),
     pool_pre_ping=_db_cfg.get("pool_pre_ping", True),
+    connect_args=_connect_args(_db_cfg),
 )
 
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
