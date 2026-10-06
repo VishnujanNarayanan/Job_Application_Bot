@@ -818,6 +818,12 @@ database:
   pool_size: 2
   max_overflow: 5
   pool_pre_ping: true   # SQLAlchemy auto-recovers on network blip
+  # A dead socket (laptop slept mid-run) must fail, not hang — see db._connect_args.
+  connect_timeout_seconds: 10
+  keepalives_idle_seconds: 30      # idle socket: dead after ~30 + 3×10 = 60s
+  keepalives_interval_seconds: 10
+  keepalives_count: 3
+  tcp_user_timeout_ms: 60000       # socket with an unacked query: dead after 60s
   outage_buffer_path: "data/pending_writes.jsonl"   # drained next run
   outage_backoff_attempts: 3
 
