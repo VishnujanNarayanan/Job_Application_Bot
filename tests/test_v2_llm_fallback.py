@@ -106,15 +106,16 @@ def _leads(n):
 
 
 def test_rotation_passes_the_lead_every_two_calls():
-    assert _leads(8) == ["groq", "groq", "openrouter", "openrouter"] * 2
+    assert _leads(12) == ["groq", "groq", "openrouter", "openrouter",
+                          "gemini-free", "gemini-free"] * 2
 
 
 def test_rotation_keeps_the_other_free_provider_ahead_of_the_metered_one():
     chain = llm_client.provider_chain()
-    for i in range(4):
+    for i in range(6):
         order = [str(cfg.provider) for _, cfg in llm_client.rotate(chain, i)]
-        assert sorted(order[:2]) == ["groq", "openrouter"]
-        assert order[2:] == ["gemini"]
+        assert sorted(order[:3]) == ["gemini-free", "groq", "openrouter"]
+        assert order[3:] == ["gemini"]
 
 
 def test_rotation_is_a_no_op_without_two_members(monkeypatch):
@@ -167,12 +168,16 @@ def test_cerebras_stays_disabled():
 
 
 def test_no_provider_in_the_chain_is_a_thinking_model():
-    """Reasoning tokens bill as output, on every link of the chain.
+    """Reasoning tokens bill as output, on every link that can be billed.
 
     gemini-3.6-flash cost roughly 20x its apparent token count parsing 60 job
-    ads, which is what triggered the spend cap in the first place.
+    ads, which is what triggered the spend cap in the first place. A `-free`
+    provider is exempt: its key's project has no billing account, so it has
+    nothing to bill reasoning tokens to (and new projects can't get 2.5-lite).
     """
     for _, cfg in llm_client.provider_chain():
+        if str(cfg.provider).endswith("-free"):
+            continue
         model = str(cfg.model)
         assert not model.startswith("gemini-3."), (
             f"{model} may emit reasoning tokens billed as output"
@@ -190,11 +195,17 @@ def test_no_provider_in_the_chain_is_a_thinking_model():
 
 def test_every_provider_has_its_own_key_and_endpoint():
     """A chain that shares a key or a host is not a chain — one outage or one
-    exhausted account would take every link down together."""
+    exhausted account would take every link down together.
+
+    The one allowed repeat is a vendor's free key beside its paid one
+    (gemini-free / gemini): separate accounts, so separate quotas, and the
+    other vendors still cover an outage of that host.
+    """
     chain = llm_client.provider_chain()
 
-    assert len({str(cfg.base_url) for _, cfg in chain}) == len(chain)
     assert len({str(cfg.api_key_env) for _, cfg in chain}) == len(chain)
+    vendors = {str(cfg.provider).removesuffix("-free") for _, cfg in chain}
+    assert len({str(cfg.base_url) for _, cfg in chain}) == len(vendors)
 
 
 def test_clients_are_cached_per_provider():
@@ -224,7 +235,7 @@ def test_clients_are_cached_per_provider():
     expected = len(hosted)
     assert clients[0] is clients[1], "primary should be cached, not rebuilt"
     assert len({id(c) for c in clients}) == expected, "one client per provider"
-    assert len(set(built)) == expected, "each provider needs its own base_url"
+    assert len(built) == expected, "each provider builds its own client"
 
 
 def test_missing_key_names_the_variable_and_the_provider():
