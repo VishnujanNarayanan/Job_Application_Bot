@@ -7,6 +7,52 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [v3.1.0] — 2026-10-07
+
+Usable by someone other than its author, steadier LLM handling, and a Telegram
+flow that records applications.
+
+### Added
+
+- Telegram **Mark applied / Dismiss** buttons on match messages; taps are recorded
+  through the same code path as the dashboard (#15, #57).
+- **Search-term menu**: `python -m src.main` in a terminal opens an arrow-key
+  picker; `--term "..."` and `--auto` skip it. A hand-picked term doesn't move
+  the rotation (#59, #61).
+- Every search term also runs with **"junior"** in front: 24 → 48 terms (#58, #60).
+- **`gemini-free`** provider: a second AI Studio key with no billing attached (#44, #51).
+- **Readable terminal output** for runs; JSON is kept for Actions and CloudWatch,
+  or with `LOG_FORMAT=json` (#63, #64).
+- **Example resume template** (`resumes/templates/example_template.docx`) and
+  `tools/personalize_template.py`, which fills the header from your profile (#65, #68).
+- **Getting started** guide in the README; `.env.example` marks every variable
+  `[REQUIRED]` or `[OPTIONAL]`; `master_profile.example.yaml` rewritten for the
+  current `role_blocks` schema.
+
+### Changed
+
+- **LLM rotation**: Groq, gemini-free and paid Gemini take turns; OpenRouter is
+  a last-resort backup (#47, #54).
+- `apply_threshold` 0.45 → **0.60** (#46, #53).
+- Backlog carry-over **off** (`backlog_days: 0`) (#45, #52).
+- **Resume links**: the PDF opens in the browser's viewer and both formats save
+  as `<Name>_Resume`, not the cache key (#42, #62).
+- **Requirements split** into `requirements.txt` (run), `requirements-aws.txt`
+  and `requirements-dev.txt`; unused `google-generativeai` and `reportlab`
+  removed (#66, #69).
+- Design notes moved to `docs/`; `PROJECT_STATUS.md` and the `Makefile` removed.
+
+### Fixed
+
+- A run hung indefinitely on a dead database connection after the laptop slept;
+  connections now time out (#43, #50).
+- Stalled LLM calls ran 5–10 minutes; every call now has a 90-second deadline (#48, #55).
+- A provider-side schema rejection was retried 5 times; it now moves to the next
+  provider at once, and `role_level` may be null (#49, #56).
+- A fresh clone couldn't create its database: `alembic.ini` is now committed (#66, #69).
+
+### Earlier in this release
+
 ### Added
 
 - Keyword families (#23). `keywords.matches` widens the literal matcher, and
