@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 
 from src.endpoint import dashboard
 from src.endpoint.cache import StaleSelectionError, get_or_build
+from src.resume_download import content_disposition
 from src.state.db import session_scope
 
 log = structlog.get_logger(__name__)
@@ -129,7 +130,9 @@ def get_resume(filename: str) -> FastAPIResponse:
         content=data,
         media_type=content_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{job_id}.{ext}"',
+            # Same presentation as the S3 links (#42): PDF opens in the
+            # browser's viewer, both save as "<Name>_Resume.<ext>".
+            "Content-Disposition": content_disposition(ext),
             "Content-Length": str(len(data)),
         },
     )
