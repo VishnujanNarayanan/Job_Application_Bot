@@ -106,16 +106,19 @@ def _leads(n):
 
 
 def test_rotation_passes_the_lead_every_two_calls():
-    assert _leads(12) == ["groq", "groq", "openrouter", "openrouter",
-                          "gemini-free", "gemini-free"] * 2
+    assert _leads(12) == ["groq", "groq", "gemini-free", "gemini-free",
+                          "gemini", "gemini"] * 2
 
 
-def test_rotation_keeps_the_other_free_provider_ahead_of_the_metered_one():
+def test_openrouter_is_only_the_last_resort():
+    """2026-10-07: OpenRouter took 111s median (302s worst) with empty replies,
+    against 2.5s for gemini-free -- so it never leads, and every rotation
+    member is tried before it."""
     chain = llm_client.provider_chain()
     for i in range(6):
         order = [str(cfg.provider) for _, cfg in llm_client.rotate(chain, i)]
-        assert sorted(order[:3]) == ["gemini-free", "groq", "openrouter"]
-        assert order[3:] == ["gemini"]
+        assert sorted(order[:3]) == ["gemini", "gemini-free", "groq"]
+        assert order[3:] == ["openrouter"]
 
 
 def test_rotation_is_a_no_op_without_two_members(monkeypatch):
@@ -126,8 +129,8 @@ def test_rotation_is_a_no_op_without_two_members(monkeypatch):
 
 
 def test_complete_alternates_the_serving_provider():
-    """End to end: with both healthy, calls 0-1 go to Groq and 2-3 to
-    OpenRouter -- neither provider carries the whole run."""
+    """End to end: with all healthy, calls 0-1 go to Groq and 2-3 to
+    gemini-free -- no provider carries the whole run."""
     served = []
 
     def pick(which="primary"):
@@ -141,7 +144,7 @@ def test_complete_alternates_the_serving_provider():
         for _ in range(4):
             llm_client.complete(Dummy, "p")
 
-    assert served == ["groq", "groq", "openrouter", "openrouter"]
+    assert served == ["groq", "groq", "gemini-free", "gemini-free"]
 
 
 def test_openrouter_daily_allowance_counts_as_exhausted():
