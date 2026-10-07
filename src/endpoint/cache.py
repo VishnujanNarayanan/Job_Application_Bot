@@ -26,14 +26,12 @@ from src.endpoint.assembler import BOLD_JD_KEYWORDS, assemble_docx
 from src.endpoint.pdf_convert import to_pdf
 from src.llm.schemas import StoredSelection
 from src.state.selection_compat import version_of
+from src.resume_download import CONTENT_TYPES
 from src.state.models import Applied, RenderCache
 
 log = structlog.get_logger(__name__)
 
-_CONTENT_TYPES = {
-    "pdf": "application/pdf",
-    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-}
+_CONTENT_TYPES = CONTENT_TYPES
 _ROOT = Path(__file__).resolve().parents[2]
 
 
