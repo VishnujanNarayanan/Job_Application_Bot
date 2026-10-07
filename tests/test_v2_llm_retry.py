@@ -247,6 +247,8 @@ def test_no_fallback_model_is_a_thinking_model():
     gemini-3.6-flash cost ~20x its apparent token count on 2026-08-08.
     """
     for which, cfg in llm_client.provider_chain()[1:]:
+        if str(cfg.provider).endswith("-free"):
+            continue  # no billing account behind the key, nothing to bill
         model = str(cfg.model)
         assert "3.6" not in model and "3.5" not in model, (
             f"{which} ({model}) may emit reasoning tokens; prefer a "
