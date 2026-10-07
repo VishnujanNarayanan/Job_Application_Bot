@@ -912,6 +912,9 @@ database:
 
 storage:
   resumes_applied_dir: "resumes/applied"    # NEVER auto-cleaned (audit trail)
+  # Filename a resume opens and saves under, from Telegram or the endpoint
+  # (#42). {name} is personal.name from the profile, spaces -> underscores.
+  resume_download_name: "{name}_Resume"
   logs_dir: "data/logs"
   cleanup:
     logs_retention_days: 365

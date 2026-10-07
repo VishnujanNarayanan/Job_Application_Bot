@@ -55,7 +55,12 @@ def cache_put(local_path: str | Path, cache_key: str, ext: str) -> str:
     key = f"{_prefix(ext)}/{cache_key}.{ext}"
     bucket = _bucket()
     try:
-        _s3().upload_file(str(local_path), bucket, key)
+        # A real Content-Type, so an object fetched without the presigned
+        # overrides below still isn't served as binary/octet-stream.
+        from src.resume_download import CONTENT_TYPES
+
+        extra = {"ContentType": CONTENT_TYPES[ext]} if ext in CONTENT_TYPES else None
+        _s3().upload_file(str(local_path), bucket, key, ExtraArgs=extra)
         uri = f"s3://{bucket}/{key}"
         log.info("s3_cache_put", cache_key=cache_key, ext=ext, uri=uri)
         return uri
@@ -97,10 +102,20 @@ def cache_presigned_url(
     """
     key = f"{_prefix(ext)}/{cache_key}.{ext}"
     expires = min(int(expires_seconds), _MAX_PRESIGN_SECONDS)
+    params = {"Bucket": _bucket(), "Key": key}
+    # Signed response overrides (#42): S3 serves the object with these headers
+    # whatever it was stored with, so links work for objects uploaded before
+    # cache_put set a Content-Type too. PDF opens in the browser's viewer;
+    # both formats save as "<Name>_Resume.<ext>", not the cache key.
+    from src.resume_download import CONTENT_TYPES, content_disposition
+
+    if ext in CONTENT_TYPES:
+        params["ResponseContentType"] = CONTENT_TYPES[ext]
+        params["ResponseContentDisposition"] = content_disposition(ext)
     try:
         url = _s3().generate_presigned_url(
             "get_object",
-            Params={"Bucket": _bucket(), "Key": key},
+            Params=params,
             ExpiresIn=expires,
         )
         log.info("s3_presigned", cache_key=cache_key, ext=ext, expires_in=expires)
