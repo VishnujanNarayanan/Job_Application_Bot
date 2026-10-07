@@ -488,7 +488,12 @@ scoring:
   # 0 of 18 on 2026-10-04's "software engineer python" run. A first-25 posting
   # now needs fit 0.30, one at 100 applicants needs 0.45, and one with 200+
   # needs 0.90. Watch the volume and raise it if it's noisy.
-  apply_threshold: 0.45
+  #
+  # 0.60 (2026-10-07): 0.45 matched 23 of 35 scored jobs on the 2026-10-06
+  # 11:08 UTC local run -- too many to act on. On those same scores 0.52
+  # would keep 17, 0.55 keeps 12, 0.60 keeps 9 (the top scores were 0.88,
+  # 0.74, 0.69). The operator chose 0.60.
+  apply_threshold: 0.60
 
   fit:
     # Weights sum to 1.0.
