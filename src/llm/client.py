@@ -616,6 +616,7 @@ def _complete_with(
                 log.warning(
                     "llm_retry",
                     which=which,
+                    provider=str(cfg.provider),
                     attempt=attempt,
                     max_attempts=attempts,
                     wait_seconds=round(wait, 2),
@@ -713,6 +714,7 @@ def complete(
                 to_model=str(cfg.model),
                 reason=str(previous_error)[:200],
             )
+        started = time.monotonic()
         try:
             result = _complete_with(which, response_model, build(cfg))
         except LLMBudgetError as exc:
@@ -734,6 +736,7 @@ def complete(
                 provider=str(cfg.provider),
                 lead=str(chain[0][1].provider),
                 call=call_index,
+                seconds=round(time.monotonic() - started, 2),
             )
             return result
 

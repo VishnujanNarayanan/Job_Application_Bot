@@ -28,14 +28,15 @@ def _model():
 
 def embed(text: str) -> Vector:
     """Embed a single string into a 384-dim vector."""
-    return _model().encode(text, normalize_embeddings=False).tolist()
+    return _model().encode(text, normalize_embeddings=False, show_progress_bar=False).tolist()
 
 
 def embed_batch(texts: list[str]) -> list[Vector]:
     """Embed many strings at once (more efficient than per-item calls)."""
     if not texts:
         return []
-    return [v.tolist() for v in _model().encode(texts, normalize_embeddings=False)]
+    vectors = _model().encode(texts, normalize_embeddings=False, show_progress_bar=False)
+    return [v.tolist() for v in vectors]
 
 
 # all-MiniLM-L6-v2 accepts 256 word-pieces and silently discards the rest, so
