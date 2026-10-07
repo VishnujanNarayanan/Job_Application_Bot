@@ -31,7 +31,6 @@ from __future__ import annotations
 
 from src.state.selection_compat import title_alias_of
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
@@ -42,6 +41,7 @@ from fastapi.templating import Jinja2Templates
 from src.config import settings
 from src.endpoint import runner
 from src.state.db import session_scope
+from src.state.job_status import STATUSES as _STATUSES
 
 log = structlog.get_logger(__name__)
 
@@ -50,9 +50,9 @@ templates = Jinja2Templates(directory=str(_HERE / "templates"))
 
 router = APIRouter()
 
-# Values `applied.user_status` may take. "dismissed" is the operator saying
-# "not interested" — distinct from "skipped", which is the scorer's verdict.
-_STATUSES = ("pending", "applied", "dismissed")
+# `_STATUSES` (from src.state.job_status) are the values `applied.user_status`
+# may take. "dismissed" is the operator saying "not interested" — distinct from
+# "skipped", which is the scorer's verdict.
 
 
 # ---------------------------------------------------------------------------
@@ -267,9 +267,10 @@ def api_jobs(status: str = "pending") -> JSONResponse:
 def api_set_status(job_id: str, payload: dict = Body(default={})) -> JSONResponse:
     """Record the operator's decision on a matched job.
 
-    The system never applies to anything, so this is the only way it can know
-    an application happened. Called when the operator confirms "yes, I
-    applied" after returning from the posting.
+    The system never applies to anything, so it only knows an application
+    happened when the operator says so: here, after returning from the
+    posting, or with the Telegram "Mark applied" button (#15). Both go through
+    ``set_job_status``.
     """
     status = str(payload.get("status", "")).strip()
     if status not in _STATUSES:
@@ -278,23 +279,15 @@ def api_set_status(job_id: str, payload: dict = Body(default={})) -> JSONRespons
             detail=f"status must be one of {_STATUSES}, got {status!r}",
         )
 
-    from src.state.models import Applied
+    from src.state.job_status import UnknownJobError, set_job_status
 
     with session_scope() as session:
-        row = session.get(Applied, job_id)
-        if row is None:
+        try:
+            previous, _when = set_job_status(session, job_id, status)
+        except UnknownJobError:
             raise HTTPException(
                 status_code=404, detail=f"No matched job with id {job_id!r}"
-            )
-
-        previous = row.user_status
-        row.user_status = status
-        # Returning something to pending clears the action date rather than
-        # leaving a stale one behind.
-        row.user_status_at = (
-            None if status == "pending" else datetime.now(timezone.utc)
-        )
-        session.commit()
+            ) from None
 
         counts = _counts(session)
 

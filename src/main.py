@@ -79,6 +79,15 @@ def main(argv: list[str] | None = None) -> int:
         lock_file.close()
 
 
+def _record_taps(log, when: str) -> None:
+    """Record pending Telegram decision taps (#15). Never fails the run."""
+    from src.telegram_actions import process_pending_taps
+
+    recorded = process_pending_taps()
+    if recorded:
+        log.info("telegram_taps_recorded", count=recorded, at=when)
+
+
 def _run(dry_run: bool, log) -> int:
     from src import analytics
     from src.builder.llm_call import build as build_selection
@@ -119,6 +128,9 @@ def _run(dry_run: bool, log) -> int:
     cfg = settings
     now = datetime.now(timezone.utc)
     started = time.monotonic()
+
+    # "Mark applied" taps made since the last run or endpoint poll (#15).
+    _record_taps(log, "start")
 
     with session_scope() as session:
         # --- Layer 7: master profile rebuild (mtime short-circuit) ---
@@ -562,6 +574,9 @@ def _run(dry_run: bool, log) -> int:
             log.info("index_export_skipped", reason="ephemeral_runner")
         else:
             analytics.export_index(session)
+
+    # Taps on this run's own notifications, made while it was still working.
+    _record_taps(log, "end")
 
     # --- Layer 8: run summary -- every job accounted for ---
     outcomes: dict[str, int] = {}

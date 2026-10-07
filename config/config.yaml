@@ -896,6 +896,10 @@ notifications:
   # (with the remote-search share), and what the pre-parse checks skipped.
   # Match messages and the end-of-run summary are sent either way.
   progress: true
+  # How often the always-on endpoint checks Telegram for "Mark applied" /
+  # "Dismiss" taps (#15). Pipeline runs also check at their start and end, so
+  # taps made while the laptop is off land on the next run. 0 = endpoint off.
+  tap_poll_seconds: 5
   # Telegram alert sent immediately when any of these conditions trigger.
   critical_alert_triggers:
     - "gemini_api_failure"
