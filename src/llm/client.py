@@ -103,6 +103,15 @@ _PERMANENT_ERROR_MARKERS = (
     "401",
     "invalid argument",
     "invalid_argument",
+    # The provider validated the model's tool call against the schema and threw
+    # it away (Groq: 400 tool_use_failed, "did not match schema"). This is an
+    # API error, not a ValidationError, so Instructor's reask never sees it,
+    # and re-sending the identical prompt reproduces it: 2026-10-07 spent 5
+    # attempts on one job, then handed it to the slowest provider. Permanent
+    # for THIS job only -- the chain moves on, the provider stays in play.
+    "tool_use_failed",
+    "tool call validation failed",
+    "did not match schema",
 )
 
 # Account-level exhaustion. These arrive as 429/RESOURCE_EXHAUSTED, the same
