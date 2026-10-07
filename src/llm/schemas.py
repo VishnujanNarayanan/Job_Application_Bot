@@ -275,8 +275,13 @@ class JDParsed(BaseModel):
     role_category: str = Field(
         ..., description="Short slug classifying the role type (e.g. backend, data, ml, fullstack, devops, quant)"
     )
-    role_level: Literal["junior", "mid", "senior", "lead"] = Field(
-        ..., description="Seniority tier driving success_prob in Layer 4"
+    # Nullable IN THE SCHEMA, never in the value: the validator below turns
+    # null into "mid". The schema has to admit null because Groq validates
+    # tool calls server-side and rejects the whole call before that validator
+    # can run (2026-10-07: a regulatory-affairs ad with no seniority came back
+    # `/role_level: expected string, but got null`, 5 times in a row).
+    role_level: Literal["junior", "mid", "senior", "lead"] | None = Field(
+        ..., description="Seniority tier: junior, mid, senior or lead; null if the ad doesn't say"
     )
     years_required: int = Field(
         ..., ge=0, le=30, description="Years of experience demanded by the JD"
@@ -298,8 +303,8 @@ class JDParsed(BaseModel):
         """Read an explicit null role_level as the unknown-seniority default.
 
         A JD that never states a level is ordinary, and the model says so with
-        null — but ``Literal`` rejects it, and a provider that validates tool
-        calls server-side throws the WHOLE call away for it. Observed on the
+        null. The field's schema admits null for the provider's sake (see the
+        field); this keeps every downstream reader seeing a real tier. Observed on the
         live run of 2026-08-09: Groq returned
         ``[`/role_level`: expected string, but got null]`` and the retry cost a
         full call against a token-per-day cap that the same run went on to
