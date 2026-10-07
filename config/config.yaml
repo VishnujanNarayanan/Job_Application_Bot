@@ -734,20 +734,25 @@ llm:
     head_chars: 3000
     tail_chars: 1500
 
-  # Rotation: which free provider LEADS a parse. Every `every` parses (one
-  # parse per job, max_calls_per_job above) the lead passes to the next name
-  # here; the others follow it in this order, then the rest of the chain
-  # (Gemini, metered) as before. Each job still falls back to the other free
-  # provider before anything is paid for.
+  # Rotation: which provider LEADS a parse. Every `every` parses (one parse
+  # per job, max_calls_per_job above) the lead passes to the next name here;
+  # the others follow it in this order, then the rest of the chain.
   #
   # Why: Groq alone carried every parse and hit its per-minute token cap
-  # dozens of times a run, and every parse it then gave up on went to Gemini.
-  # Alternating halves Groq's rate and keeps OpenRouter's daily allowance in
-  # play. Names are `provider` values; an empty list turns rotation off.
+  # dozens of times a run. Alternating spreads the load. Names are `provider`
+  # values; an empty list turns rotation off.
+  #
+  # 2026-10-07, operator's call: Groq, gemini-free and the METERED gemini key
+  # take turns; OpenRouter is out of the rotation and only a last-resort
+  # backup. Measured on the 2026-10-07 run: gemini-free 2.5s median, Groq
+  # 9.5s, OpenRouter 111s median / 302s worst, with empty replies -- a third
+  # of the parses and 85% of the run's LLM wait. Cost: the paid key now leads
+  # a third of the jobs (flash-lite, one short parse each), so runs are no
+  # longer strictly $0.
   rotation:
     # Only ENABLED providers take a turn, so a name here whose block is still
     # `enabled: false` is skipped rather than breaking the rotation.
-    providers: ["groq", "openrouter", "gemini-free", "mistral"]
+    providers: ["groq", "gemini-free", "gemini"]
     every: 2
 
   # Providers tried, in order, when the one before gives up. Both of the
@@ -759,16 +764,18 @@ llm:
   # backoff handles that, and switching on it would send steady traffic
   # downstream for nothing. Only permanent errors and budget exhaustion do.
   #
-  # ORDER IS COST, cheapest first: free providers must be exhausted before a
-  # metered one is touched. Groq and OpenRouter (free) lead; Gemini is metered
-  # and sits last.
+  # Order matters only for providers OUTSIDE llm.rotation: they are tried,
+  # in this order, after every rotation member has failed a job. That leaves
+  # OpenRouter as the final backup (rotation members are listed further down,
+  # but the rotation moves them ahead of it).
   # Disabled entries are skipped entirely, so a provider can sit here ready to
   # switch on without affecting a single run.
   fallbacks:
     # OpenRouter -- free models (ids ending ":free"; $0 per call). Limits: ~20
     # requests/minute and 50/day, or 1,000/day once $10 of credit has ever been
-    # bought. A free variant can be withdrawn without notice, which is why
-    # Gemini stays behind it. Re-check with: python -m src.cli.llm_check openrouter
+    # bought. Slow and sometimes returns empty replies, so since 2026-10-07 it
+    # is only the last-resort backup (see llm.rotation).
+    # Re-check with: python -m src.cli.llm_check openrouter
     #
     # `openrouter/free`, not a named model: OpenRouter's router picks one of
     # the free models available AT THE TIME of each call (priced 0/0), so a
