@@ -181,34 +181,61 @@ scraper:
   #
   # Sizing is a cost/coverage trade: each scraped job costs 1 Gemini call to
   # parse, plus 1 more to build if it scores >= 0.50. More terms per run means
-  # fewer clicks to sweep the 24-term list, but a bigger bill per click.
+  # fewer clicks to sweep the 48-term list, but a bigger bill per click.
   # Currently 1 — the cheapest setting, one term per run as before.
   terms_per_run: 1
+  # Every role is searched twice: as-is and with "junior" in front, since
+  # junior postings are often titled that way and a plain search ranks them
+  # below senior ones. Interleaved, so the rotation alternates between the two.
   search_terms:
     - "backend engineer"
+    - "junior backend engineer"
     - "backend developer"
+    - "junior backend developer"
     - "software engineer python"
+    - "junior software engineer python"
     - "platform engineer"
+    - "junior platform engineer"
     - "API developer"
+    - "junior API developer"
     - "data engineer"
+    - "junior data engineer"
     - "analytics engineer"
+    - "junior analytics engineer"
     - "data pipeline engineer"
+    - "junior data pipeline engineer"
     - "data scientist"
+    - "junior data scientist"
     - "data analyst"
+    - "junior data analyst"
     - "machine learning engineer"
+    - "junior machine learning engineer"
     - "ML engineer"
+    - "junior ML engineer"
     - "AI engineer"
+    - "junior AI engineer"
     - "fullstack engineer"
+    - "junior fullstack engineer"
     - "full stack developer"
+    - "junior full stack developer"
     - "software engineer"
+    - "junior software engineer"
     - "devops engineer"
+    - "junior devops engineer"
     - "SRE"
+    - "junior SRE"
     - "quant developer"
+    - "junior quant developer"
     - "trading systems developer"
+    - "junior trading systems developer"
     - "financial software engineer"
+    - "junior financial software engineer"
     - "market data engineer"
+    - "junior market data engineer"
     - "quantitative researcher"
+    - "junior quantitative researcher"
     - "quantitative analyst"
+    - "junior quantitative analyst"
   # Re-parse and re-score every scraped job each run, skipping only ones
   # already notified. Local inference is unmetered, so the only thing a skip
   # saves is seconds — and skipping cost 176 of 745 jobs (24%) when runs that
