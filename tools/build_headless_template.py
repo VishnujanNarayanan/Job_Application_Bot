@@ -32,10 +32,14 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.endpoint.assembler import apply_link_style  # noqa: E402
-SRC = Path(os.environ.get(
-    "HEADLESS_TEMPLATE",
-    "/home/vishnu/projects/resume guide/Headless+Resume+Template.docx",
-))
+# The original Headless template is not part of this repo. Point
+# HEADLESS_TEMPLATE at your copy; most people want
+# tools/personalize_template.py instead, which starts from the committed
+# example template.
+if not os.environ.get("HEADLESS_TEMPLATE"):
+    sys.exit("Set HEADLESS_TEMPLATE to the original Headless template .docx, "
+             "or use tools/personalize_template.py instead.")
+SRC = Path(os.environ["HEADLESS_TEMPLATE"])
 OUT = ROOT / "resumes" / "templates" / "headless_v1.docx"
 
 # Everything identifying the operator is READ, never written here: hard rule #21
