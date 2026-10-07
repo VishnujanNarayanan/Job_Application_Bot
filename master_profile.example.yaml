@@ -1,184 +1,134 @@
 # master_profile.example.yaml
 #
-# Copy this file to master_profile.yaml (which is gitignored).
-# Replace every REPLACE_ME with your real content.
+# Your resume content, as structured data. Copy this file and fill it in:
 #
-# Rules the system enforces against this file:
-#   - The LLM NEVER writes or selects bullets. Bullets come verbatim from
-#     bullet_pool entries. Layer 4 selects them by cosine similarity.
-#   - safe_title_aliases is a closed allow-list. The LLM can only pick from
-#     it; Pydantic Literal enforces this at the API level.
-#   - skills_pool is a flat list. Categorisation happens per JD at build
-#     time — the LLM names groups, but can only use skills from this list.
-#   - On every bot run, master_profile.yaml mtime is checked. If changed:
-#     schema is validated, bullets are re-embedded, DB is diffed (new rows
-#     inserted, removed rows deactivated — never hard-deleted).
+#     cp master_profile.example.yaml master_profile.yaml
+#
+# master_profile.yaml is gitignored, so your details never reach the repo.
+# Replace every value marked REPLACE_ME. Fields marked (optional) can be
+# deleted.
+#
+# How the bot uses it:
+#   - Bullets are used word for word. The LLM never writes or rewrites them;
+#     for each job the bot picks the entries and bullets that fit best.
+#   - Each job or project has one or more ROLE BLOCKS: the same experience
+#     written for a different kind of job (e.g. "backend" vs "data"). The bot
+#     picks the block that suits each job ad.
+#   - When you change this file, the next run notices, re-checks it and
+#     re-embeds the bullets. You can also run: python -m src.cli.reparse
+#   - Mistakes are reported with the field name, e.g. "actual_title must be
+#     in safe_title_aliases".
 
 # ---------------------------------------------------------------------------
-# Personal — drives resume header and form auto-fill
+# Personal: the resume header (see tools/personalize_template.py)
 # ---------------------------------------------------------------------------
 personal:
-  name: "REPLACE_ME"              # Full name as it appears on the resume
-  email: "REPLACE_ME"             # Primary email address
-  phone: "REPLACE_ME"             # E.g. "+91-XXXXX-XXXXX"
-  location: "REPLACE_ME"          # E.g. "Kochi, Kerala, India"
-  github: "REPLACE_ME"            # Full URL — embedded as hyperlink in header
-  linkedin: "REPLACE_ME"          # Full URL — embedded as hyperlink in header
-  certificates_link: "REPLACE_ME" # Full URL (e.g. Google Drive folder)
+  name: "REPLACE_ME"                  # Full name, as on the resume
+  email: "REPLACE_ME"                 # you@example.com
+  phone: "REPLACE_ME"                 # (optional) +91 98765 43210
+  location: "REPLACE_ME"              # (optional) City, State, Country
+  linkedin: "REPLACE_ME"              # (optional) full URL
+  github: "REPLACE_ME"                # (optional) full URL
+  portfolio: "REPLACE_ME"             # (optional) full URL; shown instead of GitHub
+  certificates_link: "REPLACE_ME"     # (optional) URL to your certificates
 
 # ---------------------------------------------------------------------------
-# Summaries — pre-written pool. Layer 4 selects best match deterministically.
-# The LLM never generates summary prose.
-#
-# tags: free-form labels for your own reference.
-# role_categories: subset of [backend, data, ml, fullstack, devops,
-#                              finance_market, quant] — must match the
-#                  categories in config.yaml parser.role_clusters.
-# ---------------------------------------------------------------------------
-summaries:
-  - id: "summary_001"
-    text: "REPLACE_ME"
-    tags: ["REPLACE_ME"]
-    role_categories: ["REPLACE_ME"]
-
-  - id: "summary_002"
-    text: "REPLACE_ME"
-    tags: ["REPLACE_ME"]
-    role_categories: ["REPLACE_ME"]
-
-# ---------------------------------------------------------------------------
-# Work experience
-#
-# id: stable internal identifier — never rename once applied jobs reference it.
-# actual_title: the title on your contract / offer letter.
-# safe_title_aliases: closed allow-list of titles the LLM may display on the
-#   resume for this role. MUST include actual_title. The Pydantic Literal
-#   constraint prevents the LLM from returning anything outside this list.
-# bullet_pool: every bullet you can speak to in an interview. The system
-#   picks exactly 3 per experience per JD. The LLM never rewrites them.
-# bullet id: stable — rename triggers a re-embed; removing sets is_active=false.
+# Work experience. Every entry here appears on every resume.
 # ---------------------------------------------------------------------------
 work_experience:
-  - id: "REPLACE_ME"           # e.g. "company_shortname"
-    company: "REPLACE_ME"
-    actual_title: "REPLACE_ME"
+  - id: "acme_2024"                   # Any unique id, no spaces
+    company: "REPLACE_ME"             # Acme Corp
+    actual_title: "Software Engineer" # Your real title. Must be in safe_title_aliases.
+    # Every title this job may be shown under. Only list titles that are
+    # honest descriptions of the work; the resume never uses anything else.
     safe_title_aliases:
-      - "REPLACE_ME"           # must include actual_title
-      - "REPLACE_ME"
-      - "REPLACE_ME"
-    start_date: "REPLACE_ME"   # YYYY-MM
-    end_date: "REPLACE_ME"     # YYYY-MM or "present"
-    location: "REPLACE_ME"     # e.g. "Mumbai, India"
-    bullet_pool:
-      - id: "REPLACE_ME"       # e.g. "exp1_b1"
-        text: "REPLACE_ME"     # verbatim bullet — never rewritten
-        tags: ["REPLACE_ME"]
-      - id: "REPLACE_ME"
-        text: "REPLACE_ME"
-        tags: ["REPLACE_ME"]
-      - id: "REPLACE_ME"
-        text: "REPLACE_ME"
-        tags: ["REPLACE_ME"]
+      - "Software Engineer"           # your actual_title
+      - "Backend Engineer"
+    start_date: "2024-01"             # YYYY-MM
+    end_date: "present"               # YYYY-MM, or "present"
+    location: "REPLACE_ME"            # (optional) City, State
+    # employment = a real job (always shown). freelance = a separate engagement
+    # that competes for space like a project does.
+    employment_type: "employment"     # (optional) employment | freelance
+    link: ""                          # (optional) shown for freelance entries only
 
-  - id: "REPLACE_ME"
-    company: "REPLACE_ME"
-    actual_title: "REPLACE_ME"
-    safe_title_aliases:
-      - "REPLACE_ME"
-    start_date: "REPLACE_ME"
-    end_date: "REPLACE_ME"
-    location: "REPLACE_ME"
-    bullet_pool:
-      - id: "REPLACE_ME"
-        text: "REPLACE_ME"
-        tags: ["REPLACE_ME"]
-      - id: "REPLACE_ME"
-        text: "REPLACE_ME"
-        tags: ["REPLACE_ME"]
+    role_blocks:
+      - role: "backend"               # Short label for the kind of job this block targets
+        role_fit: "primary"           # (optional) primary | adjacent
+        # The entry line as it appears on the resume.
+        entry_header: "Backend Engineer at Acme Corp, Bengaluru"
+        entry_dates: "January 2024 to current"   # Required for work entries
+        title_aliases:                # Subset of safe_title_aliases above
+          - "Backend Engineer"
+        # Shown in this order. The FIRST bullet is the plain-language summary
+        # of the role. Aim for 3-8.
+        bullets:
+          - id: "acme_backend_b0"     # Unique across the whole file
+            text: "REPLACE_ME: one-line summary of what you did, in plain words."
+          - id: "acme_backend_b1"
+            text: "REPLACE_ME: skill + how you used it + the result."
+          - id: "acme_backend_b2"
+            text: "REPLACE_ME: skill + how you used it + the result."
+        # (optional) True bullets that are only used when a job ad asks for
+        # their keyword, e.g. Docker, Git, SQL.
+        extra_bullets:
+          - id: "acme_backend_x1"
+            text: "REPLACE_ME: a bullet naming a specific tool you used."
+
+      # (optional) The same job written for a different kind of role.
+      # - role: "data"
+      #   entry_header: "Data Engineer at Acme Corp, Bengaluru"
+      #   entry_dates: "January 2024 to current"
+      #   title_aliases: ["Data Engineer"]   # also add it to safe_title_aliases
+      #   bullets:
+      #     - id: "acme_data_b0"
+      #       text: "..."
 
 # ---------------------------------------------------------------------------
-# Projects — projects section NEVER hidden; at least 2 always shown.
-#
-# link: GitHub or live URL. The DOCX assembler updates the "Code →"
-#   hyperlink target in word/_rels/document.xml.rels to this URL.
-#   The visible link text "Code →" is never changed.
-# bullet_pool: min 2 bullets; the system shows 2-3 per JD by cosine score.
+# Projects. These compete for space: the bot shows the ones that fit the job.
 # ---------------------------------------------------------------------------
 projects:
-  - id: "REPLACE_ME"           # e.g. "project_shortname"
-    name: "REPLACE_ME"         # display name on the resume
-    link: "REPLACE_ME"         # https URL — drives hyperlink target
-    tags: ["REPLACE_ME"]
-    bullet_pool:
-      - id: "REPLACE_ME"
-        text: "REPLACE_ME"
-        tags: ["REPLACE_ME"]
-      - id: "REPLACE_ME"
-        text: "REPLACE_ME"
-        tags: ["REPLACE_ME"]
-      - id: "REPLACE_ME"
-        text: "REPLACE_ME"
-        tags: ["REPLACE_ME"]
+  - id: "job_bot"                     # Any unique id, no spaces
+    name: "REPLACE_ME"                # Project name
+    link: "REPLACE_ME"                # (optional) demo or repository URL
+    tags: ["python", "postgres"]      # (optional) your own labels
 
-  - id: "REPLACE_ME"
-    name: "REPLACE_ME"
-    link: "REPLACE_ME"
-    tags: ["REPLACE_ME"]
-    bullet_pool:
-      - id: "REPLACE_ME"
-        text: "REPLACE_ME"
-        tags: ["REPLACE_ME"]
-      - id: "REPLACE_ME"
-        text: "REPLACE_ME"
-        tags: ["REPLACE_ME"]
+    role_blocks:
+      - role: "backend"
+        # Projects have no dates: leave entry_dates out.
+        entry_header: "REPLACE_ME: project name and one-line description"
+        title_aliases: ["Backend Engineer"]
+        bullets:
+          - id: "job_bot_backend_b0"
+            text: "REPLACE_ME: what the project does, in plain words."
+          - id: "job_bot_backend_b1"
+            text: "REPLACE_ME: skill + how you used it + the result."
 
 # ---------------------------------------------------------------------------
-# Skills pool — FLAT LIST. Do NOT categorise here.
-#
-# Categorisation happens dynamically per JD:
-#   1. Deterministic scoring picks the top-14 candidates by JD match.
-#   2. LLM names 3 categories and groups skills into them (3-5 each).
-#   3. Skills in "Familiar With" come from JD gap skills NOT in this list.
-#   4. The LLM cannot add any skill not present in this list (to categories)
-#      or not present in the JD's gap list (to Familiar With).
-#
-# Add every skill you can genuinely defend in an interview.
-# Reference buckets (for your own thinking — not in the YAML schema):
-#   Programming, Backend & APIs, Frontend, Databases, Cloud & DevOps,
-#   Data & ML, Quantitative, Build & Testing.
+# Skills. Used for matching only; nothing here is printed on the resume.
+# Every skill that matters should also appear inside a bullet.
 # ---------------------------------------------------------------------------
-skills_pool:
-  - "REPLACE_ME"
-  - "REPLACE_ME"
-  - "REPLACE_ME"
-  - "REPLACE_ME"
-  - "REPLACE_ME"
+skills_pool:                          # (optional)
+  - "Python"
+  - "PostgreSQL"
+  - "Docker"
+
+# (optional) Your own list of skills you're learning. Kept as a record only;
+# the "Gap skills" in Telegram messages are worked out per job.
+gap_skills:
+  - skill: "Kubernetes"
 
 # ---------------------------------------------------------------------------
-# Education — fixed second-last section, never modified by the assembler.
+# Education and certifications. Kept as your record; the resume header shows
+# them through the template (tools/personalize_template.py fills them in).
 # ---------------------------------------------------------------------------
-education:
-  - degree: "REPLACE_ME"       # e.g. "B.Tech in Computer Science"
-    institution: "REPLACE_ME"
-    dates: "REPLACE_ME"        # e.g. "Sep 2021 - May 2025"
-    score: "REPLACE_ME"        # e.g. "CGPA: 7.3" or "Score: 89%"
+education:                            # (optional)
+  - degree: "REPLACE_ME"              # B.Tech Computer Science
+    institution: "REPLACE_ME"         # University name
+    dates: "2020 - 2024"
+    score: "REPLACE_ME"               # (optional) 8.1 CGPA
 
-  - degree: "REPLACE_ME"
-    institution: "REPLACE_ME"
-    dates: "REPLACE_ME"
-    score: "REPLACE_ME"
-
-# ---------------------------------------------------------------------------
-# Certifications — fixed last section.
-#
-# verify_link: The DOCX assembler updates the "Verify Here" hyperlink
-#   target in word/_rels/document.xml.rels to this URL.
-#   The visible text "Verify Here" is never changed.
-# ---------------------------------------------------------------------------
-certifications:
-  - id: "REPLACE_ME"
-    name: "REPLACE_ME"         # display name on the resume
-    verify_link: "REPLACE_ME"  # https URL — drives hyperlink target
-    bullets:
-      - "REPLACE_ME"           # e.g. "Top 5% (Elite + Silver)"
-      - "REPLACE_ME"
+certifications:                       # (optional)
+  - id: "cert_1"
+    name: "REPLACE_ME"                # Certificate name
+    verify_link: "REPLACE_ME"         # URL where it can be verified
