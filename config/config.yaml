@@ -116,7 +116,7 @@ scraper:
   # Off since 2026-10-05: at 20, run 37333275047 scraped 40 jobs and never
   # looked at 10 of them -- and with a 1-hour scrape window they were not
   # scraped again. `time_budget_minutes` is the guard now, and what it does not
-  # reach is carried over (`backlog_days`) rather than dropped.
+  # reach is dropped while `backlog_days` is 0, carried over otherwise.
   short_circuit_count: 0
   # Stop STARTING new jobs this far into a run, so it always finishes cleanly
   # (verdicts written, summary sent) inside the workflow's 50-minute timeout.
@@ -124,8 +124,11 @@ scraper:
   time_budget_minutes: 40
   # Jobs scraped in the last N days that never got a verdict -- not reached
   # before the time budget, or abandoned when every LLM was out of budget --
-  # are processed FIRST by the next run. Nothing scraped is silently dropped.
-  backlog_days: 3
+  # are processed FIRST by the next run. 0 = off.
+  # Off since 2026-10-06 at the operator's call: carried-over jobs piled up
+  # and crowded each run with stale listings. Jobs a run doesn't reach are now
+  # dropped; set this back to 3 to carry them over again.
+  backlog_days: 0
   # JobSpy results_wanted cap per query term.
   results_wanted_per_term: 50
   # country_indeed — geo-filters Indeed AND Glassdoor only.
