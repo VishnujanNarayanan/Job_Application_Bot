@@ -737,7 +737,9 @@ llm:
   # Alternating halves Groq's rate and keeps OpenRouter's daily allowance in
   # play. Names are `provider` values; an empty list turns rotation off.
   rotation:
-    providers: ["groq", "openrouter"]
+    # Only ENABLED providers take a turn, so a name here whose block is still
+    # `enabled: false` is skipped rather than breaking the rotation.
+    providers: ["groq", "openrouter", "gemini-free", "mistral"]
     every: 2
 
   # Providers tried, in order, when the one before gives up. Both of the
@@ -771,6 +773,36 @@ llm:
       base_url: "https://openrouter.ai/api/v1"
       api_key_env: "OPENROUTER_API_KEY"
       model: "openrouter/free"
+      instructor_mode: "JSON"
+      request_timeout_seconds: 60
+
+    # Gemini on a FREE key -- a separate AI Studio key whose Google project has
+    # no billing attached, so it can only ever hit the free tier (~15
+    # requests/minute, ~1,000/day for flash-lite). Distinct from the metered
+    # `gemini` entry at the tail: `provider` is what llm.rotation matches on,
+    # so naming this one plain "gemini" would pull the PAID key into the
+    # rotation too. Re-check with: python -m src.cli.llm_check gemini-free
+    #
+    # gemini-3.5-flash-lite, not 2.5 like the paid entry: 2.5-flash-lite 404s
+    # for projects created after its cutoff ("no longer available to new
+    # users"), and this key's project is new. Passed llm_check 2026-10-06, 2.3s.
+    - enabled: true
+      provider: "gemini-free"
+      base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+      api_key_env: "GEMINI_FREE_API_KEY"
+      model: "gemini-3.5-flash-lite"
+      instructor_mode: "JSON"
+      request_timeout_seconds: 60
+
+    # Mistral -- OFF. Meant for the free "Experiment" plan (phone verification,
+    # no card, ~1B tokens/month), but on 2026-10-06 the console offered no free
+    # API plan: keys were locked behind "Upgrade". Kept ready in case that
+    # changes; switch on only after: python -m src.cli.llm_check mistral
+    - enabled: false
+      provider: "mistral"
+      base_url: "https://api.mistral.ai/v1"
+      api_key_env: "MISTRAL_API_KEY"
+      model: "mistral-small-latest"
       instructor_mode: "JSON"
       request_timeout_seconds: 60
 

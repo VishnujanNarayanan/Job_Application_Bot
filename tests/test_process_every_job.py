@@ -249,8 +249,9 @@ def test_a_missing_api_key_is_tried_once_per_run_not_per_job(monkeypatch):
 
     llm_client.reset_clients()
     monkeypatch.setattr("time.sleep", lambda *_: None)
-    for var in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"):
-        monkeypatch.delenv(var, raising=False)
+    chain = llm_client.provider_chain()
+    for _, cfg in chain:
+        monkeypatch.delenv(str(cfg.api_key_env), raising=False)
     calls = []
     real = llm_client._api_key
     monkeypatch.setattr(llm_client, "_api_key",
@@ -260,6 +261,6 @@ def test_a_missing_api_key_is_tried_once_per_run_not_per_job(monkeypatch):
         with pytest.raises(llm_client.LLMError):
             llm_client.complete(Dummy, "p")
 
-    # Three providers, each found keyless exactly once -- then skipped.
-    assert sorted(calls) == ["fallback:0", "fallback:1", "primary"]
+    # Every provider found keyless exactly once -- then skipped.
+    assert sorted(calls) == sorted(which for which, _ in chain)
     llm_client.reset_clients()
