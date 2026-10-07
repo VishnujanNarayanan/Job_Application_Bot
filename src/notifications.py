@@ -187,7 +187,12 @@ def send_match_notification(
                     "notification_button_dropped",
                     job_id=job.job_id, label=label, url=url,
                 )
-        keyboard = InlineKeyboardMarkup([row]) if row else None
+        # Second row: record the decision from the phone (#15). Taps are
+        # picked up by src.telegram_actions, not by anything listening here.
+        from src.telegram_actions import decision_row
+
+        rows = [r for r in (row, decision_row(job.job_id)) if r]
+        keyboard = InlineKeyboardMarkup(rows) if rows else None
     except Exception as exc:
         log.warning("notification_keyboard_failed", job_id=job.job_id, error=str(exc))
         keyboard = None
