@@ -706,6 +706,12 @@ llm:
   # is the lowest common denominator. Verify with llm_check after changing it.
   instructor_mode: "TOOLS"
   request_timeout_seconds: 60
+  # Hard wall-clock cap on ONE call, for every provider (a provider block may
+  # override it). request_timeout_seconds above only bounds the gap between
+  # bytes, and OpenRouter pads a queued request with blank bytes, so single
+  # calls ran 5-10 minutes on 2026-10-06/07. Past this, the job goes to the
+  # next provider at once (no retries on the stalled one). 0 = no cap.
+  call_deadline_seconds: 90
   max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
 
   # Shared default, used by any provider that does not override it. Kept
