@@ -305,7 +305,7 @@ job_application_bot/
 | **Your profile** | Required | — | `master_profile.yaml`, your experience as structured bullets |
 | **Telegram bot** | Optional | Free | Sends each match to your phone. Without it, use the dashboard |
 | **More LLM keys** (Gemini free, Gemini paid, OpenRouter) | Optional | Free / small | More capacity and fallbacks |
-| **AWS S3** | Optional | ~Free | Caches resumes so Telegram links work while your computer is off |
+| **AWS S3** | Optional | ~Free | Caches resumes so Telegram links work while your computer is off (`requirements-aws.txt`) |
 | **Tailscale** | Optional | Free | Opens the dashboard and resume links from your phone |
 | **GitHub Actions** | Optional | Free tier | Runs the pipeline on GitHub's servers |
 
@@ -321,8 +321,11 @@ cd Job_Application_Bot
 
 python3.11 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt    # ~1.7 GB installed (CPU-only PyTorch)
+pip install -r requirements.txt    # ~1.5 GB installed (CPU-only PyTorch)
 ```
+
+Using AWS too? Also run `pip install -r requirements-aws.txt`. To run the tests, install
+`requirements-dev.txt` instead, which includes everything.
 
 Install LibreOffice too: `sudo apt install libreoffice-writer` (Debian/Ubuntu/WSL),
 `brew install --cask libreoffice` (macOS), or the installer from libreoffice.org (Windows).
@@ -413,6 +416,7 @@ If Telegram is set up, matches also arrive there with Apply, Resume and **Mark a
 **10. Run the tests (optional)**
 
 ```bash
+pip install -r requirements-dev.txt
 pytest
 ```
 
