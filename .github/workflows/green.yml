@@ -55,7 +55,7 @@ jobs:
       # across jobs in a run, so the venv's absolute shebangs stay valid.
       - name: Compute cache key
         id: key
-        run: echo "value=venv-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}" >> "$GITHUB_OUTPUT"
+        run: echo "value=venv-${{ runner.os }}-py311-${{ hashFiles('requirements*.txt') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore virtualenv
         id: cache
@@ -71,7 +71,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install -r requirements.txt
+          .venv/bin/pip install -r requirements-dev.txt
 
       - name: Every module imports
         run: |

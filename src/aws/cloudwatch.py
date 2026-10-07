@@ -44,7 +44,12 @@ def build_handler() -> logging.Handler | None:
     if not log_group:
         return None
 
-    import watchtower
+    try:
+        import watchtower
+    except ImportError:
+        log.warning("cloudwatch_handler_init_failed",
+                    error="watchtower not installed (pip install -r requirements-aws.txt)")
+        return None
 
     stream_name = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
