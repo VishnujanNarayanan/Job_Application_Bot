@@ -47,8 +47,8 @@ WORKDIR /app
 # Dependency layer first so code changes don't bust the pip cache. This single
 # install also provisions the spaCy model wheel + CPU torch (both pinned in
 # requirements.txt) — no separate download steps.
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-aws.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-aws.txt
 
 # Application code. Per-operator secrets and profile files (.env,
 # master_profile.*) are EXCLUDED via .dockerignore

@@ -99,7 +99,8 @@ jobs:
           key: hf-${{ runner.os }}-minilm-v1
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        # The run pre-renders resumes to S3, so it needs the AWS packages too.
+        run: pip install -r requirements.txt -r requirements-aws.txt
 
       # The operator profile and resume template are not in git (personal
       # data) and are too big for GitHub secrets (48 KB cap vs a ~142 KB
