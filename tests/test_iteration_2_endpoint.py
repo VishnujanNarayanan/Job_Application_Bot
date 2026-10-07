@@ -2,11 +2,10 @@
 
 All tests are offline: S3 mocked with moto, DB in-memory, no LibreOffice.
 
-The assembler tests run against the PRISTINE template in the resume guide, not
-against the operator's personalised copy — that copy is gitignored (it carries
-real contact details and hyperlinks), so a test depending on it would silently
-skip in CI and on any other machine. Structure is identical between the two;
-only the text differs, and the assembler matches on structure alone.
+The assembler tests prefer the operator's personalised template and fall back
+to the committed example template (placeholders only), so they run in CI and on
+a fresh clone instead of skipping. Structure is identical between the two; only
+the text differs, and the assembler matches on structure alone.
 """
 
 from __future__ import annotations
@@ -30,14 +29,12 @@ from src.endpoint.assembler import _is_entry_bullet
 REPO_ROOT = Path(__file__).resolve().parent.parent
 #: The operator's personalised template (gitignored, may be absent).
 TEMPLATE_PATH = REPO_ROOT / "resumes" / "templates" / "headless_v1.docx"
-#: The pristine upstream template — present wherever the guide is checked out.
-PRISTINE_PATH = Path(
-    "/home/vishnu/projects/resume guide/Headless+Resume+Template.docx"
-)
+#: The committed example template (placeholders only) — always present.
+EXAMPLE_PATH = REPO_ROOT / "resumes" / "templates" / "example_template.docx"
 
 
 def _template() -> Path:
-    for candidate in (TEMPLATE_PATH, PRISTINE_PATH):
+    for candidate in (TEMPLATE_PATH, EXAMPLE_PATH):
         if candidate.exists():
             return candidate
     pytest.skip("no Headless template available")
