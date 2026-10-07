@@ -36,7 +36,8 @@ answer_bank_seed.yaml
 # Operator's resume/cover templates carry personal info + real hyperlinks
 # (name, contact, GitHub/LinkedIn/certificate links). Operator-owned source,
 # dropped in per instance (rule #21); never committed.
-resumes/templates/
+resumes/templates/*
+!resumes/templates/.gitkeep
 
 # --- Permanent audit trail (lives on Oracle Cloud VM disk, never committed) -
 resumes/applied/
@@ -96,3 +97,6 @@ Thumbs.db
 # `git add -f` if a genuine document ever needs committing.
 *.pdf
 *.docx
+# The one tracked document: the example resume template, placeholders only
+# (no personal data). Must come after *.docx -- the last matching rule wins.
+!resumes/templates/example_template.docx
