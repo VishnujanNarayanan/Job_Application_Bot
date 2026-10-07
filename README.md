@@ -39,6 +39,47 @@
 
 ## Version history
 
+Full details in [CHANGELOG.md](CHANGELOG.md).
+
+### v3.1.0 — released 2026-10-07
+
+- **Ready for other people to run**: a getting-started guide, an example resume template with a
+  tool to personalise it, `.env.example` marked required/optional, and a lighter core install.
+- **Telegram Mark applied / Dismiss** buttons, and resume links that open the PDF in the browser
+  under a readable filename.
+- **Steadier LLM handling**: Groq, a free Gemini key and paid Gemini take turns, OpenRouter is a
+  backup, every call has a 90-second deadline, and schema rejections move on immediately.
+- **Choose the search term** from an arrow-key menu; every term also runs with "junior".
+- Readable terminal output, a stricter default threshold (0.60), and a fix for runs hanging on a
+  dead database connection.
+
+### v3.0.0 — released 2026-09-20
+
+Moved to the Headless resume template: keyword-coverage scoring, role-based profile blocks, and
+no Skills or Summary section.
+
+### v2.0.0 — released 2026-08-09
+
+The theme is **making the system usable from a phone without leaving it exposed.**
+
+- **Google removed.** Sheets and Docs are gone, along with four pip packages, a service-account
+  JSON, three env vars and a bind mount. The analytics index is now local CSV files *derived from
+  Postgres* rather than appended during a run — which is what lets a run that happened on a
+  throwaway CI runner show up in the local files with no sync step.
+- **Laptop-off runs.** A manually-dispatched GitHub Actions workflow runs the whole pipeline on
+  GitHub's runners, triggerable from the GitHub mobile app. The operator profile and resume
+  template travel through S3, since they exceed GitHub's 48 KB secret limit.
+- **Resumes that survive a sleeping laptop.** Matched jobs are pre-rendered to S3 during the run
+  and delivered as presigned links, so a notification from a remote run is fully actionable. This
+  amends hard rule #8 by explicit decision; it remains an expiring cache, not a permanent pile.
+- **A browser dashboard** served by the existing FastAPI app — matches, near-misses, apply and
+  resume links, and a Run button that goes either local or remote.
+- **ngrok replaced by Tailscale.** The endpoint has no authentication and ngrok published it to the
+  entire internet on a guessable URL scheme. It now binds loopback only and is reached over a
+  private mesh.
+- Match notifications fixed (see v1.0.0), 154 tests, and one search term per run by default to
+  keep per-run LLM spend low.
+
 ### v1.0.0 — released 2026-08-08
 
 The nine-layer pipeline described in this README, running end to end:
@@ -60,28 +101,6 @@ that does not exist, raising `AttributeError` before the send. The orchestrator 
 logged `notification_error`, so live match notifications had been failing silently.
 
 Triggered by host cron or `scripts/start_bot.sh`; runs only while the operator's laptop is on.
-
-### v2.0.0 — unreleased
-
-The theme is **making the system usable from a phone without leaving it exposed.**
-
-- **Google removed.** Sheets and Docs are gone, along with four pip packages, a service-account
-  JSON, three env vars and a bind mount. The analytics index is now local CSV files *derived from
-  Postgres* rather than appended during a run — which is what lets a run that happened on a
-  throwaway CI runner show up in the local files with no sync step.
-- **Laptop-off runs.** A manually-dispatched GitHub Actions workflow runs the whole pipeline on
-  GitHub's runners, triggerable from the GitHub mobile app. The operator profile and resume
-  template travel through S3, since they exceed GitHub's 48 KB secret limit.
-- **Resumes that survive a sleeping laptop.** Matched jobs are pre-rendered to S3 during the run
-  and delivered as presigned links, so a notification from a remote run is fully actionable. This
-  amends hard rule #8 by explicit decision; it remains an expiring cache, not a permanent pile.
-- **A browser dashboard** served by the existing FastAPI app — matches, near-misses, apply and
-  resume links, and a Run button that goes either local or remote.
-- **ngrok replaced by Tailscale.** The endpoint has no authentication and ngrok published it to the
-  entire internet on a guessable URL scheme. It now binds loopback only and is reached over a
-  private mesh.
-- Match notifications fixed (see v1.0.0), 154 tests, and one search term per run by default to
-  keep per-run LLM spend low.
 
 ---
 
