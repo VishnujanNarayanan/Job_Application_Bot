@@ -118,7 +118,8 @@ authorship. That constraint is what makes the output defensible.
   rather than shipping; the resume header is never touched.
 - **Build-time pre-render** — matched resumes are rendered to S3 as the run happens and delivered
   as presigned links, so they work even when the laptop that hosts the endpoint is switched off.
-- **Telegram delivery** — match notifications with Apply, Resume PDF, and Resume DOCX buttons.
+- **Telegram delivery** — match notifications with Apply, Resume PDF, and Resume DOCX buttons, plus
+  Mark applied / Dismiss to record the decision from the phone.
 - **Browser dashboard** — matches and near-misses with apply and resume links, plus a Run button
   that starts the pipeline locally or dispatches it to GitHub Actions.
 - **Laptop-off runs** — a manually-dispatched GitHub Actions workflow runs the whole pipeline on
@@ -482,9 +483,13 @@ Add `DATABASE_URL`, `GEMINI_API_KEY`, `TELEGRAM_*` and `AWS_*` as repository sec
    diff-validates, converts through LibreOffice, caches to S3, and presigns a 7-day link. This is
    what makes the links usable when the machine that hosts the endpoint is off.
 9. **Layer 8** sends a Telegram message with role, company, score, threshold, location, CTC, gap
-   skills, and three buttons: Apply, Resume PDF, Resume DOCX.
+   skills, and two rows of buttons: Apply, Resume PDF, Resume DOCX; then Mark applied, Dismiss.
 10. The operator taps Resume PDF — served from S3, or rendered on demand by the endpoint for
     anything expired or never pre-rendered — and applies manually through the Apply link.
+    Tapping **Mark applied** records it in Postgres, the same as the dashboard. Nothing listens
+    for taps around the clock: the endpoint polls Telegram every few seconds while it's up, and
+    every run checks at its start and end, so a tap is picked up within Telegram's 24-hour
+    retention. Once recorded, the button turns into "✅ Applied <date>" with an Undo.
 11. **Layer 9** regenerates the CSV index from Postgres at the end of a local run, or the next
     time the dashboard is opened after a remote one. Monthly, `src.cli.report` aggregates the last
     30 days into a Gemini-written text report.

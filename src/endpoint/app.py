@@ -21,6 +21,8 @@ supervisor) on port 8000 with a reverse proxy or direct access.
 from __future__ import annotations
 
 import re
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
@@ -34,7 +36,36 @@ from src.state.db import session_scope
 
 log = structlog.get_logger(__name__)
 
-app = FastAPI(title="Job Bot", version="2.0")
+
+def _poll_taps(stop: threading.Event, every: float) -> None:
+    """Record Telegram "Mark applied" taps while the endpoint is up (#15).
+
+    Short polls (``getUpdates`` with timeout 0) rather than one long poll, so
+    a pipeline run fetching taps at the same moment doesn't get a 409
+    Conflict from Telegram. Each pass already swallows its own errors.
+    """
+    from src.telegram_actions import process_pending_taps
+
+    while not stop.wait(every):
+        process_pending_taps()
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    from src.config import settings
+
+    every = float(settings.notifications.get("tap_poll_seconds", 0) or 0)
+    stop = threading.Event()
+    if every > 0:
+        threading.Thread(
+            target=_poll_taps, args=(stop, every), name="telegram-taps", daemon=True
+        ).start()
+        log.info("telegram_tap_poller_started", every_seconds=every)
+    yield
+    stop.set()
+
+
+app = FastAPI(title="Job Bot", version="2.0", lifespan=_lifespan)
 
 # Only the dashboard's own assets are served statically. `data/` is never
 # mounted: the CSV index holds every JD snippet, score and gap-skill list.
