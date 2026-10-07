@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 from functools import lru_cache
 from typing import TypeVar
@@ -55,6 +56,18 @@ class LLMConfigError(LLMError):
     25 as on job 1. The chain remembers it (see ``_DEAD_PROVIDERS``) and skips
     the provider for the rest of the run instead of rediscovering it per job —
     the 2026-08-09 Actions run logged the same traceback 25 times.
+    """
+
+
+class LLMDeadlineError(LLMError):
+    """A call produced no reply within ``call_deadline_seconds``.
+
+    ``request_timeout_seconds`` cannot catch this: it bounds the gap between
+    bytes, not the whole request, and OpenRouter keeps a queued free-model
+    request alive by sending blank padding. On 2026-10-06/07 that held single
+    calls for 5-10 minutes before they ended in an empty body. A deadline is
+    per call and per job, not proof the provider is broken, so the chain moves
+    on without retrying and the provider stays usable for the next job.
     """
 
 
@@ -456,6 +469,36 @@ def _sampling(cfg) -> dict:
     return {} if temperature is None else {"temperature": float(temperature)}
 
 
+def _with_deadline(fn, seconds: float):
+    """Run ``fn()`` but stop waiting for it after ``seconds`` (0 = no limit).
+
+    The call runs on a daemon thread because Python cannot interrupt a thread
+    blocked in a socket read. When the deadline passes we stop WAITING -- the
+    thread is abandoned, finishes or dies on its own, and its result is
+    dropped -- and a daemon thread can't hold the process open at exit. The
+    main thread waits on an Event, so Ctrl+C still works mid-call.
+    """
+    if not seconds or seconds <= 0:
+        return fn()
+    box: dict = {}
+    done = threading.Event()
+
+    def target():
+        try:
+            box["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread
+            box["error"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=target, name="llm-call", daemon=True).start()
+    if not done.wait(seconds):
+        raise LLMDeadlineError(f"no reply within {seconds:g}s")
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
+
+
 def _call_once(which: str, cfg, response_model: type[T], messages) -> T:
     """One attempt, through the single client seam every test patches."""
     return get_client(which).chat.completions.create(
@@ -489,9 +532,28 @@ def _complete_with(
 
     last_error: Exception | None = None
 
+    deadline = float(cfg.get("call_deadline_seconds",
+                             settings.llm.get("call_deadline_seconds", 0)) or 0)
+
     for attempt in range(1, attempts + 1):
         try:
-            return _call_once(which, cfg, response_model, messages)
+            return _with_deadline(
+                lambda: _call_once(which, cfg, response_model, messages), deadline
+            )
+        except LLMDeadlineError as exc:
+            # Don't spend the attempt budget waiting out the same stall again:
+            # hand the job to the next provider now. Marked transient so it
+            # never counts towards abandoning the run.
+            log.warning(
+                "llm_deadline_exceeded",
+                which=which,
+                provider=str(cfg.provider),
+                model=str(cfg.model),
+                attempt=attempt,
+                deadline_seconds=deadline,
+            )
+            exc.transient = True
+            raise
         except LLMConfigError as exc:
             # Misconfiguration, not a failed request. Retrying cannot fix it
             # and neither can the next job, so record it once and retire the
