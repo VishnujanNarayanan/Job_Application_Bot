@@ -35,16 +35,54 @@ from src.cli.term_picker import Cancelled as _Cancelled
 _ROOT = Path(__file__).resolve().parents[1]
 
 
+def _quiet_libraries() -> None:
+    """Silence third-party chatter that says nothing about the run's state.
+
+    sentence-transformers logs its device and model load at INFO. JobSpy logs
+    "finished scraping" through a per-site logger it creates lazily, AFTER
+    applying its own verbosity, so that setting never reaches it; giving the
+    logger a WARNING-level handler up front makes JobSpy leave it alone
+    (create_logger only configures a logger that has no handlers).
+    """
+    for name in ("httpx", "httpcore", "sentence_transformers"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+    try:
+        from jobspy.model import Site
+    except ImportError:
+        return
+    names = {s.value.capitalize() for s in Site} | {"ZipRecruiter", "LinkedIn"}
+    for name in names:
+        logger = logging.getLogger(f"JobSpy:{name}")
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(name)s %(levelname)s: %(message)s"))
+            logger.addHandler(handler)
+        logger.setLevel(logging.WARNING)
+        logger.propagate = False
+
+
+def _readable_console() -> bool:
+    """Human-readable lines for a person at a terminal; JSON everywhere else
+    (Actions, the dashboard's Run button, cron, CloudWatch). LOG_FORMAT=json
+    forces JSON in a terminal too."""
+    return sys.stderr.isatty() and os.environ.get("LOG_FORMAT", "").lower() != "json"
+
+
 def _configure_logging() -> None:
     logging.basicConfig(format="%(message)s", stream=sys.stderr, level=logging.INFO)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    _quiet_libraries()
+    if _readable_console():
+        from src.console_log import ConsoleRenderer
+
+        renderer = ConsoleRenderer()
+    else:
+        renderer = structlog.processors.JSONRenderer()
     structlog.configure(
         processors=[
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.format_exc_info,  # render exc_info → "exception" field
-            structlog.processors.JSONRenderer(),
+            renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
     )
@@ -344,6 +382,8 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
             prefilter_outcomes[reason] = prefilter_outcomes.get(reason, 0) + 1
         if empty_jd_count:
             prefilter_outcomes["EMPTY_JD"] = empty_jd_count
+        log.info("prechecks_done", checked=len(raw_jobs), to_parse=len(passing),
+                 outcomes=prefilter_outcomes)
         send_status(prechecks_done_text(
             checked=len(raw_jobs), to_parse=len(passing), backlog=len(backlog),
             outcomes=prefilter_outcomes, refreshed=refreshed_changed))
@@ -389,6 +429,8 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
             # back every verdict (#28). Committing per job also keeps the jobs
             # already processed if a later one crashes.
             session.commit()
+            log.info("job_started", n=index + 1, of=len(passing), job_id=job.job_id,
+                     company=job.company, role=job.role)
 
             # --- Layer 3: parse ---
             try:
@@ -430,12 +472,16 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
             # listing's own job_type blank far more often than the JD does.
             if filters.job_type_disallowed(parsed.job_type, cfg.filters.get("job_type")):
                 not_applied_queue.append((job, JOB_TYPE_DISALLOWED, str(parsed.job_type), None))
+                log.info("job_filtered", job_id=job.job_id, reason=JOB_TYPE_DISALLOWED,
+                         value=str(parsed.job_type))
                 skipped_count += 1
                 continue
 
             # Layer 3 hard filter: years ceiling on structured field
             if filters.exceeds_years_ceiling(parsed.years_required, int(cfg.filters.years_ceiling)):
                 not_applied_queue.append((job, HARD_FILTER_LAYER_3, str(parsed.years_required), None))
+                log.info("job_filtered", job_id=job.job_id, reason=HARD_FILTER_LAYER_3,
+                         value=str(parsed.years_required))
                 skipped_count += 1
                 continue
 
@@ -462,6 +508,8 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
             # other way to surface it, since the CSV index isn't written there.
             log.info(
                 "job_scored",
+                n=index + 1,
+                of=len(passing),
                 job_id=job.job_id,
                 company=job.company,
                 role=job.role,
