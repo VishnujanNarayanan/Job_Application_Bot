@@ -1,6 +1,6 @@
 """One-time: turn the pristine Headless template into the operator's copy.
 
-This is Stage 0 of PIVOT_V3.md, done in code rather than by hand in Word. It
+This is Stage 0 of docs/PIVOT_V3.md, done in code rather than by hand in Word. It
 writes resumes/templates/headless_v1.docx, which is GITIGNORED -- the operator's
 name, phone, email and links live in that asset, never in source (hard rule #21).
 

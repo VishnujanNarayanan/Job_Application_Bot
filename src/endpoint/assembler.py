@@ -43,7 +43,7 @@ canonicalised (lxml c14n) before and after assembly and must be byte-identical.
 Everything after it is rebuilt from scratch, so there is no "permitted region"
 nuance left to police.
 
-Education & Certificates is static by design (PIVOT_V3.md D9): the method caps it
+Education & Certificates is static by design (docs/PIVOT_V3.md D9): the method caps it
 at three lines and the operator hand-writes it into their template copy, which is
 also why no code chooses which of nine education/certification records appear.
 """

@@ -7,7 +7,7 @@ LLM, model, or network. The orchestrator loads the profile, calls this, and
 (for every match >= threshold) hands the result to Layer 5; there are NO
 quotas and NO top-N picking (CLAUDE.md hard rule #14).
 
-Formulas (PIVOT_V3.md D6 + config.scoring):
+Formulas (docs/PIVOT_V3.md D6 + config.scoring):
 
     similarity_s = clamp((lead similarity - 0.22) / (0.40 - 0.22), 0, 1)
     lead_entry   = similarity_s*0.50 + lead_coverage*0.50
@@ -39,7 +39,7 @@ ACTUALLY SELECTED literally contain.
 Note the ordering that implies: selection runs first, and the score is computed on
 its output. The two numbers are therefore not independent, which is exactly why
 ``scoring.apply_threshold`` has to be re-measured against a real corpus before it
-means anything (PIVOT_V3.md Stage 6).
+means anything (docs/PIVOT_V3.md Stage 6).
 """
 
 from __future__ import annotations

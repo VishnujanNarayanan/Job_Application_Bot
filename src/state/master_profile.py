@@ -235,7 +235,7 @@ class MasterProfile(BaseModel):
     ``education`` and ``certifications`` are retained as the record of truth but
     render nowhere: the Headless template puts Education & Certificates in a static
     region the operator hand-writes into their template copy, capped at three lines
-    (PIVOT_V3.md D9). ``skills_pool`` and ``gap_skills`` are likewise machine input
+    (docs/PIVOT_V3.md D9). ``skills_pool`` and ``gap_skills`` are likewise machine input
     only -- nothing in either appears on a resume; every keyword that matters must
     also live inside a bullet.
     """

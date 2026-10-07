@@ -17,7 +17,7 @@ bullet selection stopped being "top 3 by cosine" and became a coverage problem:
 
 That is a set-cover, solved by a beam search over bullet sets.
 
-The covered set resets for EVERY entry (PIVOT_V3.md D5a). Coverage is not rationed
+The covered set resets for EVERY entry (docs/PIVOT_V3.md D5a). Coverage is not rationed
 across entries: the method grades the first entry on whether it clears the whole
 checklist alone, so a keyword the first entry used must remain available to the
 second. Repetition across entries is expected; only within one entry is it waste.
