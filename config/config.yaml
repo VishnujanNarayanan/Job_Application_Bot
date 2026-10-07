@@ -178,6 +178,9 @@ scraper:
   # Search-term rotation. Each run takes `terms_per_run` terms starting at the
   # persisted index (search_rotation_state table) and advances past them, so
   # consecutive runs sweep the list rather than repeating its head.
+  # To search a term by hand instead, run `python -m src.main` in a terminal
+  # (arrow-key menu) or pass `--term "..."`; a hand-picked term doesn't move
+  # the rotation. `--auto` skips the menu.
   #
   # Sizing is a cost/coverage trade: each scraped job costs 1 Gemini call to
   # parse, plus 1 more to build if it scores >= 0.50. More terms per run means
