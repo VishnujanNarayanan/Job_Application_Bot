@@ -502,7 +502,7 @@ def test_every_bullet_keeps_its_own_lines_together(
 
 
 # ---------------------------------------------------------------------------
-# JD keywords in bold (PIVOT_V3.md D17)
+# JD keywords in bold (docs/PIVOT_V3.md D17)
 # ---------------------------------------------------------------------------
 
 

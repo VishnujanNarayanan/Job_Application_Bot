@@ -5,7 +5,7 @@ skills, section_order}`` became ``{version: 2, entries[], jd_keywords, ...}``. T
 85 pre-pivot rows in ``applied`` are NOT migrated — they are historical records
 kept for later analysis, and they reference bullet ids and a ``summary_id`` from a
 profile that has since been regenerated, so nothing could re-render them faithfully
-anyway (PIVOT_V3.md D10).
+anyway (docs/PIVOT_V3.md D10).
 
 They still have to be *readable*, though: the dashboard lists them and the monthly
 analytics report counts them. This module is the one place that knows both shapes,

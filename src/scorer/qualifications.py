@@ -23,8 +23,11 @@ mentioned could never pull a bullet onto the resume. Phase 2 replaced that
 guarantee deliberately -- see the plan in CHANGELOG [Unreleased].)
 
 Vendored rather than read from the guide directory so the GitHub Actions runner has
-it (hard rule #21: no operator-specific path in source). ``make refresh-quals``
-re-vendors it; ``make check-quals`` fails when it has drifted.
+it (hard rule #21: no operator-specific path in source). To refresh it from a
+checkout of the resume guide::
+
+    python "<guide>/refresh_qualifications.py"
+    cp "<guide>/job_qualifications.md" data/job_qualifications.md
 """
 
 from __future__ import annotations

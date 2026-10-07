@@ -285,6 +285,7 @@ job_application_bot/
 ├── tools/                       # personalize_template.py and other helpers
 ├── data/index/ data/reports/    # Layer 9 CSV index and monthly reports (gitignored)
 ├── scripts/start_bot.sh         # Local runner: endpoint + tailscale check
+├── docs/                        # Design notes and the August audit (background reading)
 ├── Dockerfile docker-compose.yml
 ├── .env.example                 # Every secret, marked [REQUIRED] or [OPTIONAL]
 ├── alembic.ini                  # Migrations; reads DATABASE_URL from .env

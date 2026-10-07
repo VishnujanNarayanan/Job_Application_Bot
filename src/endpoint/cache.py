@@ -57,7 +57,7 @@ class StaleSelectionError(RuntimeError):
     Skills list — that the current template does not have. Rendering one would
     either crash on a missing bullet or silently produce a resume that is not the
     one the operator was notified about. Refusing is the honest outcome; the rows
-    are kept as history (PIVOT_V3.md D10), not as renderable artifacts.
+    are kept as history (docs/PIVOT_V3.md D10), not as renderable artifacts.
     """
 
 
