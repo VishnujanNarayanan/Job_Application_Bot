@@ -1,8 +1,10 @@
 """Orchestrator entry point — invoked by the Layer 1 scheduler (cron).
 
 Usage:
-    python -m src.main             # live run
+    python -m src.main             # live run; in a terminal, opens a term menu
     python -m src.main --dry-run   # scrape/score/build, notify to test chat
+    python -m src.main --term "junior data engineer"   # one term, no menu
+    python -m src.main --auto      # no menu: the rotation's next term
 
 Pipeline (architecture doc §4):
 
@@ -27,6 +29,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import structlog
+
+from src.cli.term_picker import Cancelled as _Cancelled
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,6 +57,15 @@ def _configure_logging() -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="src.main")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--term", action="append", metavar="TEXT",
+        help="search this term instead of the rotation's (repeatable); "
+             "the rotation does not advance",
+    )
+    parser.add_argument(
+        "--auto", action="store_true",
+        help="skip the term menu and take the rotation's next term",
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
@@ -72,11 +85,43 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        return _run(args.dry_run, log)
+        manual_terms = args.term or None
+        if manual_terms is None and not args.auto and _interactive():
+            try:
+                manual_terms = _pick_terms()
+            except _Cancelled:
+                log.info("run_cancelled", reason="term_menu")
+                return 0
+        return _run(args.dry_run, log, manual_terms=manual_terms)
     finally:
         import fcntl as _fcntl
         _fcntl.flock(lock_file, _fcntl.LOCK_UN)
         lock_file.close()
+
+
+def _interactive() -> bool:
+    """A person at a terminal. Actions runners, the dashboard's Run button and
+    cron all run without one, so they never see the menu."""
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _pick_terms() -> list[str] | None:
+    """Ask which term to search. None = the rotation's own choice.
+
+    The rotation's next term is read in a short session of its own and the
+    menu shown with no transaction open: Neon kills a session left idle inside
+    a transaction for 5 minutes, and a person can easily take that long.
+    """
+    from src.cli.term_picker import ROTATION, pick_term
+    from src.config import settings
+    from src.scraper import rotation
+    from src.state.db import session_scope
+
+    terms = list(settings.scraper.search_terms)
+    with session_scope() as session:
+        upcoming = rotation.current_terms(session, terms, int(settings.scraper.terms_per_run))
+    choice = pick_term(terms, upcoming)
+    return None if choice == ROTATION else [choice]
 
 
 def _record_taps(log, when: str) -> None:
@@ -88,7 +133,7 @@ def _record_taps(log, when: str) -> None:
         log.info("telegram_taps_recorded", count=recorded, at=when)
 
 
-def _run(dry_run: bool, log) -> int:
+def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
     from src import analytics
     from src.builder.llm_call import build as build_selection
     from src.config import settings, resolve_endpoint_base_url
@@ -157,7 +202,11 @@ def _run(dry_run: bool, log) -> int:
         # list once.
         terms = list(cfg.scraper.search_terms)
         terms_per_run = int(cfg.scraper.terms_per_run)
-        run_terms = rotation.current_terms(session, terms, terms_per_run)
+        # A term picked by hand (menu or --term) is a one-off: the rotation
+        # neither uses nor advances past it, so the sweep resumes where it was.
+        run_terms = manual_terms or rotation.current_terms(session, terms, terms_per_run)
+        log.info("terms_chosen", terms=run_terms,
+                 source="manual" if manual_terms else "rotation")
         is_peak = True  # TODO: detect from time-of-day in Layer 1
         hours_old = int(cfg.scraper.hours_old.peak if is_peak else cfg.scraper.hours_old.off_peak)
 
@@ -560,7 +609,8 @@ def _run(dry_run: bool, log) -> int:
         _write_not_applied(session, not_applied_queue, now, dry_run=dry_run)
 
         # --- Advance rotation past every term used this run ---
-        rotation.advance(session, terms, step=len(run_terms))
+        if not manual_terms:
+            rotation.advance(session, terms, step=len(run_terms))
 
         session.commit()
 
