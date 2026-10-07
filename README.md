@@ -28,7 +28,7 @@
   🏷️ <a href="#version-history">Versions</a> ·
   🧩 <a href="#architecture">Architecture</a> ·
   🧠 <a href="#design-decisions">Design Decisions</a> ·
-  ⚡ <a href="#installation">Installation</a> ·
+  ⚡ <a href="#getting-started">Getting started</a> ·
   ⚙️ <a href="#configuration">Configuration</a> ·
   🧑‍💻 <a href="#usage">Usage</a> ·
   🧪 <a href="#testing">Testing</a> ·
@@ -274,125 +274,205 @@ job_application_bot/
 │   ├── endpoint/                # Resume server, DOCX assembler, dashboard
 │   │   ├── templates/ static/   # Dashboard markup, CSS, JS (no build step)
 │   ├── state/                   # SQLAlchemy models, Alembic migrations
-│   ├── llm/                     # Gemini client, prompts, Pydantic schemas
+│   ├── llm/                     # LLM client (Groq, Gemini, OpenRouter), prompts, schemas
 │   ├── aws/                     # S3, CloudWatch, IAM session
 │   ├── analytics.py notifications.py scheduler.py reasons.py
 │   └── cli/                     # dryrun, inspect, reparse, report, export, assets, aws_check
 ├── .github/workflows/pipeline.yml  # Layer 1 — the laptop-off pipeline run
 ├── tests/                       # 15 test modules, mocked external services
 ├── config/config.yaml           # All runtime tunables (checked in, no secrets)
-├── resumes/templates/           # Operator DOCX template
+├── resumes/templates/           # example_template.docx (committed); your template (gitignored)
+├── tools/                       # personalize_template.py and other helpers
 ├── data/index/ data/reports/    # Layer 9 CSV index and monthly reports (gitignored)
 ├── scripts/start_bot.sh         # Local runner: endpoint + tailscale check
 ├── Dockerfile docker-compose.yml
-├── .env.example                 # Every secret the pipeline reads
-├── master_profile.example.yaml  # Template for the operator's profile
+├── .env.example                 # Every secret, marked [REQUIRED] or [OPTIONAL]
+├── alembic.ini                  # Migrations; reads DATABASE_URL from .env
+├── master_profile.example.yaml  # Annotated example profile to copy
 └── requirements.txt
 ```
 
-## Installation
+## Getting started
 
-Python 3.11+ is required.
+### What you need
+
+| | Needed? | Cost | What it's for |
+|---|---|---|---|
+| **Python 3.11+** | Required | Free | Runs the pipeline |
+| **LibreOffice** | Required | Free | Converts the resume DOCX to PDF |
+| **PostgreSQL with pgvector** | Required | Free | Stores jobs, scores and your profile. [Neon](https://neon.tech) (hosted, free tier) or a local Docker container |
+| **One LLM key** | Required | Free | Parses each job ad. A [Groq](https://console.groq.com) key is enough |
+| **Your profile** | Required | — | `master_profile.yaml`, your experience as structured bullets |
+| **Telegram bot** | Optional | Free | Sends each match to your phone. Without it, use the dashboard |
+| **More LLM keys** (Gemini free, Gemini paid, OpenRouter) | Optional | Free / small | More capacity and fallbacks |
+| **AWS S3** | Optional | ~Free | Caches resumes so Telegram links work while your computer is off |
+| **Tailscale** | Optional | Free | Opens the dashboard and resume links from your phone |
+| **GitHub Actions** | Optional | Free tier | Runs the pipeline on GitHub's servers |
+
+The minimum is a database, one Groq key, your profile and LibreOffice.
+
+### Setup
+
+**1. Clone and install**
 
 ```bash
-git clone git@github.com:VishnujanNarayanan/Job_Application_Bot.git
+git clone https://github.com/VishnujanNarayanan/Job_Application_Bot.git
 cd Job_Application_Bot
 
-python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-
-pip install -r requirements.txt
+python3.11 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt    # ~1.7 GB installed (CPU-only PyTorch)
 ```
 
-`requirements.txt` installs the spaCy `en_core_web_sm` model directly from a wheel URL and pins a
-CPU-only PyTorch build (~200 MB rather than ~2 GB), so no extra download step is needed.
+Install LibreOffice too: `sudo apt install libreoffice-writer` (Debian/Ubuntu/WSL),
+`brew install --cask libreoffice` (macOS), or the installer from libreoffice.org (Windows).
 
-PDF conversion requires **LibreOffice** as a system binary — it is not a pip dependency. The
-Docker image installs `libreoffice-writer`; a local install needs it on `PATH`.
+**2. Create a database**
 
-### Operator setup
+Either sign up at [Neon](https://neon.tech) and copy the connection string, or run Postgres
+locally:
 
 ```bash
-cp .env.example .env                              # fill in secrets
-cp master_profile.example.yaml master_profile.yaml # write your profile
-# place a DOCX template under resumes/templates/
-
-python -m src.cli.aws_check    # verify S3 + IAM + CloudWatch
-alembic upgrade head           # migrate the database
-python -m src.cli.reparse      # parse profile -> DB embeddings + JSON
-pytest                         # should pass green
+docker run -d --name jobbot-db -p 5432:5432 -e POSTGRES_PASSWORD=postgres pgvector/pgvector:pg16
+# DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres
 ```
 
-### Docker (recommended)
+**3. Fill in `.env`**
 
-Two runtime roles from one image:
+```bash
+cp .env.example .env
+```
+
+Set `DATABASE_URL` and `GROQ_API_KEY`. Every other variable is marked `[OPTIONAL]` in the file and
+can stay blank.
+
+**4. Create the tables**
+
+```bash
+alembic upgrade head
+```
+
+**5. Write your profile**
+
+```bash
+cp master_profile.example.yaml master_profile.yaml
+```
+
+Edit `master_profile.yaml`: your contact details, jobs and projects, each as bullets. The comments
+in the file explain every field. Then check it:
+
+```bash
+python -m src.cli.reparse          # validates the profile and loads it into the database
+```
+
+**6. Create your resume template**
+
+```bash
+python tools/personalize_template.py
+```
+
+This copies `resumes/templates/example_template.docx` and fills the header (name, contact line,
+education, certificates) from your profile. Open the result,
+`resumes/templates/headless_v1.docx`, in Word to check it. Everything below the education block is
+generated per job.
+
+**7. Make the config yours**
+
+In `config/config.yaml`, change:
+
+| Setting | Set it to |
+|---|---|
+| `operator` | Your name, years of experience, time zone, and the resume header lines |
+| `scraper.search_terms` | The job titles you want to search for |
+| `filters` | Maximum years required, blocked locations and companies |
+| `scoring.apply_threshold` | How strict matching is (0–1; higher means fewer, better matches) |
+| `prerender.enabled` | `false` if you are not using AWS |
+| `aws.s3_bucket` | Your bucket name, if you use AWS |
+| `endpoint.base_url` | Your Tailscale URL, if you use Tailscale; otherwise leave it |
+
+**8. Check your LLM key and run**
+
+```bash
+python -m src.cli.llm_check groq   # one real call; should print "OK"
+python -m src.main --dry-run       # full run without sending match messages
+python -m src.main                 # real run
+```
+
+In a terminal, `python -m src.main` first asks which search term to use (arrow keys, Enter for
+the next term in the rotation). The first run also downloads a ~90 MB embedding model.
+
+**9. See the results**
+
+```bash
+uvicorn src.endpoint.app:app --host 127.0.0.1 --port 8000
+```
+
+Open <http://localhost:8000/dashboard> for matches, scores and tailored resumes (PDF and DOCX).
+If Telegram is set up, matches also arrive there with Apply, Resume and **Mark applied** buttons.
+
+**10. Run the tests (optional)**
+
+```bash
+pytest
+```
+
+### Docker (alternative)
+
+The same setup can run in Docker, with two roles from one image:
 
 | Service | Role | Lifecycle |
 |---|---|---|
-| `endpoint` | Always-on resume server, `uvicorn`, port 8000 | `docker compose up -d endpoint` |
-| `pipeline` | On-demand scrape → parse → score → build → notify | `docker compose run --rm pipeline` |
-
-First deploy, in order:
+| `endpoint` | Always-on resume server and dashboard, port 8000 | `docker compose up -d endpoint` |
+| `pipeline` | One run: scrape → parse → score → build → notify | `docker compose run --rm pipeline` |
 
 ```bash
-cp .env.example .env                     # DATABASE_URL, GEMINI_API_KEY, Telegram, AWS
-# provide master_profile.yaml + a template under resumes/templates/
+cp .env.example .env                     # then fill it in
+cp master_profile.example.yaml master_profile.yaml
 touch master_profile.json                # so the bind mount is a file, not a directory
 docker compose build
 docker compose run --rm pipeline alembic upgrade head
 docker compose run --rm pipeline python -m src.cli.reparse
+docker compose run --rm pipeline python tools/personalize_template.py
 docker compose up -d endpoint
 ```
 
-Secrets and the operator profile are `.dockerignore`d and bind-mounted at runtime, never baked
-into the image. A named `hf_cache` volume persists the MiniLM embedding model across runs.
+Secrets and your profile are `.dockerignore`d and mounted at runtime, never baked into the image.
 
 ## Configuration
 
-Secrets in `.env` (gitignored); tunables in `config/config.yaml` (checked in). No magic numbers
-in `src/`.
-
-### `.env`
-
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Neon Postgres connection string (pgvector enabled) |
-| `GEMINI_API_KEY` | Google AI Studio key |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Notification delivery |
-| `GITHUB_REPO` / `GITHUB_TOKEN` | Optional — lets the dashboard dispatch runs to GitHub Actions |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` | S3 + CloudWatch |
-| `AWS_S3_BUCKET` | Render cache and selection backups |
-| `AWS_CLOUDWATCH_LOG_GROUP` / `AWS_CLOUDWATCH_NAMESPACE` | Log and metric destinations |
-| `TZ` / `LOG_LEVEL` | Runtime environment |
-
-### `config/config.yaml`
+Secrets live in `.env` (gitignored). Every variable in `.env.example` is marked `[REQUIRED]` or
+`[OPTIONAL]` with a note on where to get it. All other settings live in `config/config.yaml`
+(checked in); the settings a new user should change are listed in step 7 above.
 
 | Block | Controls |
 |---|---|
-| `operator` | Full name (drives derived filenames), years of experience, timezone |
-| `filters` | Job type, years ceiling, disallowed regions, company blocklist |
-| `salary` | Default expected LPA — informational only, never auto-filled |
-| `scraper.terms_per_run` | How many search terms one run sweeps (cost vs coverage) |
+| `operator` | Your name, years of experience, time zone, resume header lines |
+| `filters` | Job type, years ceiling, blocked regions and companies |
+| `scraper` | Search terms, terms per run, time budget |
 | `scoring` | Every threshold and weight in the selection formula |
-| `prerender` | Build-time render + presigned-link lifetime |
-| `endpoint` | Tailnet base URL, dashboard limits, GitHub dispatch target |
-| `analytics` | Local CSV index paths, monthly report settings |
+| `llm` | Providers, rotation order, timeouts |
+| `prerender` | Render resumes during the run and upload them to S3 |
+| `endpoint` | Template path, dashboard, Tailscale base URL, GitHub dispatch |
+| `notifications` | Telegram progress messages and button polling |
 | `analytics` | Local CSV index paths, monthly report settings |
 
-Current filter settings reject anything above 5 years' experience, restrict to full-time, and
-exclude Delhi NCR (Delhi, Gurgaon, Gurugram, Noida, Ghaziabad, Faridabad).
+The current values reject jobs asking for more than 5 years' experience, keep full-time roles
+only, and exclude Delhi NCR (Delhi, Gurgaon, Gurugram, Noida, Ghaziabad, Faridabad).
 
 ## Usage
 
 ### Pipeline
 
 ```bash
-python -m src.main                      # live run
-python -m src.main --dry-run            # scrape/parse/score/build, test chat only
-docker compose run --rm pipeline        # containerised live run
+python -m src.main                         # live run; in a terminal, asks which search term
+python -m src.main --term "data engineer"  # search one term, no menu
+python -m src.main --auto                  # next term in the rotation, no menu
+python -m src.main --dry-run               # everything except sending match messages
+LOG_FORMAT=json python -m src.main         # raw JSON logs instead of readable lines
+docker compose run --rm pipeline           # containerised live run
 ```
 
-A run lock prevents overlapping cron executions.
+A run lock prevents overlapping runs. A term picked by hand doesn't move the rotation.
 
 ### CLI
 
@@ -403,6 +483,8 @@ A run lock prevents overlapping cron executions.
 | `python -m src.cli.reparse` | Rebuild the master profile in the DB from YAML |
 | `python -m src.cli.report` | Write the monthly analytics report to a text file |
 | `python -m src.cli.aws_check` | Verify S3, IAM, and CloudWatch connectivity |
+| `python -m src.cli.llm_check <provider>` | Make one real structured call to an LLM provider |
+| `python tools/personalize_template.py` | Create your resume template from the example and your profile |
 
 ### Endpoint
 
@@ -463,7 +545,8 @@ Before the first remote run:
 python -m src.cli.assets push   # profile + template -> S3 (too big for GitHub secrets)
 ```
 
-Add `DATABASE_URL`, `GEMINI_API_KEY`, `TELEGRAM_*` and `AWS_*` as repository secrets.
+Add `DATABASE_URL`, your LLM keys (`GROQ_API_KEY`, `GEMINI_FREE_API_KEY`, ...), `TELEGRAM_*` and
+`AWS_*` as repository secrets (Settings → Secrets and variables → Actions, or `gh secret set`).
 
 ## Example Workflow
 
