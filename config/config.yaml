@@ -407,6 +407,20 @@ selection:
       - "CodeWhisperer"
       - "Gemini Code Assist"
 
+  # --- Common bullets (#30) --------------------------------------------------
+  # master_profile.yaml `common_bullets`: claims true of the operator regardless of
+  # any repo (soft skills, ways of working, AI coding tools), written once. Each
+  # renders at most once per page, only when the advert's checklist names one of
+  # its triggers, and only AFTER every entry has chosen its own bullets -- so it
+  # can never bar a project bullet's keywords (src/scorer/common.py).
+  common_bullets:
+    enabled: true
+    # Soft-skill lines are cheap coverage; past three they read as padding.
+    max_per_page: 3
+    # Per entry, so host-less lines (which all prefer the salaried job) spread out
+    # instead of stacking under one header. Each FAMILY is also once per page.
+    max_per_entry: 1
+
   # --- Entry scoring ---------------------------------------------------------
   entry:
     # No title-alias term (v3.4). `similarity` is the mean cosine of the bullets

@@ -49,6 +49,7 @@ from datetime import datetime, timezone
 
 from src.config import settings
 from src.reasons import LOW_SCORE
+from src.scorer.common import place_common_bullets
 from src.scorer.keywords import Keyword, coverage_of
 from src.scorer.ordering import order_entries
 from src.scorer.selector import (
@@ -303,6 +304,11 @@ def evaluate(
         entries = rebuilt
         work = [e for e in entries if e.kind != "project"]
         projects = [e for e in entries if e.kind == "project"]
+
+    # Common bullets (#30) go on last, once every entry has chosen its own: placed
+    # any earlier, one could claim a generic keyword and bar a project bullet that
+    # carries it alongside keywords nothing else on the entry says.
+    place_common_bullets(entries, profile.common, keywords, jd)
 
     # The entry that leads the page is graded in fit (lead_entry_score below),
     # whatever its kind. It used to be salaried employment only, but a project led
