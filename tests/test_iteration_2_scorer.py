@@ -1101,8 +1101,7 @@ def test_a_freelance_gig_does_not_satisfy_the_salaried_guarantee() -> None:
 
 
 def test_order_entries_best_match_first_when_gap_large() -> None:
-    sa, sb = _scored("e1"), _scored("e2")
-    sa.score, sb.score = 0.9, 0.1
+    sa, sb = _match(_scored("e1"), 0.9), _match(_scored("e2"), 0.1)
     assert order_entries([sb, sa])[0] is sa
 
 
@@ -1113,24 +1112,28 @@ def test_order_is_by_match_not_recency() -> None:
     more recently — the page is arranged for the reader's twenty seconds, not
     chronologically.
     """
-    sa, sb = _scored("e1"), _scored("e2")
-    sa.score, sb.score = 0.60, 0.50
+    sa, sb = _match(_scored("e1"), 0.60), _match(_scored("e2"), 0.50)
     assert order_entries([sa, sb])[0] is sa  # better match, despite being older
 
 
 def test_a_project_may_lead_the_page() -> None:
-    sp, sw = _scored("p1"), _scored("e1")
+    sp, sw = _match(_scored("p1"), 0.70), _match(_scored("e1"), 0.40)
     sp.kind, sw.kind = "project", "work"
-    sp.score, sw.score = 0.70, 0.40
     assert [e.id for e in order_entries([sw, sp])] == ["p1", "e1"]
 
 
+def _match(entry, value):
+    """Set how well an entry matches, as ordering reads it (#31): the page is
+    ordered by entry_score(similarity, coverage), the formula fit grades the
+    lead with. Similarity at its floor, so ``value`` alone sets the order."""
+    entry.score, entry.coverage, entry.similarity = value, value, 0.0
+    return entry
+
+
 def _ordering_entry(eid, *, kind, score, employment_type="employment"):
-    """A scored entry shaped only for ordering: kind, employment_type, score."""
-    selected = _scored(eid)
-    selected.kind, selected.employment_type, selected.score = (
-        kind, employment_type, score,
-    )
+    """A scored entry shaped only for ordering: kind, employment_type, match."""
+    selected = _match(_scored(eid), score)
+    selected.kind, selected.employment_type = kind, employment_type
     return selected
 
 
@@ -1604,3 +1607,41 @@ def test_the_final_score_is_capped() -> None:
 
     cap = float(settings.scoring.final.max_score)
     assert min(cap, 0.9 * applicant_multiplier(24)) == cap
+
+
+# ---------------------------------------------------------------------------
+# #31 — one definition of "best entry" for ranking and for fit
+# ---------------------------------------------------------------------------
+
+
+def _vec_at(cos: float) -> list[float]:
+    """A unit vector at cosine ``cos`` to V."""
+    return [cos, (1.0 - cos * cos) ** 0.5, 0.0]
+
+
+def _entry_with(eid, vec, texts):
+    bullets = [_bullet(f"{eid}_0", "Summary.", vec=vec, summary=True, block=f"{eid}::data")]
+    bullets += [_bullet(f"{eid}_{i}", t, vec=vec, block=f"{eid}::data")
+                for i, t in enumerate(texts, start=1)]
+    return _entry(eid, "project", blocks=[_block(f"{eid}::data", bullets=bullets)], link="http://x")
+
+
+def test_the_lead_is_the_entry_fit_grades_best() -> None:
+    """Keyword-dense but off-kind (cosine 0.22, all 3 keywords) against the same
+    kind of work (cosine 0.40, 2 of 3). Raw similarity barely moves, so ordering
+    by the selection score (0.5 raw + 0.5 coverage) led with the dense entry,
+    0.61 vs 0.53 -- while fit grades the lead on CALIBRATED similarity, where it
+    scores 0.50 vs 0.83. The page now leads with the entry fit grades best.
+
+    Both still make the page: which entries are selected stays coverage-led, so
+    the page keeps the advert's keywords."""
+    from src.scorer.apply_decision import lead_entry_score
+
+    dense = _entry_with("dense", _vec_at(0.22), ["Python, SQL and Docker."])
+    close = _entry_with("close", _vec_at(0.40), ["Python and SQL."])
+    picked = select_top(_profile(projects=[dense, close]), _jd(), _kw("Python", "SQL", "Docker"), now=NOW)
+
+    assert [e.id for e in picked] == ["dense", "close"], "selection is coverage-led"
+    ordered = order_entries(picked)
+    assert [e.id for e in ordered] == ["close", "dense"], "the lead is the best-graded"
+    assert lead_entry_score(ordered[0])[0] > lead_entry_score(ordered[1])[0]

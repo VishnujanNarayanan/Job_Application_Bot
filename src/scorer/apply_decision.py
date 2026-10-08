@@ -54,6 +54,8 @@ from src.scorer.keywords import Keyword, coverage_of
 from src.scorer.ordering import order_entries
 from src.scorer.selector import (
     JDContext,
+    entry_score,
+    scale_similarity,
     Profile,
     SelectedEntry,
     gated_terms,
@@ -203,27 +205,15 @@ def applicant_multiplier(count: int | None) -> float:
     return 1.0 - (1.0 - lo) * (count - mid) / (end - mid)
 
 
-def scale_similarity(similarity: float) -> float:
-    """Map raw cosine onto its measured range: ``low`` -> 0, ``high`` -> 1, clamped.
-
-    Bullet-vs-JD cosine lives in a narrow band (0.22-0.40 for 90% of jobs), so a
-    weight on the raw number buys almost no influence. Calibrating first makes
-    the weight mean what it says.
-    """
-    cfg = settings.scoring.fit.similarity_scale
-    low, high = float(cfg.low), float(cfg.high)
-    if high <= low:
-        return 0.0
-    return min(1.0, max(0.0, (similarity - low) / (high - low)))
-
-
 def lead_entry_score(lead: SelectedEntry | None) -> tuple[float, float]:
-    """``(lead_entry, similarity_scaled)`` for the entry heading the page."""
+    """``(lead_entry, similarity_scaled)`` for the entry heading the page.
+
+    The same ``entry_score`` that ranked it (#31), so the entry chosen to lead is
+    the one fit grades best."""
     if lead is None:
         return 0.0, 0.0
-    w = settings.scoring.fit.lead_entry_weights
     sim = scale_similarity(float(lead.similarity))
-    return float(w.similarity) * sim + float(w.coverage) * float(lead.coverage), sim
+    return entry_score(float(lead.similarity), float(lead.coverage)), sim
 
 
 def repetition_score(entries: list[SelectedEntry], keywords: tuple[Keyword, ...]) -> float:
