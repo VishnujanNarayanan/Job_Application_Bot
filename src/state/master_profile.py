@@ -45,6 +45,7 @@ import structlog
 
 from src.scorer.selector import (
     BulletCand,
+    CommonCand,
     EntryCand,
     Profile,
     RoleBlockCand,
@@ -229,6 +230,41 @@ class Certification(BaseModel):
     bullets: list[str] = Field(default_factory=list)
 
 
+class CommonBullet(BaseModel):
+    """A claim true of the operator regardless of any one repo (#30).
+
+    Soft skills, ways of working, AI coding tools: written once here instead of
+    once per role block, rendered only when the advert asks for one of its
+    families, at most once per family per page.
+
+    ``families`` are keys of ``MasterProfile.common_families``, which owns the
+    trigger words. A bullet may cover one family ("communication") or several
+    that read naturally together ("communication" + "collaboration"); when an
+    advert asks for both, one combined line beats two single ones. The text must
+    state a trigger of every family it claims, and none of a family it does not
+    claim -- otherwise placing it would claim a keyword another pooled bullet
+    needs, and which of the two rendered would come down to iteration order.
+
+    ``hosts`` are the entries the claim is evidence of. A hosted bullet renders
+    only under one of them, because the entry header is the claim's WHERE:
+    "met the firm's partners weekly" printed under a different job is false.
+    Empty means any entry (the AI coding tools, code review). ``roles`` narrows
+    a variant to entries whose lead block is one of those roles, so a data-role
+    page gets the data-flavoured wording; empty means any role.
+
+    ``gated`` marks the AI-tooling bullet. It also opens on the advert's generic
+    AI-assisted wording (``JDContext.ai_tooling_asked``), not only on a trigger in
+    the checklist -- the behaviour the per-repo copies had under ``jd_gated_terms``.
+    """
+
+    id: str
+    families: list[str] = Field(..., min_length=1)
+    text: str
+    hosts: list[str] = Field(default_factory=list)
+    roles: list[str] = Field(default_factory=list)
+    gated: bool = False
+
+
 class MasterProfile(BaseModel):
     """The whole profile.
 
@@ -248,6 +284,8 @@ class MasterProfile(BaseModel):
     gap_skills: list[dict[str, Any]] = Field(default_factory=list)
     education: list[Education] = Field(default_factory=list)
     certifications: list[Certification] = Field(default_factory=list)
+    common_families: dict[str, list[str]] = Field(default_factory=dict)
+    common_bullets: list[CommonBullet] = Field(default_factory=list)
 
     @property
     def entries(self) -> list[_Entry]:
@@ -264,8 +302,12 @@ class MasterProfile(BaseModel):
         # Bullet ids are the master_bullets PK, so they must be globally unique
         # across render sets AND recovery pools.
         _require_unique(
-            [b.id for e in self.entries for rb in e.role_blocks for b in rb.all_bullets],
+            [b.id for e in self.entries for rb in e.role_blocks for b in rb.all_bullets]
+            + [c.id for c in self.common_bullets],
             "bullet id",
+        )
+        _check_common_bullets(
+            self.common_families, self.common_bullets, {e.id for e in self.entries}
         )
         if not self.skills_pool:
             # A warning, not a raise. skills_pool renders nothing; it only feeds JD
@@ -274,6 +316,49 @@ class MasterProfile(BaseModel):
             log.warning("master_profile_empty_skills_pool")
         _require_unique(self.skills_pool, "skill")
         return self
+
+
+def _check_common_bullets(
+    families: dict[str, list[str]], common: list[CommonBullet], entry_ids: set[str]
+) -> None:
+    """Every trigger belongs to one family, and every bullet says exactly the
+    families it claims: a trigger of each, and none of any other family's.
+
+    The second rule keeps the pool order-independent: an Agile line that also
+    said "code review" would claim that family's keyword and bar the code-review
+    line for the rest of the page.
+    """
+    from src.scorer.keywords import hit, norm
+
+    owner: dict[str, str] = {}
+    for fam, triggers in families.items():
+        if not triggers:
+            raise ValueError(f"common family '{fam}' has no triggers")
+        for t in triggers:
+            key = norm(t).strip()
+            if owner.setdefault(key, fam) != fam:
+                raise ValueError(f"duplicate common_bullets trigger: '{key}'")
+    for c in common:
+        for fam in c.families:
+            if fam not in families:
+                raise ValueError(f"common bullet '{c.id}' names unknown family '{fam}'")
+        for h in c.hosts:
+            if h not in entry_ids:
+                raise ValueError(f"common bullet '{c.id}' has unknown host '{h}'")
+        text = norm(c.text)
+        said = {owner[k] for k in owner if hit(k, text)}
+        missing = [f for f in c.families if f not in said]
+        if missing and not c.gated:
+            raise ValueError(
+                f"common bullet '{c.id}' claims {missing} but states none of their "
+                "triggers — it would be credited for a skill it never names"
+            )
+        extra = sorted(said - set(c.families))
+        if extra:
+            raise ValueError(
+                f"common bullet '{c.id}' says a trigger of {extra} — families must "
+                "not share a keyword"
+            )
 
 
 def _require_unique(values: list[str], label: str) -> None:
@@ -641,4 +726,16 @@ def load_profile(session: Session, *, json_path: Path | None = None) -> Profile:
         EntryCand(id=p.id, kind="project", label=p.name, blocks=_blocks(p), link=p.link)
         for p in profile.projects
     ]
-    return Profile(work=work, projects=projects, skills=skills)
+    # Common bullets need no embedding: they are placed on keyword evidence alone,
+    # after the per-entry search, so nothing ranks them by cosine.
+    common = [
+        CommonCand(
+            id=c.id, families=tuple(c.families), text=c.text,
+            triggers=tuple(
+                (f, t) for f in c.families for t in profile.common_families[f]
+            ),
+            hosts=tuple(c.hosts), roles=tuple(c.roles), gated=c.gated,
+        )
+        for c in profile.common_bullets
+    ]
+    return Profile(work=work, projects=projects, skills=skills, common=common)

@@ -594,7 +594,9 @@ def _set_entry_line(p_elem, left: str, right: str) -> None:
 
 
 def _index_profile(profile_json_path: Path) -> dict[str, str]:
-    """bullet_id -> text, across every role_block's render set AND recovery pool."""
+    """bullet_id -> text, across every role_block's render set AND recovery pool,
+    plus the profile-wide ``common_bullets`` (#30), which a selection appends to
+    whichever entry hosts them."""
     data = json.loads(Path(profile_json_path).read_text())
     bullet_text: dict[str, str] = {}
     for key in ("work_experience", "projects"):
@@ -602,6 +604,8 @@ def _index_profile(profile_json_path: Path) -> dict[str, str]:
             for rb in entry.get("role_blocks") or []:
                 for b in (*(rb.get("bullets") or []), *(rb.get("extra_bullets") or [])):
                     bullet_text[b["id"]] = b["text"]
+    for b in data.get("common_bullets") or []:
+        bullet_text[b["id"]] = b["text"]
     return bullet_text
 
 
