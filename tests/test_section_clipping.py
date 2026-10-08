@@ -29,6 +29,16 @@ from src.llm.sections import clip_by_sections, heading_category, split_sections
     ("**Equal Opportunity Employer**", "drop"),
     ("**Compensation**", "pay"),
     ("**Location**", "meta"),
+    # NVIDIA-style adverts, which fell back to the head-and-tail cut
+    ("**What You Will Be Doing**", "duty"),
+    ("**What We Need To See**", "req"),
+    ("**Ways To Stand Out From The Crowd**", "nice"),
+    ("**Accountabilities**", "duty"),
+    ("**What you need to bring**", "req"),
+    ("**Recruitment Fraud Alert**", "drop"),
+    # a real section that only looks like a legal notice
+    ("**Fraud Analytics Skills**", "req"),
+    ("**Drug Discovery Experience**", "req"),
 ])
 def test_heading_categories_match_the_stored_adverts(line, cat) -> None:
     assert heading_category(line) == cat
@@ -105,3 +115,19 @@ def test_markdown_escapes_do_not_hide_headings() -> None:
     text = "Intro\n**Required Skills \\& Qualifications**\n- C\\+\\+\n" + "**About Us**\n" + "x " * 5000
     clipped = clip_jd_text(text, head=3000, tail=1500)
     assert "C++" in clipped and "**Required Skills & Qualifications**" in clipped
+
+
+def test_plain_line_headings_followed_by_a_blank_line() -> None:
+    """Some adverts write headings unstyled ("Job Summary"); a list item like
+    "Experience with Python" has no blank line after it and stays content."""
+    pre, secs = split_sections(
+        "Acme is hiring.\nJob Summary\n\nBuild things.\n"
+        "Requirements\n\n- Experience with Python\n- SQL\nWho We Are\n\nA company."
+    )
+    assert [c for c, _ in secs] == ["duty", "req", "drop"]
+    assert "Experience with Python" in secs[1][1]
+
+
+def test_a_plain_line_without_a_blank_after_is_not_a_heading() -> None:
+    assert heading_category("Experience with Python") is None
+    assert heading_category("Experience with Python", plain=True) == "req"  # only if a blank follows
