@@ -9,6 +9,8 @@ in the venv).
 from __future__ import annotations
 
 from src.llm.schemas import JDParsed
+import pytest
+
 from src.parser import apply_to_row, grounded_skills, parse
 from src.state.models import AllJobs
 
@@ -149,6 +151,62 @@ def test_grounded_skills_lemma_fallback() -> None:
     jd = "You will own data pipelines end to end."
     out = grounded_skills(["pipeline"], jd)
     assert out == ["pipeline"]
+
+
+# --- #73: real skills written differently in the advert ---------------------
+
+
+@pytest.mark.parametrize("skill,jd", [
+    # markdown escapes -- 99% of stored adverts
+    ("C++", r"Strong C\+\+ and Python."),
+    ("Scikit-learn", r"Experience with scikit\-learn and pandas."),
+    ("end-to-end testing", r"Own end\-to\-end testing of the platform."),
+    # typographic hyphens -- 54% of stored adverts
+    ("post-training", "Work on post‑training of large models."),
+    ("end-to-end testing", "Own end–to–end testing."),
+    # keyword families: the scorer's own matching
+    ("retrieval-augmented generation", "Build RAG systems for search."),
+    # case and spacing
+    ("Pyspark", "Big data with PySpark on Databricks."),
+    # words of a multi-word skill named together, in another order
+    ("AWS S3", "Store artefacts in S3 on AWS."),
+    ("Kafka Streams", "Process streams with Kafka in real time."),
+    # scraped lists that lost their separators
+    ("Communication Skills", "ToolsApacheAirflowCommunication Skills"),
+    ("Minitab", "* Statistical Analysis* MinitabCAD systems"),
+    # a vendor's services listed under one mention of the vendor
+    ("AWS Glue", "Our AWS stack: cloud services including S3, EC2, Glue, Lambda."),
+    ("Amazon Athena", "We run on AWS. Tune query performance on Athena."),
+    # non-Latin skills, which norm() would erase
+    ("数据结构", "要求：扎实的数据结构与算法基础"),
+    ("AWS Fargate", "Deploy services to Fargate (AWS)."),
+])
+def test_grounding_keeps_real_skills_written_differently(skill, jd) -> None:
+    assert grounded_skills([skill], jd) == [skill]
+
+
+@pytest.mark.parametrize("skill,jd", [
+    ("Kubernetes", "We deploy with Docker on AWS."),                       # absent
+    ("Java", "Strong JavaScript skills."),                                 # substring traps
+    ("AWS", "Privacy laws may apply."),
+    ("excel", "We expect excellence."),
+    ("SQL", "Experience with NoSQL stores."),
+    ("Git", "Use GitHub Copilot daily."),
+    ("AWS Glue", "Glue code for our Azure services."),                    # vendor absent
+    # words far apart ("AWS S3" would pass: keyword_families makes it a spelling of S3)
+    ("Kafka Streams", "Kafka experience required. " + "Filler words here. " * 6 + "Streams nice."),
+    ("machine learning pipelines", "Pipelines for reporting; some learning on the job."),
+])
+def test_grounding_still_drops_what_the_advert_does_not_say(skill, jd) -> None:
+    assert grounded_skills([skill], jd) == []
+
+
+def test_a_dropped_skill_is_recorded_for_the_audit() -> None:
+    from src.llm.schemas import collect_skill_rejections
+
+    with collect_skill_rejections() as rejected:
+        grounded_skills(["Kubernetes", "Python"], "Python only.")
+    assert rejected == [{"text": "Kubernetes", "rule": "ungrounded"}]
 
 
 # ---------------------------------------------------------------------------

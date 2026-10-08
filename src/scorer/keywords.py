@@ -67,6 +67,31 @@ def _boundary_re(tok: str) -> re.Pattern[str]:
     return re.compile(pat)
 
 
+#: A markdown backslash-escape: the scraper stores adverts as markdown, so 99% of
+#: stored ads write ``C\+\+``, ``scikit\-learn``, ``end\-to\-end`` (measured
+#: 2026-10-08 over 1,427 ads).
+_MD_ESCAPE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|~>])")
+#: Typographic hyphens and dashes (54% of stored ads) and the minus sign.
+_DASHES = re.compile("[‐‑‒–—―−]")
+#: No-break, narrow and thin spaces (6% of stored ads).
+_ODD_SPACES = re.compile("[    ]")
+
+
+def clean_ad_text(s: str | None) -> str:
+    """Undo the markup that hides a term from a literal match.
+
+    The LLM returns "C++" and "end-to-end testing"; the stored advert says
+    ``C\\+\\+`` and ``end‑to‑end``. Every literal test against the raw
+    text -- grounding the parser's skills, the vocabulary and pool scans --
+    missed those terms. This removes markdown escapes, maps typographic
+    hyphens and dashes to ``-`` and odd spaces to a plain space, and leaves
+    everything else (case included) untouched.
+    """
+    text = _MD_ESCAPE.sub(r"\1", s or "")
+    text = _DASHES.sub("-", text)
+    return _ODD_SPACES.sub(" ", text)
+
+
 def norm(s: str | None) -> str:
     """Fold to the comparison form: NFKD, lowercase, punctuation to spaces.
 
@@ -316,6 +341,19 @@ def keyword_spans(
         elif any(k0 <= start and end <= k1 for k0, k1 in kept):
             shown.add(tok)
     return sorted(kept), shown
+
+
+def family_hit(tok: str, norm_text: str) -> bool:
+    """``literal_hit`` widened by spelling rules and keyword families, WITHOUT
+    the prose fallback: "RAG" covers "retrieval-augmented generation", but
+    "machine learning pipelines" is not covered by "learning" and "pipelines"
+    a sentence apart. For checks that guard against invented terms, where
+    ``matches``' partial-word acceptance is too generous. ``norm_text`` MUST
+    already be normalised."""
+    if literal_hit(tok, norm_text):
+        return True
+    keys = match_keys(tok)
+    return bool(keys) and not keys.isdisjoint(_ngram_keys(norm_text))
 
 
 def literal_hit(tok: str, norm_text: str) -> bool:
