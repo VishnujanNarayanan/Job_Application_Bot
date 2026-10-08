@@ -8,6 +8,8 @@ matched jobs (final_score >= 0.50).
 from __future__ import annotations
 
 from src.config import settings
+from src.llm.sections import clip_by_sections
+from src.scorer.keywords import clean_ad_text
 from src.scorer.apply_decision import SelectionResult
 from src.state.models import AllJobs
 
@@ -50,6 +52,14 @@ def clip_jd_text(
 
     if not text or len(text) <= head + tail:
         return text
+    # Cut by section where the advert has headings (#72): requirements,
+    # nice-to-haves, pay and the role's metadata are kept, the company intro,
+    # benefits and legal text are not. The middle the old cut dropped is
+    # usually exactly the requirements. Same budget, same marker.
+    by_section = clip_by_sections(clean_ad_text(text), head + tail, _ELISION)
+    if by_section is not None:
+        return by_section
+    # No recognisable headings: keep both ends, as before.
     # `text[-0:]` is the WHOLE string, not the empty one — guard tail == 0.
     return text[:head] + _ELISION + (text[-tail:] if tail else "")
 
