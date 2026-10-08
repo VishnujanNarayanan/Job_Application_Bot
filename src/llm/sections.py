@@ -31,17 +31,25 @@ _CATEGORIES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
                  r"|who we are|(about |our |the )team\b|culture|our values|benefits|perks|what we offer"
                  r"|why (join|work)|why you.?ll love|equal (employment )?opportunit|\beeo\b|diversity"
                  r"|inclusion|how to apply|application process|additional information|disclaimer"
-                 r"|privacy|accommodation|life at|our story|our mission"),
+                 r"|privacy|accommodation|life at|our story|our mission|our purpose|how we work"
+                 r"|join us|working (with|for) (us|you)|recruitment fraud|fraud alert|drug and alcohol"
+                 r"|drug.free|applicants with disabilit|disability (policy|statement)|wellbeing"
+                 r"|well.being|professional development|what.?s in it for you|let.?s stay connected"
+                 r"|our people|hybrid work|fair chance|lie detector|stay connected"),
         ("pay", r"compensation|salary|\bpay\b|remuneration|\bctc\b|stipend"),
-        ("nice", r"preferred|nice.to.have|good.to.have|bonus|desired|desirable|\bplus\b|added advantage"),
+        ("nice", r"preferred|nice.to.have|good.to.have|bonus|desired|desirable|\bplus\b|added advantage"
+                 r"|stand out"),
         ("req", r"qualif|requirement|required|must.have|skill|experience|you.?ll bring|you bring"
                 r"|looking for|who you are|about you|education|competenc|expertise|tech stack"
-                r"|technical|ideal candidate|your profile|you have|basic|minimum|eligibility"),
+                r"|technical|ideal candidate|your profile|you have|basic|minimum|eligibility"
+                r"|need to see|need to bring|essential|what you need"),
         ("meta", r"location|job type|employment type|work mode|job title|time type|job family"
-                 r"|\bshift\b|schedule|workplace"),
+                 r"|\bshift\b|schedule|workplace|reports to|department|job id|reference number"
+                 r"|posting end date"),
         ("duty", r"responsib|you.?ll do|you will do|in this role|duties|\brole\b|job description"
                  r"|about the job|summary|overview|opportunity|day.to.day|your impact|description"
-                 r"|work on|what you.?ll be doing"),
+                 r"|work on|be doing|accountabilit|expectations|success looks like|job purpose"
+                 r"|the position"),
     )
 )
 
@@ -66,12 +74,27 @@ _DIGIT = re.compile(r"\d")
 _BOLD = re.compile(r"^\*\*(.+?)\*\*:?$")
 
 
-def heading_category(line: str) -> str | None:
+def _category(text: str) -> str | None:
+    text = re.sub(r"[*_:]+", " ", text).replace("\u2019", "'").strip().lower()
+    if not text:
+        return None
+    for name, pattern in _CATEGORIES:
+        if pattern.search(text):
+            return name
+    return None
+
+
+def heading_category(line: str, *, plain: bool = False) -> str | None:
     """The section a heading line opens, or None if it is not a heading.
 
     A heading is a short line written as markdown ``#``, a whole-line ``**bold**``
     or a few words ending in a colon -- AND its text names a known section. An
     unrecognised bold line ("**Python**" in a list) is content, not a heading.
+
+    ``plain`` also accepts an unstyled line of at most five words with no closing
+    full stop ("Job Summary", "Role Overview"): some adverts write their headings
+    as plain lines. Callers pass it only when a blank line follows, which is what
+    separates a heading from a list item such as "Experience with Python".
     """
     raw = line.strip()
     if not 2 < len(raw) < 80:
@@ -82,15 +105,12 @@ def heading_category(line: str) -> str | None:
         text = _BOLD.match(raw).group(1)
     elif raw.endswith(":") and len(raw.split()) <= 7:
         text = raw[:-1]
+    elif plain and len(raw.split()) <= 5 and not raw.endswith((".", ",", ";")) \
+            and not raw.startswith(("-", "*", "•")):
+        text = raw
     else:
         return None
-    text = re.sub(r"[*_:]+", " ", text).replace("’", "'").strip().lower()
-    if not text:
-        return None
-    for name, pattern in _CATEGORIES:
-        if pattern.search(text):
-            return name
-    return None
+    return _category(text)
 
 
 def split_sections(text: str) -> tuple[str, list[tuple[str, str]]]:
@@ -98,8 +118,10 @@ def split_sections(text: str) -> tuple[str, list[tuple[str, str]]]:
     starts with its own heading line."""
     preamble: list[str] = []
     sections: list[tuple[str, list[str]]] = []
-    for line in text.splitlines():
-        cat = heading_category(line)
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        blank_after = i + 1 < len(lines) and not lines[i + 1].strip()
+        cat = heading_category(line, plain=blank_after)
         if cat is not None:
             sections.append((cat, [line]))
         elif sections:
