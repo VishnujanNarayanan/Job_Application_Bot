@@ -124,10 +124,33 @@ class SkillCand:
 
 
 @dataclass
+class CommonCand:
+    """A ``common_bullets`` entry (#30): placed by :mod:`src.scorer.common` after
+    every entry has chosen its own bullets, never inside the per-entry search."""
+
+    id: str
+    families: tuple[str, ...]
+    text: str
+    #: ``(family, trigger)`` for every family this bullet covers.
+    triggers: tuple[tuple[str, str], ...]
+    #: Entries this claim is evidence of; empty means any entry may host it.
+    hosts: tuple[str, ...] = ()
+    #: Lead-block roles this variant is worded for; empty means any role.
+    roles: tuple[str, ...] = ()
+    gated: bool = False
+    norm_text: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.norm_text:
+            self.norm_text = norm(self.text)
+
+
+@dataclass
 class Profile:
     work: list[EntryCand]
     projects: list[EntryCand]
     skills: list[SkillCand]
+    common: list[CommonCand] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
