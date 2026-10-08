@@ -227,6 +227,37 @@ class JDContext:
 # ---------------------------------------------------------------------------
 
 
+def scale_similarity(similarity: float) -> float:
+    """Map raw cosine onto its measured range: ``low`` -> 0, ``high`` -> 1, clamped.
+
+    Bullet-vs-JD cosine lives in a narrow band (0.22-0.40 for 90% of jobs), so a
+    weight on the raw number buys almost no influence. Calibrating first makes
+    the weight mean what it says.
+    """
+    cfg = settings.scoring.fit.similarity_scale
+    low, high = float(cfg.low), float(cfg.high)
+    if high <= low:
+        return 0.0
+    return min(1.0, max(0.0, (similarity - low) / (high - low)))
+
+
+def entry_score(similarity: float, coverage: float) -> float:
+    """How well one entry answers the JD, as fit grades the lead entry (#31).
+
+    Decides which selected entry LEADS the page (``ordering.order_entries``) and
+    grades that lead inside fit. They used to differ: ordering took RAW similarity,
+    which barely varies (0.22-0.40), so it ranked by coverage alone, while fit
+    took CALIBRATED similarity. An entry that gained keywords then took the
+    lead from a closer kind of work and fit dropped -- measured on 62 of 648
+    re-scored jobs, e.g. an iOS advert led by a bookshop web app instead of
+    the React Native app (fit 0.241 -> 0.136). One formula means "best entry"
+    is the same thing for the page order and for the score. Which entries make
+    the page at all is still coverage-led (``score_entry``).
+    """
+    w = settings.scoring.fit.lead_entry_weights
+    return float(w.similarity) * scale_similarity(similarity) + float(w.coverage) * coverage
+
+
 def bullet_cap(entry: EntryCand, now: datetime) -> int:
     """How many bullets this entry may show.
 
@@ -948,7 +979,6 @@ def score_entry(
     decides nothing anywhere in Layer 4. What an entry SAYS and what it COVERS is
     the whole score, for work and projects alike.
     """
-    cfg = settings.selection.entry
     selected = select_entry_bullets(entry, jd, keywords, now=now)
 
     selected.similarity = (
@@ -956,6 +986,13 @@ def score_entry(
         if selected.bullets
         else 0.0
     )
+    # WHICH entries make the page stays coverage-led: raw similarity barely varies,
+    # so this ranks by what the entries state, and the page keeps the advert's
+    # keywords. WHICH of them LEADS is decided by entry_score in order_entries,
+    # the formula fit grades the lead with (#31). Using entry_score here too was
+    # measured on 1,208 stored jobs: coverage fell on 350 of them, because close
+    # but keyword-thin entries pushed keyword-unique ones off the page.
+    cfg = settings.selection.entry
     selected.score = (
         cfg.weight_similarity * selected.similarity
         + cfg.weight_coverage * selected.coverage

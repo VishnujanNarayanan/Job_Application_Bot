@@ -433,6 +433,12 @@ selection:
     # Two signals, not one. `coverage` is what a recruiter grades in 20 seconds;
     # `similarity` is "is this the same kind of work". Coverage alone ranks a
     # keyword-dense but off-topic entry top, which is the "hot dog" failure.
+    #
+    # These weights choose WHICH entries make the page (raw similarity, so in
+    # practice coverage-led -- the page keeps the advert's keywords). Which of
+    # them LEADS is ordered by selector.entry_score, the same formula fit grades
+    # the lead with (scoring.fit.lead_entry_weights, calibrated similarity), so
+    # the lead and its grade agree (#31).
     weight_similarity: 0.50
     weight_coverage: 0.50
     # --- Which block leads (v3.3) ----------------------------------------------

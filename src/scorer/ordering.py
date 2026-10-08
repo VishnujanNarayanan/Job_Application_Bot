@@ -18,7 +18,7 @@ nothing left to order and was removed with the Skills section.
 from __future__ import annotations
 
 from src.config import settings
-from src.scorer.selector import SelectedEntry
+from src.scorer.selector import SelectedEntry, entry_score
 
 
 def _recency_key(end_date: str) -> tuple[int, int]:
@@ -74,7 +74,11 @@ def order_entries(
     if len(selected) <= 1:
         return list(selected)
 
-    ordered = sorted(selected, key=lambda x: x.score, reverse=True)
+    # Lead by the formula fit grades the lead with (#31), not by ``score``, which
+    # chose the page on raw similarity and so effectively on coverage alone.
+    ordered = sorted(
+        selected, key=lambda x: entry_score(x.similarity, x.coverage), reverse=True
+    )
 
     top_n = int(getattr(settings.selection.entry, "job_within_top", 2) or 0)
     if not top_n:
