@@ -28,6 +28,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from src.config import settings
+from src.scorer.keywords import clean_ad_text
 from src.state.models import AllJobs, SkillVocabulary
 
 log = structlog.get_logger(__name__)
@@ -137,7 +138,8 @@ def scan(jd_text: str, terms: tuple[tuple[str, str], ...]) -> list[str]:
     """
     if not jd_text or not terms:
         return []
-    haystack = jd_text.casefold()
+    # Markdown escapes ("C\+\+") and typographic hyphens hid known terms (#73).
+    haystack = clean_ad_text(jd_text).casefold()
     found: list[tuple[int, str]] = []
     for term, key in terms:
         match = re.search(rf"(?<![\w+#.]){re.escape(key)}(?![\w+#]|\.\w)", haystack)
