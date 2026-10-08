@@ -29,7 +29,8 @@ from src.config import settings
 from src.state.vocabulary import scan
 from src.llm.client import complete as _default_complete
 from src.llm.prompts import jd_parse_prompt, jd_parse_system
-from src.llm.schemas import JDParsed
+from src.llm.schemas import JDParsed, _reject
+from src.scorer.keywords import clean_ad_text, family_hit, literal_hit, norm
 from src.state.models import AllJobs
 
 # Type of the LLM transport (injectable for tests).
@@ -50,7 +51,9 @@ def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
         prompt_fn=lambda cfg: jd_parse_prompt(job, provider_cfg=cfg),
     )
 
-    jd_text = job.jd_text or ""
+    # Stored adverts are markdown ("C\+\+", "end\-to\-end") with typographic
+    # hyphens; every literal test below must see the plain text (#73).
+    jd_text = clean_ad_text(job.jd_text or "")
     parsed.required_skills = grounded_skills(parsed.required_skills, jd_text)
     parsed.nice_to_have = grounded_skills(parsed.nice_to_have, jd_text)
     parsed.required_skills = with_pool_skills(parsed.required_skills, jd_text)
@@ -113,7 +116,7 @@ def with_pool_skills(
     )
     if not jd_text or not terms:
         return skills
-    haystack = jd_text.casefold()
+    haystack = clean_ad_text(jd_text).casefold()
     present = {s.casefold() for s in skills}
     added: list[str] = []
     for term in terms:
@@ -220,35 +223,135 @@ def _jd_lemmas(jd_text: str) -> frozenset[str]:
     return frozenset(tok.lemma_.casefold() for tok in doc if tok.is_alpha)
 
 
+#: How close the words of a multi-word skill must sit to count as named together:
+#: "AWS S3" is grounded by "S3 on AWS", not by "AWS" in one paragraph and "S3"
+#: in another.
+_NEAR_WINDOW = 6
+_WORD = re.compile(r"[a-z0-9+#.]+")
+_FILLER = frozenset(("and", "or", "of", "the", "a", "an", "in", "on", "for", "with", "to"))
+
+
+def _stem(w: str) -> str:
+    """Crude plural fold for the proximity check: "pipelines" ~ "pipeline"."""
+    return w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+
+
+def _words_near(skill_norm: str, jd_words: list[str]) -> bool:
+    """Every content word of a 2-4 word skill appears within ``_NEAR_WINDOW``
+    words of the others in the advert, in any order."""
+    words = [_stem(w.strip(".")) for w in _WORD.findall(skill_norm)]
+    need = {w for w in words if w and w not in _FILLER}
+    if not 2 <= len(need) <= 4:
+        return False
+    stems = [_stem(w) for w in jd_words]
+    for i, w in enumerate(stems):
+        if w in need and need <= set(stems[i:i + _NEAR_WINDOW]):
+            return True
+    return False
+
+
+#: Vendor prefixes and the names an advert may use for the same vendor.
+_VENDORS = {
+    "aws": ("aws", "amazon"), "amazon": ("aws", "amazon"),
+    "azure": ("azure", "microsoft"), "microsoft": ("azure", "microsoft"),
+    "gcp": ("gcp", "google"), "google": ("gcp", "google"),
+    "apache": ("apache",),
+}
+
+
+def _vendor_split(skill: str) -> tuple[tuple[str, ...], str] | None:
+    """("AWS Glue") -> (("aws", "amazon"), "Glue"); None without a vendor prefix."""
+    head, _, rest = skill.partition(" ")
+    names = _VENDORS.get(head.casefold())
+    return (names, rest.strip()) if names and rest.strip() else None
+
+
+def _substring_safe(skill: str) -> bool:
+    """Whether a raw substring test can ground ``skill`` without matching inside
+    an unrelated word: a multi-word phrase, a word of six or more characters, or
+    a non-Latin term (which ``norm`` would erase entirely, e.g. 数据结构)."""
+    if not re.search(r"[A-Za-z0-9]", skill):
+        return True
+    return len(skill.split()) >= 2 or len(skill) >= 6
+
+
 def grounded_skills(skills: list[str], jd_text: str) -> list[str]:
     """Keep only skills actually present in ``jd_text``.
 
-    Fast path: case-insensitive substring match (covers multi-word skills
-    and acronyms as they appear). Fallback: every alphabetic token of the
-    skill lemmatises to a lemma present in the JD (catches inflections like
-    "pipelines"→"pipeline"). Order and de-duplication are preserved.
+    The model is told to copy skills verbatim, but this is what keeps an
+    invented skill out of the scoring inputs. A skill is kept when the advert,
+    with markdown escapes and typographic hyphens undone (``clean_ad_text``):
+
+      1. names it through ``keywords.family_hit``: a word-boundary match plus
+         the spelling and keyword-family rules the scorer uses, so "RAG"
+         grounds "retrieval-augmented generation" -- and "Java" is NOT
+         grounded by "JavaScript", which the old raw-substring test allowed;
+      2. for a single all-letter word, holds it as a spaCy lemma (inflections:
+         "pipelines" -> "pipeline");
+      3. names every word of a 2-4 word skill close together, in any order
+         ("S3 on AWS" grounds "AWS S3");
+      4. names a vendor-prefixed skill's service and, anywhere, its vendor
+         ("Glue" plus "AWS" grounds "AWS Glue"; AWS and Amazon are one vendor);
+      5. contains it as a raw substring, for phrases, long words and non-Latin
+         terms only -- scraped lists sometimes lose their separators
+         ("MinitabCAD"), but for short tokens a substring is how "AWS" matched
+         "laws" (``_substring_safe``).
+
+    Anything else is dropped and recorded as an ``ungrounded`` rejection, which
+    ``parse_eval`` keeps, so a new pattern of real skills being dropped shows
+    up in the audit rather than in a lower fit score.
+
+    Before #73 grounding was a raw substring test plus a lemma test over the
+    whole advert, run on the raw markdown, so a
+    skill written with a hyphen, plus or dot ("scikit-learn", "C++",
+    "end-to-end testing") failed against "scikit\\-learn" on 99% of adverts.
+    Order and de-duplication are preserved.
     """
     if not jd_text:
         return []
-    haystack = jd_text.casefold()
+    clean = clean_ad_text(jd_text)
+    haystack = clean.casefold()
+    jd_norm = norm(clean)
     kept: list[str] = []
     seen: set[str] = set()
     jd_lemmas: frozenset[str] | None = None
+    jd_words: list[str] | None = None
     for skill in skills:
-        s = skill.strip()
+        s = clean_ad_text(skill).strip()
         key = s.casefold()
         if not s or key in seen:
             continue
-        if key in haystack:
+        ok = family_hit(s, jd_norm)
+        if not ok and _substring_safe(s):
+            # Scraped list items sometimes lose their separators
+            # ("ApacheAirflowCommunication Skills", "MinitabCAD"), which no
+            # word-boundary match can see. A raw substring is safe for a phrase
+            # or a long word; for a short token it is how "AWS" matched "laws"
+            # and "excel" matched "excellence", so those stay boundary-only.
+            ok = s.casefold() in haystack
+        if not ok and (split := _vendor_split(s)):
+            # Adverts list a vendor's services under one mention of the vendor
+            # ("AWS cloud services including S3, EC2, Glue, Lambda"), so "AWS
+            # Glue" is named even though the two words never touch.
+            names, service = split
+            ok = (family_hit(service, jd_norm)
+                  or (_substring_safe(service) and service.casefold() in haystack)
+                  ) and any(literal_hit(n, jd_norm) for n in names)
+        if not ok and re.fullmatch(r"[A-Za-z]+", s):
+            # Lemma fallback for one plain word only: across several words it
+            # accepted a phrase whose words sat paragraphs apart, and it skipped
+            # non-letter tokens, so "AWS S3" passed on "AWS" alone.
+            if jd_lemmas is None:
+                jd_lemmas = _jd_lemmas(clean)
+            tokens = [t.lemma_.casefold() for t in _nlp()(s) if t.is_alpha]
+            ok = bool(tokens) and all(t in jd_lemmas for t in tokens)
+        if not ok:
+            if jd_words is None:
+                jd_words = [w.strip(".") for w in _WORD.findall(jd_norm)]
+            ok = _words_near(norm(s), jd_words)
+        if ok:
             kept.append(s)
             seen.add(key)
-            continue
-        # Lemma fallback only when the literal string isn't present.
-        if jd_lemmas is None:
-            jd_lemmas = _jd_lemmas(jd_text)
-        tokens = [t.lemma_.casefold() for t in _nlp()(s) if t.is_alpha]
-        if tokens and all(t in jd_lemmas for t in tokens):
-            kept.append(s)
-            seen.add(key)
+        else:
+            _reject(skill, "ungrounded")  # logged and kept for parse_eval
     return kept
-
