@@ -56,10 +56,16 @@ def _fold(text: str) -> str:
 
 
 def _answers(trigger: str, token: str) -> bool:
-    """A trigger answers a checklist token in either direction: "communication"
-    answers "communication skills", and "Agile/Scrum" answers "Agile"."""
+    """Does the advert's checklist token ask for this trigger? The trigger must
+    sit INSIDE the token (keyword families included): "communication" answers
+    "communication skills", "Copilot" answers "GitHub Copilot".
+
+    One direction only. The reverse -- a token inside a trigger -- let "GitHub"
+    ask for the AI-tooling line (it sits inside "GitHub Copilot") and
+    "management" ask for communication (inside "stakeholder management"), so
+    the pool rendered for adverts that never asked."""
     nt, nk = _fold(trigger), _fold(token)
-    return bool(nt) and (hit(nt, nk) or matches(token, nt))
+    return bool(nt) and (hit(nt, nk) or matches(trigger, nk))
 
 
 def _asked(cb: CommonCand, keywords: tuple[Keyword, ...], ai_ask: bool) -> dict[str, set[str]] | None:
@@ -81,7 +87,20 @@ def _asked(cb: CommonCand, keywords: tuple[Keyword, ...], ai_ask: bool) -> dict[
 def _credit(cb: CommonCand, keywords: tuple[Keyword, ...], asked: dict[str, set[str]]) -> set[str]:
     """What the bullet honestly covers: what its text says, plus an asked token
     whose trigger the text itself states ("communication skills" is answered by
-    a bullet that says "communication")."""
+    a bullet that says "communication").
+
+    The AI-tooling line is credited with the tool names only, never with the
+    incidental words it also contains ("AI", "GitHub"). Nearly every entry has
+    already covered those, so counting them made the line restate a keyword in
+    every possible host and it was never placed -- measured: 30 of 1,208 stored
+    adverts asked for AI tooling and lost Copilot, Cursor or MCP. The old
+    per-entry gate solved the same problem the same way (#21, ``selector.py``).
+    """
+    if cb.gated:
+        return {
+            k.token for k in keywords
+            if any(_answers(t, k.token) and hit(_fold(t), cb.norm_text) for _, t in cb.triggers)
+        }
     credit = covered_by(cb.norm_text, keywords)
     for fam, toks in asked.items():
         for tok in toks:

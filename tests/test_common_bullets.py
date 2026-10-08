@@ -183,6 +183,29 @@ def test_the_ai_line_opens_on_the_generic_ask() -> None:
     assert place_common_bullets([_entry_out("e1", "x")], [AI], _kw("Python"), _jd()) == []
 
 
+def test_the_ai_line_is_credited_with_tool_names_only() -> None:
+    """Every entry already says "AI" or "GitHub"; counting those incidental
+    words made the line restate a keyword in every host, so it never placed."""
+    ai = dataclasses.replace(
+        AI, text="Used AI coding tools such as Claude Code and GitHub Copilot daily.",
+        triggers=(("ai_tools", "Claude Code"), ("ai_tools", "GitHub Copilot")),
+        norm_text="",  # recomputed from the new text
+    )
+    job = _entry_out("e1", "Built AI services on GitHub.", covered=("AI", "GitHub"))
+    kws = _kw("AI", "GitHub", "Claude Code", "GitHub Copilot")
+    assert place_common_bullets([job], [ai], kws, _jd()) == ["common_ai"]
+    assert job.covered == {"AI", "GitHub", "Claude Code", "GitHub Copilot"}
+
+
+def test_a_broad_keyword_does_not_ask_for_a_narrower_trigger() -> None:
+    """"GitHub" sits inside the trigger "GitHub Copilot" but asks for no AI tool;
+    "management" sits inside "stakeholder management" but asks for nothing."""
+    ai = dataclasses.replace(AI, triggers=(("ai_tools", "GitHub Copilot"),))
+    comm = dataclasses.replace(COMM, triggers=(("communication", "stakeholder management"),))
+    job = _entry_out("e1", "x")
+    assert place_common_bullets([job], [ai, comm], _kw("GitHub", "management"), _jd()) == []
+
+
 def test_the_ai_line_never_doubles_a_page_line() -> None:
     jd = dataclasses.replace(_jd(), ai_tooling_asked=True)
     job = _entry_out("e1", "Used Claude Code to review every change.")
@@ -209,7 +232,7 @@ def test_one_bullet_per_family_per_page() -> None:
     """Communication at the job and at a freelance gig: both hosts on the page,
     only the first renders."""
     at_job = dataclasses.replace(COMM, id="comm_job", hosts=("e1",))
-    at_gig = dataclasses.replace(COMM, id="comm_gig", hosts=("p1",),
+    at_gig = dataclasses.replace(COMM, id="comm_gig", hosts=("p1",), norm_text="",
                                  text="Wrote weekly updates with clear communication.")
     job, proj = _entry_out("e1", "x"), _entry_out("p1", "y", kind="project")
     placed = place_common_bullets([job, proj], [at_job, at_gig], _kw("communication"), _jd())
