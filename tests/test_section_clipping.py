@@ -11,7 +11,24 @@ from __future__ import annotations
 import pytest
 
 from src.llm.prompts import _ELISION, clip_jd_text
+from src.llm import sections
 from src.llm.sections import clip_by_sections, heading_category, split_sections
+
+#: A fixed skill list for the trimming. The real one includes the operator's
+#: skills pool from the gitignored master_profile.json, which CI does not have,
+#: so a test relying on it passed locally and failed in CI.
+_TEST_SKILLS = ("Python", "SQL", "Postgres", "Kafka", "Spark", "Airflow", "AWS", "Go",
+                "Kubernetes", "Terraform", "Bazel", "CMake", "Jenkins")
+
+
+@pytest.fixture(autouse=True)
+def _fixed_skill_list(monkeypatch):
+    import re
+
+    pattern = re.compile(
+        r"(?<![\w+#.])(?:" + "|".join(re.escape(t) for t in _TEST_SKILLS) + r")(?![\w+#])", re.I
+    )
+    monkeypatch.setattr(sections, "_skill_pattern", lambda: pattern)
 
 
 @pytest.mark.parametrize("line,cat", [
