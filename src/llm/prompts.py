@@ -8,7 +8,7 @@ matched jobs (final_score >= 0.50).
 from __future__ import annotations
 
 from src.config import settings
-from src.llm.sections import clip_by_sections
+from src.llm.sections import clip_by_sections, clip_unstructured
 from src.scorer.keywords import clean_ad_text
 from src.scorer.apply_decision import SelectionResult
 from src.state.models import AllJobs
@@ -59,9 +59,10 @@ def clip_jd_text(
     by_section = clip_by_sections(clean_ad_text(text), head + tail, _ELISION)
     if by_section is not None:
         return by_section
-    # No recognisable headings: keep both ends, as before.
-    # `text[-0:]` is the WHOLE string, not the empty one — guard tail == 0.
-    return text[:head] + _ELISION + (text[-tail:] if tail else "")
+    # No recognisable headings: the opening, the middle and any pay mention.
+    # Keeping the two ends showed the parser 70% of such adverts' skills; the
+    # middle shows 96% (#72).
+    return clip_unstructured(clean_ad_text(text), head + tail, _ELISION)
 
 # "When a field is not stated, return null (or an empty list)" used to end this
 # instruction. On a 7B model under constrained decoding that read as blanket
