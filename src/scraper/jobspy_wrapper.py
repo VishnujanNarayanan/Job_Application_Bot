@@ -247,6 +247,79 @@ def refresh_applicants(jobs: Sequence[AllJobs], *, delay_seconds: float = 1.5) -
     return stats
 
 
+# ---------------------------------------------------------------------------
+# One posting from its link (#20: tailor a resume from a LinkedIn URL)
+# ---------------------------------------------------------------------------
+
+# /jobs/view/4475971015, /jobs/view/lead-engineer-at-acme-4475971015/, and the
+# search page's ?currentJobId=4475971015.
+_LINKEDIN_JOB_URL = re.compile(
+    r"^(?:https?://)?(?:[\w-]+\.)?linkedin\.com/(?:comm/)?jobs/"
+    r"(?:view/(?:[^/?#\s]*-)?(\d{6,})|\S*?[?&]currentJobId=(\d{6,}))\S*$",
+    re.IGNORECASE,
+)
+
+
+class LinkedInFetchError(RuntimeError):
+    """The posting's page could not be read (blocked, gone, or changed)."""
+
+
+def linkedin_job_id(text: str | None) -> str | None:
+    """LinkedIn's numeric job id when ``text`` is just a LinkedIn job link."""
+    m = _LINKEDIN_JOB_URL.match((text or "").strip())
+    return (m.group(1) or m.group(2)) if m else None
+
+
+def fetch_linkedin_job(job_id: str) -> dict[str, Any]:
+    """Read one posting from LinkedIn's public job page.
+
+    The same page and headers JobSpy's description fetch uses, and the same
+    HTML-to-markdown conversion, so the description matches a scraped one. One
+    GET, no login. Returns title, company, location, description,
+    applicants_text, applicants_count, closed and url.
+    """
+    import requests
+    from bs4 import BeautifulSoup
+    from jobspy.linkedin.constant import headers
+    from jobspy.util import markdown_converter, remove_attributes
+
+    url = f"https://www.linkedin.com/jobs/view/{job_id}"
+    try:
+        resp = requests.get(url, headers=headers, timeout=15)
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001 - one message for every failure
+        raise LinkedInFetchError(f"could not load {url}: {exc}") from exc
+    if "linkedin.com/signup" in resp.url or "authwall" in resp.url:
+        raise LinkedInFetchError("LinkedIn asked for a login; paste the advert text instead")
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    def text_of(*selectors: str) -> str | None:
+        for sel in selectors:
+            el = soup.select_one(sel)
+            if el and el.get_text(strip=True):
+                return " ".join(el.get_text(" ", strip=True).split())
+        return None
+
+    body = soup.find("div", class_=lambda c: c and "show-more-less-html__markup" in c)
+    if body is None:
+        raise LinkedInFetchError(
+            "the page has no job description (LinkedIn may have changed it);"
+            " paste the advert text instead")
+    description = markdown_converter(remove_attributes(body).prettify(formatter="html"))
+    caption = applicant_caption(resp.text)
+    return {
+        "title": text_of("h1.top-card-layout__title", "h1.topcard__title"),
+        "company": text_of("a.topcard__org-name-link", "span.topcard__flavor"),
+        "location": text_of("span.topcard__flavor--bullet"),
+        "description": (description or "").strip(),
+        "applicants_text": caption,
+        "applicants_count": parse_applicants(caption),
+        "closed": bool(_CLOSED.search(resp.text)),
+        "url": url,
+    }
+
+
 def _row_to_job(row: dict[str, Any]) -> AllJobs | None:
     """Map one JobSpy row (as a dict) to an ``AllJobs``; None if unusable.
 

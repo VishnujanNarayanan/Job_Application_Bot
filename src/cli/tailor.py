@@ -1,6 +1,7 @@
 """CLI — tailor a resume for a pasted job advert (#20).
 
     python -m src.cli.tailor --file jd.txt [--company Acme] [--role "Data Engineer"]
+    python -m src.cli.tailor https://www.linkedin.com/jobs/view/4475971015/
     python -m src.cli.tailor --clip --company Acme   # advert from the clipboard
     python -m src.cli.tailor --company Acme          # paste it, then END on its own line
 
@@ -141,6 +142,8 @@ def report(t) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="src.cli.tailor", description=__doc__.split("\n\n")[0])
+    ap.add_argument("link", nargs="?",
+                    help="a LinkedIn job link, instead of the advert text")
     ap.add_argument("--file", type=Path, help="advert text file (default: paste it in)")
     ap.add_argument("--clip", action="store_true",
                     help="read the advert from the clipboard (Windows clipboard under WSL)")
@@ -154,7 +157,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     _configure_logging()
-    if args.file:
+    if args.link:
+        text = args.link
+    elif args.file:
         text = args.file.read_text(encoding="utf-8")
     elif args.clip:
         try:
@@ -175,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     from src.config import resolve_endpoint_base_url, settings
     from src.endpoint.cache import get_or_build, prerender
     from src.llm.client import LLMError
+    from src.scraper.jobspy_wrapper import LinkedInFetchError
     from src.state import master_profile
     from src.state.db import session_scope
     from src.tailor import tailor
@@ -200,6 +206,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         except LLMError as exc:
             print(f"error: the advert could not be parsed: {exc}", file=sys.stderr)
+            return 1
+        except LinkedInFetchError as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 1
 
         out_dir.mkdir(parents=True, exist_ok=True)

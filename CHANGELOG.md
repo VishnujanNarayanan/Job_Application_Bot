@@ -25,6 +25,12 @@ and this project loosely tracks iterations rather than semver.
   - The backend's steps stream onto the page as they happen: save or reuse, AI
     parse (which provider answered, any fallback), score, build, render.
   - The same breakdown as the CLI follows, with PDF and DOCX buttons (#20).
+- **A LinkedIn job link works in place of the advert text**, on the page and as
+  `python -m src.cli.tailor <link>`; tracking parameters are ignored.
+  - A posting the scraper already stored is reused. Otherwise one request to
+    the public job page reads the title, company, location, applicant count
+    and description, keyed `linkedin-li-<id>` as a scrape would key it.
+  - A link to a job the run had skipped moves it to Matches.
 - The CLI prints the same live steps to stderr. `--clip` reads the advert from
   the clipboard, and a paste can end with a line reading `END` as well as Ctrl-D.
 
