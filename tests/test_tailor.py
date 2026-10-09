@@ -394,3 +394,33 @@ def test_a_scraped_job_is_reused_not_fetched_and_leaves_skipped(stubbed):
     assert s.of(NotApplied) == []
     assert any("already stored from a scrape" in m for m in steps)
     assert any("moving it to Matches" in m for m in steps)
+
+
+def test_url_alone_is_the_source_for_a_linkedin_link(monkeypatch, tmp_path, stubbed):
+    from contextlib import contextmanager
+
+    from src.cli import tailor as cli
+
+    s, seen = FakeSession(), {}
+    real = tl.tailor
+
+    @contextmanager
+    def scope():
+        yield s
+
+    def fake_tailor(session, text, **kw):
+        seen.update(kw, text=text)
+        return real(session, AD, parse_fn=stubbed["parse_fn"], now=NOW)
+
+    monkeypatch.setattr("src.state.db.session_scope", scope)
+    monkeypatch.setattr("src.state.master_profile.rebuild", lambda session: None)
+    monkeypatch.setattr("src.tailor.tailor", fake_tailor)
+    monkeypatch.setattr("src.endpoint.cache.get_or_build", lambda *a: (b"x", "x"))
+    monkeypatch.setattr("src.endpoint.cache.prerender", lambda *a, **k: {})
+
+    assert cli.main(["--url", LINK + "?trackingId=abc", "--out", str(tmp_path)]) == 0
+    assert seen["text"] == LINK + "?trackingId=abc"
+    assert seen["url"] is None, "the fetched job keeps its clean URL"
+
+    # Any other site cannot be fetched: the advert text is needed.
+    assert cli.main(["--url", "https://careers.example.com/job/1", "--out", str(tmp_path)]) == 2

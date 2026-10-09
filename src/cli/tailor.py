@@ -2,6 +2,7 @@
 
     python -m src.cli.tailor --file jd.txt [--company Acme] [--role "Data Engineer"]
     python -m src.cli.tailor https://www.linkedin.com/jobs/view/4475971015/
+    python -m src.cli.tailor --url https://www.linkedin.com/jobs/view/4475971015/
     python -m src.cli.tailor --clip --company Acme   # advert from the clipboard
     python -m src.cli.tailor --company Acme          # paste it, then END on its own line
 
@@ -150,7 +151,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--company")
     ap.add_argument("--role")
     ap.add_argument("--applicants", type=int, help="applicant count, if the listing shows one")
-    ap.add_argument("--url", help="the listing's URL, used as the apply link")
+    ap.add_argument("--url", help="the listing's URL. On its own (no advert text) a LinkedIn"
+                                  " job link is fetched; with text it is the apply link")
     ap.add_argument("--location")
     ap.add_argument("--out", type=Path, help="folder for the PDF/DOCX (default: tailor.output_dir)")
     ap.add_argument("--notify", action="store_true", help="also send the Telegram match message")
@@ -159,6 +161,18 @@ def main(argv: list[str] | None = None) -> int:
     _configure_logging()
     if args.link:
         text = args.link
+    elif args.url and not args.file and not args.clip:
+        # --url alone is the source. Only a LinkedIn link can be fetched; for
+        # any other site the advert text is needed, and the url becomes its
+        # apply link.
+        from src.scraper.jobspy_wrapper import linkedin_job_id
+
+        if not linkedin_job_id(args.url):
+            print("error: only a LinkedIn job link can be fetched. Give the advert text too"
+                  " (--file, --clip or paste it) and --url becomes its apply link.",
+                  file=sys.stderr)
+            return 2
+        text = args.url
     elif args.file:
         text = args.file.read_text(encoding="utf-8")
     elif args.clip:
@@ -202,7 +216,9 @@ def main(argv: list[str] | None = None) -> int:
             t = tailor(
                 session, text,
                 company=args.company, role=args.role, applicants=args.applicants,
-                url=args.url, location=args.location, progress=say,
+                # A fetched link stores its clean canonical URL, not the tracking one.
+                url=None if text == args.url else args.url,
+                location=args.location, progress=say,
             )
         except LLMError as exc:
             print(f"error: the advert could not be parsed: {exc}", file=sys.stderr)
