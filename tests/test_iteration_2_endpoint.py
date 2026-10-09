@@ -438,25 +438,19 @@ def test_app_health():
     assert resp.json() == {"status": "ok"}
 
 
-def test_an_entry_is_bound_together_across_a_page_break(
+def test_an_entry_flows_across_a_page_break(
     minimal_profile, minimal_selection, tmp_path
 ):
-    """A title with one orphaned bullet at the foot of a page reads as an error.
-
-    Word has no "keep 66% together" setting, so the rule is expressed as a chain:
-    the header and the first ceil(0.66 * n) bullets each carry keepNext, binding
-    them into one unbreakable group. If that group does not fit in the space
-    left, Word moves all of it to the next page. The chain stops there, so the
-    remaining bullets may still flow rather than wasting the page.
-    """
-    import math
-
+    """A header must never end a page alone, so it carries keepNext and is bound
+    to its first `keep_with_first_bullets` bullets. Nothing after that is bound:
+    binding 66% of the entry made Word move the whole group to the next page
+    whenever it did not fit, leaving up to half a page blank (#82)."""
     from docx.oxml.ns import qn as _qn
 
     from src.config import settings
 
     doc = _assemble(minimal_profile, minimal_selection, tmp_path)
-    ratio = float(settings.endpoint.render.keep_together_ratio)
+    bound = max(1, int(settings.endpoint.render.keep_with_first_bullets))
 
     def keep_next(p):
         pPr = p._p.find(_qn("w:pPr"))
@@ -472,15 +466,12 @@ def test_an_entry_is_bound_together_across_a_page_break(
             break
         bullets.append(p)
 
-    assert bullets, "no bullets found under the entry"
+    assert len(bullets) > bound, "fixture needs more bullets than the bound"
     assert keep_next(paras[header_i]), "header is not bound to its first bullet"
-
-    bound = max(1, math.ceil(ratio * len(bullets)))
     for i, b in enumerate(bullets[: bound - 1]):
         assert keep_next(b), f"bullet {i} should be bound to the next"
-    assert not keep_next(bullets[bound - 1]), (
-        "the chain must end so the remaining bullets can flow"
-    )
+    for i, b in enumerate(bullets[bound - 1:], start=bound - 1):
+        assert not keep_next(b), f"bullet {i} must flow, not hold the group"
 
 
 def test_every_bullet_keeps_its_own_lines_together(
