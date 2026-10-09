@@ -1038,7 +1038,10 @@ def select_top(
     the job in view.
     """
     now = now or datetime.now(timezone.utc)
-    top_n = max(1, int(getattr(settings.selection, "top_n", 5)))
+    cfg = settings.selection
+    max_n = max(1, int(getattr(cfg, "max_entries", 0) or getattr(cfg, "top_n", 5)))
+    min_n = max(1, min(max_n, int(getattr(cfg, "min_entries", 0) or max_n)))
+    floor_ratio = float(getattr(cfg, "entry_score_floor", 0.0) or 0.0)
 
     candidates = [*profile.work, *profile.projects]
     ranked = sorted(
@@ -1046,15 +1049,48 @@ def select_top(
         key=lambda s: s.score,
         reverse=True,
     )
-    selected = ranked[:top_n]
+    if not ranked:
+        return []
 
-    if not any(_is_employment(s) for s in selected):
-        job = next((s for s in ranked if _is_employment(s)), None)
-        if job is not None:
-            # Displace the weakest, not the nearest miss: the entry that earned its
-            # place least is the one that gives it up.
-            selected = [*selected[: top_n - 1], job]
-    return selected
+    # THE PAGE IS A SET, NOT FIVE WINNERS (#25). The old page kept the top five
+    # by score, each judged alone, so five entries covering the same keywords
+    # could push out a sixth that covered keywords the page lacked -- measured on
+    # 26 of 60 recent jobs. Entries now join in order of what they ADD: at each
+    # step the candidate whose covered keywords add the most not-yet-shown JD
+    # weight joins (ties by score), until nothing adds anything or the page holds
+    # `max_entries`. Fewer than `min_entries` is topped up by score.
+    #
+    # The best-scoring entry always joins first, and the salaried job always
+    # joins (the one guarantee). A floor relative to the best score keeps a
+    # weak, off-kind entry from joining on one rare token.
+    floor = floor_ratio * ranked[0].score
+    selected: list[SelectedEntry] = [ranked[0]]
+    job = next((s for s in ranked if _is_employment(s)), None)
+    if job is not None and job is not ranked[0]:
+        selected.append(job)
+    shown: set[str] = set().union(*(s.covered for s in selected))
+
+    while len(selected) < max_n:
+        best, best_key = None, None
+        for s in ranked:
+            if s in selected or s.score < floor:
+                continue
+            gain = weight_of(s.covered - shown, keywords)
+            key = (round(gain, 9), s.score)
+            if best_key is None or key > best_key:
+                best, best_key = s, key
+        if best is None or best_key[0] <= 0.0:
+            break
+        selected.append(best)
+        shown |= best.covered
+
+    for s in ranked:  # top up to the minimum, best score first
+        if len(selected) >= min_n:
+            break
+        if s not in selected:
+            selected.append(s)
+
+    return sorted(selected, key=lambda s: s.score, reverse=True)
 
 
 def _is_employment(entry: SelectedEntry) -> bool:
