@@ -98,7 +98,8 @@ def stubbed(monkeypatch):
         )
         return tl.Built(SimpleNamespace(entries=[]), applied, ["ETL testing"], "Data Engineer")
 
-    monkeypatch.setattr("src.state.master_profile.load_profile", lambda s: object())
+    monkeypatch.setattr("src.state.master_profile.load_profile",
+                        lambda s: SimpleNamespace(work=[], projects=[]))
     monkeypatch.setattr("src.scorer.embeddings.embed_documents", lambda texts: [[0.0]] * len(texts))
     monkeypatch.setattr(tl, "score_job", lambda *a, **k: _result())
     monkeypatch.setattr(tl, "build_applied", fake_build)
@@ -274,3 +275,42 @@ def test_telegram_is_sent_only_with_notify(monkeypatch, tmp_path, stubbed, notif
     assert cli.main(argv) == 0
     assert bool(sent) is notify
     assert sorted(p.suffix for p in (tmp_path / "out").iterdir()) == [".docx", ".pdf"]
+
+
+def test_a_pasted_advert_ends_at_a_line_reading_END():
+    """Ctrl-D was swallowed after a paste (cursor at the end of the last line)."""
+    import io
+
+    from src.cli.tailor import read_until_end
+
+    stream = io.StringIO("Testing Engineer\n\nStrong SQL\n  END  \nnot part of it\n")
+    assert read_until_end(stream) == "Testing Engineer\n\nStrong SQL\n"
+    assert read_until_end(io.StringIO("no marker, input just ends")) == "no marker, input just ends"
+
+
+def test_every_backend_step_is_reported(stubbed):
+    """The operator sees the work happen: save, parse (or reuse), score, build."""
+    s = FakeSession()
+    first: list[str] = []
+    tl.tailor(s, AD, parse_fn=stubbed["parse_fn"], now=NOW, progress=first.append)
+    text = "\n".join(first)
+    for part in ("New advert", "Reading the advert with the AI parser", "required skills",
+                 "Loaded the profile", "Scoring every entry", "score 0.210",
+                 "Building the resume selection", "1 entries, 3 bullets", "Saved"):
+        assert part in text, part
+
+    again: list[str] = []
+    tl.tailor(s, AD, parse_fn=stubbed["parse_fn"], now=NOW, progress=again.append)
+    assert any("Seen this advert before" in m for m in again)
+    assert any("no AI call" in m for m in again)
+
+
+def test_the_llm_observer_reports_providers_and_fallbacks():
+    from src.llm.client import _emit, observe
+
+    seen = []
+    with observe(lambda event, fields: seen.append((event, fields["provider"]))):
+        _emit("trying", provider="groq", model="m")
+        _emit("served", provider="groq", seconds=1.0)
+    _emit("trying", provider="outside", model="m")      # no observer: ignored
+    assert seen == [("trying", "groq"), ("served", "groq")]

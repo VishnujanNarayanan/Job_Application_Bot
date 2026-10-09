@@ -550,3 +550,94 @@ def test_a_card_shows_when_the_posting_was_found(client):
 
     assert "data-datetime=" in body
     assert ">Found<" in body
+
+
+# ---------------------------------------------------------------------------
+# Tailor page (#20)
+# ---------------------------------------------------------------------------
+
+def _breakdown(**overrides) -> dict:
+    b = {
+        "job_id": "manual-abc123def456", "company": "NTT DATA", "role": "Testing Engineer",
+        "reused_parse": False, "role_level": "mid", "years_required": 3,
+        "final_score": 0.599, "threshold": 0.6, "below_threshold": True,
+        "fit": 0.599, "lead_entry": 0.52, "similarity": 0.54, "lead_coverage": 0.5,
+        "keyword_coverage": 0.71, "repetition": 0.57, "applicant_multiplier": 1.0,
+        "applicants": None, "required_total": 2, "required_shown": ["SQL"],
+        "required_missing": ["ETL testing"], "nice_shown": [], "nice_total": 0,
+        "not_in_profile": ["ETL testing"],
+        "entries": [{"header": "SDET at Citesert", "kind": "work", "score": 0.41,
+                     "bullets": 5, "adds": ["SQL"]}],
+        "filters": [{"name": "years ceiling", "would_reject": False, "detail": "asks 3"}],
+    }
+    b.update(overrides)
+    return b
+
+
+def test_the_tailor_page_renders_with_its_form(client):
+    patches = _patch_page()
+    with patches[0], patches[1], patches[2], patches[3]:
+        resp = client.get("/dashboard/tailor")
+    assert resp.status_code == 200
+    for part in ('id="tailor-form"', 'id="tf-text"', "/static/tailor.js", 'href="/dashboard/tailor"'):
+        assert part in resp.text, part
+
+
+def _events(resp) -> list[dict]:
+    import json
+
+    return [json.loads(line) for line in resp.text.splitlines() if line.strip()]
+
+
+def test_tailor_api_streams_steps_then_the_breakdown(client):
+    patches = _patch_page()
+    seen = {}
+
+    def fake_tailor(session, text, progress=None, **kw):
+        seen.update(kw, text=text)
+        progress("Reading the advert with the AI parser...")
+        progress("  groq answered in 1.2s")
+        return object()
+
+    with patches[0], patch("src.state.master_profile.rebuild"), \
+            patch("src.tailor.tailor", side_effect=fake_tailor), \
+            patch("src.tailor.breakdown", return_value=_breakdown()), \
+            patch("src.endpoint.cache.get_or_build", return_value=(b"pdf", "application/pdf")):
+        resp = client.post("/api/tailor", json={
+            "text": "Testing Engineer\nStrong SQL", "company": " NTT DATA ",
+            "role": "", "applicants": "40",
+        })
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/x-ndjson")
+    events = _events(resp)
+    steps = [e["message"] for e in events if e["type"] == "step"]
+    assert "Reading the advert with the AI parser..." in steps
+    assert "  groq answered in 1.2s" in steps
+    assert "Rendering the PDF..." in steps
+    done = events[-1]
+    assert done["type"] == "done" and done["ok"] and done["below_threshold"]
+    assert done["pdf_url"] == "/resume/manual-abc123def456.pdf"
+    assert done["docx_url"] == "/resume/manual-abc123def456.docx"
+    assert seen["company"] == "NTT DATA" and seen["role"] is None and seen["applicants"] == 40
+
+
+@pytest.mark.parametrize("payload, detail", [
+    ({"text": "   "}, "Paste the advert"),
+    ({"text": "an advert", "applicants": "lots"}, "whole number"),
+])
+def test_tailor_api_rejects_bad_input(client, payload, detail):
+    resp = client.post("/api/tailor", json=payload)
+    assert resp.status_code == 400
+    assert detail in resp.json()["detail"]
+
+
+def test_a_parse_failure_is_shown_not_swallowed(client):
+    from src.llm.client import LLMError
+
+    patches = _patch_page()
+    with patches[0], patch("src.state.master_profile.rebuild"), \
+            patch("src.tailor.tailor", side_effect=LLMError("all providers failed")):
+        resp = client.post("/api/tailor", json={"text": "an advert"})
+    last = _events(resp)[-1]
+    assert last["type"] == "error"
+    assert "all providers failed" in last["message"]
