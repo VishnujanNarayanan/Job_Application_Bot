@@ -488,7 +488,20 @@ selection:
   # Work, freelance and projects compete in one pool for these slots, which is what
   # the merged section already renders. The salaried employment entry is always one
   # of them (see select_top) and always sits in position 1 or 2 (job_within_top).
+  #
+  # #25: the page is chosen as a SET. Entries join in order of the JD keyword
+  # weight they ADD that the page does not yet show; the page stops growing when
+  # nothing adds anything, never holds more than `max_entries`, and is topped up
+  # by score to `min_entries`. `top_n` is kept only as the fallback cap when
+  # max_entries is unset.
   top_n: 5
+  min_entries: 3
+  max_entries: 6
+  # A candidate joins only if its score is at least this share of the best
+  # entry's score, so a weak, off-kind entry cannot join on one rare token.
+  # Off (0.0): measured on 1,220 stored jobs (#25), 0.5 and 0.7 only lowered
+  # coverage (0.4266 -> 0.4232 -> 0.4055) and apply count (219 -> 218 -> 209).
+  entry_score_floor: 0.0
 
   # Freelance engagements render under the merged section like everything else;
   # this is only what their entry line shows in the right slot, where a job shows
