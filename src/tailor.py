@@ -275,6 +275,86 @@ class TailorResult:
         return self.result.final_score < self.threshold
 
 
+def _apply_flags(job, flags: dict) -> None:
+    """Flags the operator typed override what was stored or fetched."""
+    for name, column in (("company", "company"), ("role", "role"), ("url", "job_url"),
+                         ("location", "location"), ("applicants", "applicants_count")):
+        if flags.get(name) is not None:
+            setattr(job, column, flags[name])
+
+
+def _job_from_text(session, jd_text: str, flags: dict, say, now: datetime):
+    """The ``all_jobs`` row for pasted advert text, created on first paste."""
+    from src.scorer.embeddings import embed_documents
+    from src.state.models import AllJobs
+
+    job_id = manual_job_id(jd_text)
+    job = session.get(AllJobs, job_id)
+    if job is not None:
+        say(f"Seen this advert before: reusing {job_id}")
+        _apply_flags(job, flags)
+        return job
+
+    say(f"New advert ({len(jd_text):,} characters): saving it as {job_id}")
+    job = AllJobs(
+        job_id=job_id, company=UNKNOWN, role=UNKNOWN, site=MANUAL_SITE,
+        jd_text=jd_text, scraped_at=now, posted_at=now,
+    )
+    _apply_flags(job, flags)
+    job.jd_embedding = embed_documents([jd_text])[0]
+    session.add(job)
+    return job
+
+
+def _job_from_linkedin(session, li_id: str, flags: dict, fetch_fn, say, now: datetime):
+    """The ``all_jobs`` row for a LinkedIn link.
+
+    Keyed exactly as the scraper keys it (``linkedin-li-<id>``), so a posting
+    the scraper already stored is reused rather than fetched, and one fetched
+    here is recognised by later scrapes instead of arriving twice.
+    """
+    from src.scorer.embeddings import embed_documents
+    from src.scraper.jobspy_wrapper import fetch_linkedin_job
+    from src.state.models import AllJobs, NotApplied
+
+    job_id = f"linkedin-li-{li_id}"
+    job = session.get(AllJobs, job_id)
+    if job is not None and (job.jd_text or "").strip():
+        say(f"LinkedIn job {li_id} is already stored from a scrape: reusing {job_id}"
+            f" ({job.role} at {job.company})")
+        skipped = session.get(NotApplied, job_id)
+        if skipped is not None:
+            # Choosing it by hand overrides the scorer's skip, and keeps the
+            # job out of the Skipped view now that it is under Matches.
+            say(f"  it had been skipped by the run ({skipped.reason_category});"
+                " moving it to Matches")
+            session.delete(skipped)
+        _apply_flags(job, flags)
+        return job
+
+    say(f"Fetching LinkedIn job {li_id}...")
+    info = (fetch_fn or fetch_linkedin_job)(li_id)
+    say(f"  {info['title'] or 'untitled'} at {info['company'] or 'unknown company'},"
+        f" {info['location'] or 'no location'}; {info['applicants_text'] or 'no applicant count'};"
+        f" {len(info['description']):,} characters of description")
+    if info.get("closed"):
+        say("  LinkedIn says this posting no longer accepts applications; building anyway")
+    if job is None:
+        job = AllJobs(job_id=job_id, company=UNKNOWN, role=UNKNOWN, site="linkedin",
+                      scraped_at=now)
+        session.add(job)
+    job.company = info["company"] or job.company or UNKNOWN
+    job.role = info["title"] or job.role or UNKNOWN
+    job.location = info["location"] or job.location
+    job.job_url = info["url"]
+    job.jd_text = info["description"]
+    job.applicants_text = info["applicants_text"]
+    job.applicants_count = info["applicants_count"]
+    _apply_flags(job, flags)
+    job.jd_embedding = embed_documents([job.jd_text])[0]
+    return job
+
+
 def tailor(
     session,
     jd_text: str,
@@ -285,9 +365,15 @@ def tailor(
     url: str | None = None,
     location: str | None = None,
     parse_fn=None,
+    fetch_fn=None,
     now: datetime | None = None,
+    progress=None,
 ) -> TailorResult:
     """Parse, score and build a resume for a pasted advert, whatever it scores.
+
+    ``jd_text`` is the advert text, or just a LinkedIn job link: a link reuses
+    the job if a scrape already stored it, and otherwise reads the posting from
+    LinkedIn's public page (``fetch_fn``, for tests).
 
     Writes the ``all_jobs`` and ``applied`` rows (so the dashboard, the render
     cache and "Mark applied" work unchanged) but never a company cooldown: a
@@ -295,46 +381,32 @@ def tailor(
 
     Raises ``ValueError`` for an empty advert and lets the parser's
     ``LLMError`` through, so the caller can show it instead of a silent skip.
+
+    ``progress(message)``, if given, is called at every step with a one-line
+    account of what the backend is doing and what it found, so the CLI and the
+    Tailor page can show the work as it happens.
     """
+    from src.llm.client import observe
     from src.parser import apply_to_row, parse
-    from src.scorer.embeddings import embed_documents
+    from src.scraper.jobspy_wrapper import linkedin_job_id
     from src.state import master_profile
-    from src.state.models import AllJobs, Applied, RenderCache
+    from src.state.models import Applied, RenderCache
 
     if not (jd_text or "").strip():
         raise ValueError("the advert is empty")
     now = now or datetime.now(timezone.utc)
     parse_fn = parse_fn or parse
-    job_id = manual_job_id(jd_text)
+    say = progress or (lambda _msg: None)
+    flags = dict(company=company, role=role, url=url, location=location,
+                 applicants=applicants)
 
-    job = session.get(AllJobs, job_id)
-    if job is None:
-        job = AllJobs(
-            job_id=job_id,
-            company=company or UNKNOWN,
-            role=role or UNKNOWN,
-            site=MANUAL_SITE,
-            location=location,
-            job_url=url,
-            jd_text=jd_text,
-            applicants_count=applicants,
-            scraped_at=now,
-            posted_at=now,
-        )
-        job.jd_embedding = embed_documents([jd_text])[0]
-        session.add(job)
+    li_id = linkedin_job_id(jd_text)
+    if li_id:
+        job = _job_from_linkedin(session, li_id, flags, fetch_fn, say, now)
     else:
-        # Flags given on a re-paste correct what the first paste stored.
-        if company:
-            job.company = company
-        if role:
-            job.role = role
-        if url:
-            job.job_url = url
-        if location:
-            job.location = location
-        if applicants is not None:
-            job.applicants_count = applicants
+        job = _job_from_text(session, jd_text, flags, say, now)
+    job_id = job.job_id
+
     # End the transaction before the LLM call: Neon kills a session left idle
     # inside one for 5 minutes, and a provider fallback can take that long.
     session.commit()
@@ -342,14 +414,41 @@ def tailor(
     parsed = parsed_from_row(job)
     reused = parsed is not None
     if parsed is None:
-        parsed = parse_fn(job)
+        say("Reading the advert with the AI parser...")
+
+        def on_llm(event, f):
+            if event == "trying":
+                say(f"  asking {f['provider']} ({f['model']})")
+            elif event == "fallback":
+                say(f"  {f['from_provider']} failed, falling back to {f['to_provider']}:"
+                    f" {f['reason'][:120]}")
+            elif event == "served":
+                say(f"  {f['provider']} answered in {f['seconds']:.1f}s")
+
+        with observe(on_llm):
+            parsed = parse_fn(job)
         apply_to_row(job, parsed)
+        say("Parsed")
+    else:
+        say("Reusing the stored parse: no AI call")
+    say(f"  {parsed.role_level} level, {parsed.years_required} years asked,"
+        f" {len(parsed.required_skills)} required skills,"
+        f" {len(parsed.nice_to_have)} nice to have")
+    say("  required: " + (", ".join(parsed.required_skills) or "none"))
 
     profile = master_profile.load_profile(session)
+    say(f"Loaded the profile: {len(profile.work)} jobs, {len(profile.projects)} projects")
+    say("Scoring every entry against the advert...")
     result = score_job(profile, job, parsed)
+    say(f"  score {result.final_score:.3f} (fit {result.fit:.3f} x applicants"
+        f" {result.success_prob:.3f}), keyword coverage {result.keyword_coverage:.2f}")
+    say("Building the resume selection...")
     built = build_applied(profile, job, parsed, result)
     if built is None:
         raise RuntimeError(f"the builder returned no selection for {job_id}")
+    bullets = sum(len(e.bullets) for e in result.entries)
+    say(f"  {len(result.entries)} entries, {bullets} bullets;"
+        f" lead: {result.entries[0].header_left if result.entries else 'none'}")
 
     existing = session.get(Applied, job_id)
     if existing is None:
@@ -369,6 +468,7 @@ def tailor(
     job.outcome = "matched"
     job.outcome_at = now
     session.commit()
+    say("Saved: it is now under Matches on the dashboard")
 
     return TailorResult(
         job=job,
@@ -379,3 +479,55 @@ def tailor(
         threshold=float(settings.scoring.apply_threshold),
         reused_parse=reused,
     )
+
+
+def breakdown(t: TailorResult) -> dict:
+    """The score breakdown as plain data: what the CLI prints and the
+    dashboard's Tailor page shows, so the two cannot disagree."""
+    r = t.result
+    kws = r.jd_keywords
+    shown: set[str] = set().union(*(e.covered for e in r.entries)) if r.entries else set()
+    required = [k.token for k in kws if k.weight >= 1.0]
+    nice = [k.token for k in kws if k.weight < 1.0]
+
+    entries, seen = [], set()
+    for e in r.entries:
+        entries.append({
+            "header": e.header_left,
+            "kind": e.kind,
+            "score": e.score,
+            "bullets": len(e.bullets),
+            "adds": sorted(e.covered - seen),
+        })
+        seen |= e.covered
+
+    return {
+        "job_id": t.job.job_id,
+        "company": t.job.company,
+        "role": t.job.role,
+        "reused_parse": t.reused_parse,
+        "role_level": t.parsed.role_level,
+        "years_required": t.parsed.years_required,
+        "final_score": r.final_score,
+        "threshold": t.threshold,
+        "below_threshold": t.below_threshold,
+        "fit": r.fit,
+        "lead_entry": r.lead_entry,
+        "similarity": r.similarity_scaled,
+        "lead_coverage": r.lead_entry_coverage,
+        "keyword_coverage": r.keyword_coverage,
+        "repetition": r.keyword_repetition,
+        "applicant_multiplier": r.success_prob,
+        "applicants": t.job.applicants_count,
+        "required_total": len(required),
+        "required_shown": [k for k in required if k in shown],
+        "required_missing": [k for k in required if k not in shown],
+        "nice_shown": [k for k in nice if k in shown],
+        "nice_total": len(nice),
+        "not_in_profile": list(t.built.gap_skills),
+        "entries": entries,
+        "filters": [
+            {"name": v.name, "would_reject": v.would_reject, "detail": v.detail}
+            for v in t.verdicts
+        ],
+    }

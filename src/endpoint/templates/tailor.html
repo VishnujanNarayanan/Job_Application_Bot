@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% set active = 'tailor' %}
+{% block title %}Tailor · Job Bot{% endblock %}
+
+{% block content %}
+<div class="head">
+  <div>
+    <h1 class="head__title">Tailor a resume</h1>
+    <p class="head__sub">
+      Paste any advert (a referral, a careers page, a recruiter message), or just
+      a LinkedIn job link, and get a resume for it. No filter or threshold stops the build; the breakdown
+      shows what they would have said. The job then appears under Matches.
+    </p>
+  </div>
+</div>
+
+<form id="tailor-form" class="tform" autocomplete="off">
+  <label class="tform__field tform__field--wide">
+    <span class="tform__label">Advert text or LinkedIn link</span>
+    <textarea id="tf-text" name="text" rows="12" required
+              placeholder="Paste the whole job advert, or just a LinkedIn job link such as https://www.linkedin.com/jobs/view/4475971015/"></textarea>
+  </label>
+  <label class="tform__field">
+    <span class="tform__label">Company</span>
+    <input id="tf-company" name="company" type="text" placeholder="optional">
+  </label>
+  <label class="tform__field">
+    <span class="tform__label">Role</span>
+    <input id="tf-role" name="role" type="text" placeholder="optional">
+  </label>
+  <label class="tform__field">
+    <span class="tform__label">Location</span>
+    <input id="tf-location" name="location" type="text" placeholder="optional">
+  </label>
+  <label class="tform__field">
+    <span class="tform__label">Applicants</span>
+    <input id="tf-applicants" name="applicants" type="number" min="0" inputmode="numeric"
+           placeholder="if the listing shows it">
+  </label>
+  <label class="tform__field tform__field--wide">
+    <span class="tform__label">Listing URL</span>
+    <input id="tf-url" name="url" type="url" placeholder="optional, used as the apply link">
+  </label>
+  <div class="tform__acts">
+    <button id="tf-go" class="btn btn--primary" type="submit">
+      <span class="btn__spin" aria-hidden="true"></span>
+      <span id="tf-go-text">Generate</span>
+    </button>
+    <span id="tf-note" class="muted"></span>
+  </div>
+</form>
+
+<section id="tailor-steps" class="tsteps" hidden aria-live="polite">
+  <h3 class="tout__h">What the backend is doing</h3>
+  <ol id="to-steps" class="tsteps__list"></ol>
+</section>
+
+<section id="tailor-out" class="tout" hidden aria-live="polite">
+  <div class="tout__top">
+    <div>
+      <h2 class="job__title" id="to-title">—</h2>
+      <p class="muted" id="to-sub">—</p>
+    </div>
+    <div class="tout__files">
+      <a id="to-pdf" class="btn btn--primary" href="#" target="_blank" rel="noopener">PDF</a>
+      <a id="to-docx" class="btn" href="#">DOCX</a>
+    </div>
+  </div>
+
+  <div class="gauge">
+    <div class="gauge__value" id="to-score">—</div>
+    <div class="gauge__track" role="img" id="to-track">
+      <div class="gauge__fill" id="to-fill" style="width: 0%"></div>
+      <div class="gauge__gate" style="left: {{ (100 * threshold)|round(1) }}%"></div>
+    </div>
+    <div class="gauge__scale">
+      <span>0</span><span class="gauge__thr">{{ threshold }}</span><span>1</span>
+    </div>
+  </div>
+  <p id="to-below" class="tout__below" hidden>
+    Below the threshold: the scraper run would not have sent this job. Built anyway.
+  </p>
+
+  <div class="tout__grid">
+    <div class="tout__block">
+      <h3 class="tout__h">Score</h3>
+      <dl class="tout__kv" id="to-score-kv"></dl>
+    </div>
+    <div class="tout__block">
+      <h3 class="tout__h" id="to-kw-h">Required keywords</h3>
+      <p class="gaps"><span class="gaps__label">Shown</span><span id="to-shown"></span></p>
+      <p class="gaps"><span class="gaps__label">Missing</span><span id="to-missing"></span></p>
+      <p class="gaps" id="to-nip-row" hidden>
+        <span class="gaps__label">Not in profile</span><span id="to-nip"></span>
+      </p>
+    </div>
+  </div>
+
+  <div class="tout__block">
+    <h3 class="tout__h">Entries on the page</h3>
+    <ol class="tout__entries" id="to-entries"></ol>
+  </div>
+
+  <div class="tout__block">
+    <h3 class="tout__h">Hard filters <span class="muted">(information only, none applied)</span></h3>
+    <div class="tablewrap">
+      <table class="grid"><tbody id="to-filters"></tbody></table>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}<script src="/static/tailor.js"></script>{% endblock %}

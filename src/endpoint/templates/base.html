@@ -25,6 +25,9 @@
     <a href="/dashboard/skipped" class="tab {% if active == 'skipped' %}is-on{% endif %}">
       Skipped<span class="tab__n">{{ counts.skipped }}</span>
     </a>
+    <a href="/dashboard/tailor" class="tab {% if active == 'tailor' %}is-on{% endif %}">
+      Tailor
+    </a>
   </nav>
 
   <div class="runbar">
@@ -81,5 +84,6 @@
 <div id="toast" class="toast" hidden role="status"></div>
 
 <script src="/static/app.js"></script>
+{% block scripts %}{% endblock %}
 </body>
 </html>
