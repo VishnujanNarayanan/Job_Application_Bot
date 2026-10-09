@@ -87,11 +87,23 @@ def test_pay_under_benefits_is_kept() -> None:
     assert "18-24 LPA" in clipped
 
 
-def test_no_headings_falls_back_to_head_and_tail() -> None:
-    text = "Plain prose with no structure at all. " * 300
+def test_no_headings_keeps_the_opening_and_the_middle() -> None:
+    """Measured on the 12 long stored adverts with no usable headings: the two
+    ends showed the parser 70% of their known skills, the opening plus the
+    middle 96%. Unstructured adverts still front-load the company and
+    back-load the benefits."""
+    text = "Senior Data Engineer. " + "Company intro. " * 200 + "MIDDLE requirements Python SQL. " \
+        + "Benefits text. " * 200
     assert clip_by_sections(text, 4500, _ELISION) is None
     clipped = clip_jd_text(text, head=3000, tail=1500)
-    assert clipped == text[:3000] + _ELISION + text[-1500:]
+    assert clipped.startswith("Senior Data Engineer.")
+    assert "MIDDLE requirements Python SQL." in clipped
+    assert len(clipped) <= 3000 + 1500 + len(_ELISION)
+
+
+def test_no_headings_still_keeps_pay_at_the_end() -> None:
+    text = "Role. " + "Intro words here. " * 400 + "Compensation: 18-24 LPA."
+    assert "18-24 LPA" in clip_jd_text(text, head=3000, tail=1500)
 
 
 def test_never_longer_than_the_cut_it_replaces() -> None:

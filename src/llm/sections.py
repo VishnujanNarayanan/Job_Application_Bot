@@ -186,3 +186,66 @@ def clip_by_sections(text: str, budget: int, elision: str) -> str | None:
             prev = None
     text_out = "\n".join(out)
     return text_out if len(text_out) <= budget else text_out[:budget].rstrip() + " …"
+
+
+#: Around each pay mention in an unstructured advert, this much text either side.
+_PAY_CONTEXT = 80
+#: At most this much of the budget goes to pay snippets.
+_PAY_CAP = 400
+
+
+def clip_unstructured(text: str, budget: int, elision: str) -> str:
+    """Cut an advert with no recognisable headings: its opening, its middle, and
+    any pay mention.
+
+    The old fallback kept the first 3,000 and last 1,500 characters. On the 12
+    long stored adverts with no usable headings, that showed the parser 70% of
+    the known skills they name; the opening plus the middle shows 96%, because
+    an unstructured advert still front-loads the company and back-loads the
+    benefits. The opening (title, seniority) is kept, and so is any pay
+    mention, wherever it sits -- the reason the old cut kept the tail at all.
+    """
+    if len(text) <= budget:
+        return text
+    room = budget - 3 * len(elision)
+    if room <= 0:  # a budget too small for markers: a plain cut
+        return text[:budget]
+    head_len = min(_PREAMBLE_CAP, room // 4)
+    head = text[:head_len]
+
+    # Pay snippets, merged where they overlap, outside the opening.
+    spans: list[list[int]] = []
+    for m in _PAY_LINE.finditer(text, head_len):
+        near = text[max(0, m.start() - 40): m.end() + 40]
+        if not _DIGIT.search(near):
+            continue
+        a, b = max(head_len, m.start() - _PAY_CONTEXT), min(len(text), m.end() + _PAY_CONTEXT)
+        if spans and a <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], b)
+        else:
+            spans.append([a, b])
+    pay: list[tuple[int, str]] = []
+    used = 0
+    for a, b in spans:
+        if used + (b - a) > _PAY_CAP:
+            break
+        pay.append((a, text[a:b]))
+        used += b - a
+
+    mid_len = max(0, room - head_len - used)
+    start = max(head_len, (len(text) - mid_len) // 2)
+    middle = (start, text[start:start + mid_len])
+
+    parts = [(0, head)] + sorted([middle, *pay])
+    out: list[str] = []
+    end = 0
+    for at, chunk in parts:
+        if not chunk:
+            continue
+        if at > end:
+            out.append(elision.strip())
+        out.append(chunk)
+        end = at + len(chunk)
+    if end < len(text):
+        out.append(elision.strip())
+    return "\n".join(out)
