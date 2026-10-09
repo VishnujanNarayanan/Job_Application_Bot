@@ -312,7 +312,9 @@ def test_the_prompt_uses_the_clipped_text():
     prompt = jd_parse_prompt(job)
 
     assert len(prompt) < 10_000, "the full 40k description must not be sent"
-    assert "START" in prompt and "END" in prompt
+    # An advert with no headings keeps its opening and its middle (#72); its
+    # tail survives only where it states pay (test_clipping_keeps_both_ends).
+    assert "START" in prompt
 
 
 def test_configured_bounds_keep_the_scoring_signals():
