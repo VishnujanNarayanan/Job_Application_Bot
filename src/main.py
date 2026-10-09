@@ -173,7 +173,6 @@ def _record_taps(log, when: str) -> None:
 
 def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
     from src import analytics
-    from src.builder.llm_call import build as build_selection
     from src.config import settings, resolve_endpoint_base_url
     from src.endpoint.cache import prerender
     from src.llm.client import LLMBudgetError, LLMError
@@ -199,14 +198,12 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         TITLE_DISALLOWED,
         TOO_MANY_APPLICANTS,
     )
-    from src.scorer.apply_decision import evaluate
     from src.scorer.embeddings import embed_documents
-    from src.scorer.keywords import jd_keywords
-    from src.scorer.selector import build_jd_context
     from src.scraper import filters, jobspy_wrapper, rotation
     from src.state import master_profile
     from src.state.db import session_scope
-    from src.state.models import AllJobs, Applied, CompanyCooldown, NotApplied
+    from src.state.models import AllJobs, CompanyCooldown, NotApplied
+    from src.tailor import build_applied, score_job
 
     cfg = settings
     now = datetime.now(timezone.utc)
@@ -485,20 +482,8 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
                 skipped_count += 1
                 continue
 
-            # --- Layer 4: scoring ---
-            # scraped_at + the window this run used let recency be inferred for
-            # the listings that carry no posting date (almost all of them).
-            # Recency is recorded, not scored; the applicant count is scored.
-            jd_context = build_jd_context(
-                parsed,
-                posted_at=job.posted_at,
-                scraped_at=job.scraped_at,
-                scrape_window_hours=hours_old,
-                applicants_count=job.applicants_count,
-                jd_text=job.jd_text,
-            )
-            jd_kws = jd_keywords(parsed)
-            result = evaluate(profile, jd_context, keywords=jd_kws)
+            # --- Layer 4: scoring (shared with pasted adverts, src.tailor) ---
+            result = score_job(profile, job, parsed, scrape_window_hours=hours_old)
 
             # Log every score, matched or not, with the components that made
             # it. Without this a run is opaque: a batch of near-misses at 0.48
@@ -534,56 +519,16 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
                 skipped_count += 1
                 continue
 
-            # --- Layer 5: build selection_json ---
-            # Gap skills: JD required skills not in operator's pool
-            skills_pool = [sc.skill for sc in profile.skills]
-            gap_skills = _compute_gap_skills(
-                list(parsed.required_skills or []), skills_pool, _bullet_texts(profile)
-            )
-
-            selection = build_selection(
-                result=result,
-                profile=profile,
-                jd_role_summary=parsed.role_summary,
-                jd_required_skills=list(parsed.required_skills or []),
-                jd_team_or_product=parsed.team_or_product,
-            )
-
-            if selection is None:
+            # --- Layer 5 + 7: build selection_json, persist applied row ---
+            built = build_applied(profile, job, parsed, result)
+            if built is None:
                 log.error(BUILD_FAILURE, job_id=job.job_id, reason="selection_returned_none")
                 not_applied_queue.append((job, BUILD_FAILURE, None, result))
                 skipped_count += 1
                 continue
-
-            # Fill job_id into selection before persisting
-            selection.job_id = job.job_id
-
-            # --- Layer 7: persist applied row ---
-            # The notification's display title comes from the first WORK entry, not
-            # the first entry on the page. v3.2 merged work and projects into one
-            # section ordered by match, so position 1 can be a project — and a
-            # project has no title, only a name and an arbitrary alias list.
-            title_alias = next(
-                (e.title_alias for e in selection.entries if e.kind != "project"),
-                job.role,
-            )
-            expected_salary = (
-                parsed.salary_max_lpa
-                or float(cfg.salary.default_expected_lpa)
-            )
-            session.add(Applied(
-                job_id=job.job_id,
-                selection_json=selection.model_dump(),
-                template_version=selection.template_version,
-                cover_letter_text=selection.cover_letter_text,
-                expected_salary_lpa=expected_salary,
-                fit_score=result.fit,
-                success_prob=result.success_prob,
-                recency_score=result.recency,
-                final_score=result.final_score,
-                gap_skills=gap_skills,
-                user_status="pending",
-            ))
+            selection, gap_skills, title_alias = (
+                built.selection, built.gap_skills, built.title_alias)
+            session.add(built.applied)
             job.outcome = "matched"
             job.outcome_at = now
 
@@ -713,37 +658,9 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
     return 2 if budget_exhausted else 0
 
 
-def _compute_gap_skills(required: list[str], pool: list[str], bullets: tuple[str, ...] = ()) -> list[str]:
-    """Required skills the operator shows NOWHERE: not in the skills pool, not in
-    any bullet, in any spelling or family form (``keywords.matches``, #23).
-
-    It used to be a one-way substring test against the pool alone, which called
-    "CI/CD pipelines" a gap in 32 matched jobs although the profile states CI/CD
-    throughout, and disagreed with coverage, which reads the bullets.
-    """
-    import re
-
-    from src.scorer.keywords import matches, norm
-
-    # Split "Python (NumPy, pandas)" into its parts, but keep a LEADING dot:
-    # keywords.tokens_of strips it, which turns ".NET" into the plain word "net"
-    # and lets any bullet saying "net" clear it.
-    tokens = list(dict.fromkeys(
-        p.strip(" ;:") for line in required for p in re.split(r"[,()]", line or "")
-        if len(p.strip(" ;:")) >= 2
-    ))
-    evidence = [norm(s) for s in pool] + list(bullets)
-    return [t for t in tokens if not any(matches(t, e) for e in evidence)]
-
-
-def _bullet_texts(profile) -> tuple[str, ...]:
-    """Every bullet the operator could render, normalised, de-duplicated."""
-    return tuple(dict.fromkeys(
-        b.norm_text
-        for e in (*profile.work, *profile.projects)
-        for blk in e.blocks
-        for b in blk.bullets
-    ))
+# Kept importable from here; the steps live in src.tailor (shared with #20).
+from src.tailor import bullet_texts as _bullet_texts  # noqa: E402,F401
+from src.tailor import compute_gap_skills as _compute_gap_skills  # noqa: E402,F401
 
 
 def _write_not_applied(session, queue: list, now: datetime, *, dry_run: bool = False) -> None:

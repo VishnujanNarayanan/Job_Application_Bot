@@ -54,6 +54,8 @@ data/index/*
 !data/index/.gitkeep
 data/reports/*
 !data/reports/.gitkeep
+data/tailored/*
+!data/tailored/.gitkeep
 data/pending_writes.jsonl
 data/run.lock
 
