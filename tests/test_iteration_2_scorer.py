@@ -1040,18 +1040,19 @@ def test_the_page_is_always_full_even_when_nothing_matches() -> None:
         _profile(work=[_simple_entry("job", "Nothing either.")], projects=projects),
         _jd(vec_role=W, vec_match=W), _kw("Kubernetes"), now=NOW,
     )
-    assert len(out) == int(settings.selection.top_n)
+    assert len(out) == int(settings.selection.min_entries), "topped up to the minimum"
     assert all(e.score == 0.0 for e in out)
 
 
-def test_only_the_best_top_n_reach_the_page() -> None:
-    """More candidates than slots: the page takes the best `top_n` and no more."""
+def test_entries_that_add_nothing_do_not_fill_the_page() -> None:
+    """#25: ten entries all saying Python. After the first, none adds a keyword
+    the page lacks, so the page stops at the minimum instead of padding to five."""
     projects = [_simple_project(f"p{i}", "Built with Python.") for i in range(9)]
     out = select_top(
         _profile(work=[_simple_entry("job", "Built with Python.")], projects=projects),
         _jd(), _kw("Python"), now=NOW,
     )
-    assert len(out) == int(settings.selection.top_n)
+    assert len(out) == int(settings.selection.min_entries)
 
 
 def test_work_freelance_and_projects_compete_in_one_pool() -> None:
@@ -1081,8 +1082,8 @@ def test_the_salaried_job_is_always_on_the_page_even_when_outscored() -> None:
     )
     ids = [e.id for e in out]
     assert "job" in ids
-    assert len(out) == int(settings.selection.top_n)
-    assert out[-1].id == "job", "it takes the last slot, not a better one"
+    assert int(settings.selection.min_entries) <= len(out) <= int(settings.selection.max_entries)
+    assert out[-1].id == "job", "it ranks last, not above a better one"
 
 
 def test_a_freelance_gig_does_not_satisfy_the_salaried_guarantee() -> None:
@@ -1645,3 +1646,47 @@ def test_the_lead_is_the_entry_fit_grades_best() -> None:
     ordered = order_entries(picked)
     assert [e.id for e in ordered] == ["close", "dense"], "the lead is the best-graded"
     assert lead_entry_score(ordered[0])[0] > lead_entry_score(ordered[1])[0]
+
+
+
+# ---------------------------------------------------------------------------
+# #25 — the page is a set: entries join for what they ADD
+# ---------------------------------------------------------------------------
+
+
+def test_an_entry_with_a_unique_keyword_beats_higher_scoring_repeats() -> None:
+    """Five entries say only Python; one lower-scoring entry says Kafka. The old
+    top-five page left Kafka off; now it joins because it adds what the page lacks."""
+    repeats = [_simple_project(f"p{i}", "Built the service in Python.") for i in range(5)]
+    kafka = _simple_project("kafka", "Streamed events through Kafka.")
+    out = select_top(
+        _profile(work=[_simple_entry("job", "Built the service in Python.")], projects=[*repeats, kafka]),
+        _jd(), _kw("Python", "Kafka"), now=NOW,
+    )
+    assert "kafka" in [e.id for e in out]
+
+
+def test_the_page_grows_to_six_while_each_entry_adds_something() -> None:
+    tools = ["Python", "SQL", "Docker", "Kafka", "Spark", "Airflow", "Terraform"]
+    projects = [_simple_project(f"p{i}", f"Used {t}.") for i, t in enumerate(tools)]
+    out = select_top(_profile(work=[_simple_entry("job", "Nothing.")], projects=projects),
+                     _jd(), _kw(*tools), now=NOW)
+    assert len(out) == int(settings.selection.max_entries)
+
+
+def test_the_score_floor_keeps_a_weak_entry_off(monkeypatch) -> None:
+    """A floor relative to the best score stops an off-kind entry joining on one
+    rare token. Without the floor it joins, because Kafka is new to the page."""
+    def page(floor):
+        monkeypatch.setitem(settings.selection._data, "entry_score_floor", floor)
+        strong = [_simple_project(f"s{i}", "Built the service in Python and SQL.") for i in range(2)]
+        weak = _simple_project("weak", "Mentioned Kafka once.")
+        for b in weak.blocks[0].bullets:
+            b.embedding = W  # off-kind: orthogonal to the JD
+        out = select_top(_profile(work=[_simple_entry("job", "Built the service in Python and SQL.")],
+                                  projects=[*strong, weak]),
+                         _jd(), _kw("Python", "SQL", "Kafka"), now=NOW)
+        return [e.id for e in out]
+
+    assert "weak" in page(0.0)
+    assert "weak" not in page(0.9)
