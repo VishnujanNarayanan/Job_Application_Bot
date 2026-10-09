@@ -30,8 +30,10 @@ import os
 import re
 import threading
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
-from typing import TypeVar
+from typing import Callable, TypeVar
 
 import structlog
 from pydantic import BaseModel, ValidationError
@@ -385,6 +387,37 @@ def get_client(which: str = "primary"):
     return wrapped
 
 
+# Live progress for a caller that shows it (the Tailor page and CLI, #20): which
+# provider is being tried, which served, and any fallback. A ContextVar, so an
+# observer set by one request never sees another's calls.
+_observer: ContextVar[Callable[[str, dict], None] | None] = ContextVar(
+    "llm_observer", default=None)
+
+
+@contextmanager
+def observe(fn: Callable[[str, dict], None]):
+    """Call ``fn(event, fields)`` for provider attempts made inside the block.
+
+    Events: ``trying`` (provider, model), ``fallback`` (from_provider,
+    to_provider, reason), ``served`` (provider, seconds).
+    """
+    token = _observer.set(fn)
+    try:
+        yield
+    finally:
+        _observer.reset(token)
+
+
+def _emit(event: str, **fields) -> None:
+    fn = _observer.get()
+    if fn is None:
+        return
+    try:
+        fn(event, fields)
+    except Exception:  # a display hook must never fail the call
+        log.warning("llm_observer_failed", event=event, exc_info=True)
+
+
 def reset_clients() -> None:
     """Drop cached clients (tests, and after a config change)."""
     global _CALLS
@@ -714,6 +747,9 @@ def complete(
                 to_model=str(cfg.model),
                 reason=str(previous_error)[:200],
             )
+            _emit("fallback", from_provider=str(previous_cfg.provider),
+                  to_provider=str(cfg.provider), reason=str(previous_error)[:200])
+        _emit("trying", provider=str(cfg.provider), model=str(cfg.model))
         started = time.monotonic()
         try:
             result = _complete_with(which, response_model, build(cfg))
@@ -738,6 +774,8 @@ def complete(
                 call=call_index,
                 seconds=round(time.monotonic() - started, 2),
             )
+            _emit("served", provider=str(cfg.provider),
+                  seconds=round(time.monotonic() - started, 2))
             return result
 
     detail = " | ".join(

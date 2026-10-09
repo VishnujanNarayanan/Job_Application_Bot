@@ -7,10 +7,12 @@ decision record:
     GET  /dashboard               matches awaiting a decision
     GET  /dashboard/applied       jobs the operator has applied to
     GET  /dashboard/skipped       jobs that scored below the threshold
+    GET  /dashboard/tailor        paste an advert, get a tailored resume (#20)
     GET  /api/jobs                match data as JSON
     POST /api/jobs/{job_id}/status   record applied / pending / dismissed
     POST /api/run                 start a run (local subprocess or GitHub)
     GET  /api/run/status          poll for progress and log lines
+    POST /api/tailor              tailor a resume for pasted advert text
 
 The applied flow exists because the system deliberately never submits an
 application: the operator does that on the portal, so only they know it
@@ -35,7 +37,7 @@ from pathlib import Path
 
 import structlog
 from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 from src.config import settings
@@ -248,6 +250,15 @@ def skipped(request: Request):
     return templates.TemplateResponse(request, "skipped.html", context)
 
 
+@router.get("/dashboard/tailor")
+def tailor_page(request: Request):
+    """Paste an advert and get a resume, with no filter or threshold (#20)."""
+    with session_scope() as session:
+        context = _page_context(request, session)
+
+    return templates.TemplateResponse(request, "tailor.html", context)
+
+
 # ---------------------------------------------------------------------------
 # JSON API
 # ---------------------------------------------------------------------------
@@ -325,3 +336,95 @@ def api_run(payload: dict = Body(default={})) -> JSONResponse:
 @router.get("/api/run/status")
 def api_run_status() -> JSONResponse:
     return JSONResponse(runner.get_state())
+
+
+@router.post("/api/tailor")
+def api_tailor(payload: dict = Body(default={})):
+    """Tailor a resume for pasted advert text: the CLI's ``src.tailor.tailor``.
+
+    No hard filter or apply threshold stops the build. The response STREAMS
+    newline-delimited JSON so the page can show the backend working:
+
+        {"type": "step", "t": 1.2, "message": "Reading the advert..."}   (many)
+        {"type": "done", ...breakdown, "pdf_url": ..., "docx_url": ...}  (last)
+        {"type": "error", "message": ...}                                (instead)
+
+    Input errors are a plain 400 before any streaming starts.
+    """
+    text = str(payload.get("text") or "")
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Paste the advert text first.")
+
+    def _opt(name: str) -> str | None:
+        value = str(payload.get(name) or "").strip()
+        return value or None
+
+    applicants = _opt("applicants")
+    if applicants is not None:
+        try:
+            applicants = int(applicants)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="Applicants must be a whole number."
+            ) from None
+
+    kwargs = dict(company=_opt("company"), role=_opt("role"), applicants=applicants,
+                  url=_opt("url"), location=_opt("location"))
+    return StreamingResponse(_tailor_stream(text, kwargs), media_type="application/x-ndjson")
+
+
+def _tailor_stream(text: str, kwargs: dict):
+    """Run the tailor in a worker thread and yield its progress as it happens."""
+    import json
+    import queue
+    import threading
+    import time
+
+    events: queue.Queue = queue.Queue()
+    started = time.monotonic()
+
+    def step(message: str) -> None:
+        events.put({"type": "step", "t": round(time.monotonic() - started, 1),
+                    "message": message})
+
+    def work() -> None:
+        from src.endpoint.cache import get_or_build
+        from src.llm.client import LLMError
+        from src.scraper.jobspy_wrapper import LinkedInFetchError
+        from src.state import master_profile
+        from src.tailor import breakdown, tailor
+
+        try:
+            with session_scope() as session:
+                step("Checking the master profile is current...")
+                master_profile.rebuild(session)
+                result = tailor(session, text, progress=step, **kwargs)
+                body = breakdown(result)
+                # Render now, so the download buttons open instantly.
+                step("Rendering the PDF...")
+                get_or_build(body["job_id"], "pdf", session)
+                step("Done")
+                body.update(
+                    type="done", ok=True, counts=_counts(session),
+                    pdf_url=f"/resume/{body['job_id']}.pdf",
+                    docx_url=f"/resume/{body['job_id']}.docx",
+                )
+            log.info("tailored", job_id=body["job_id"],
+                     score=round(body["final_score"], 3), reused_parse=body["reused_parse"])
+            events.put(body)
+        except LLMError as exc:
+            log.error("tailor_parse_failed", error=str(exc))
+            events.put({"type": "error", "message": f"The advert could not be parsed: {exc}"})
+        except LinkedInFetchError as exc:
+            log.warning("tailor_linkedin_fetch_failed", error=str(exc))
+            events.put({"type": "error", "message": f"LinkedIn: {exc}"})
+        except Exception as exc:
+            log.error("tailor_failed", error=str(exc), exc_info=True)
+            events.put({"type": "error", "message": f"Tailoring failed: {exc}"})
+
+    threading.Thread(target=work, name="tailor", daemon=True).start()
+    while True:
+        event = events.get()
+        yield json.dumps(event) + "\n"
+        if event["type"] in ("done", "error"):
+            return

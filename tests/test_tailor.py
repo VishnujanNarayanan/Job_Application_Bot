@@ -98,7 +98,8 @@ def stubbed(monkeypatch):
         )
         return tl.Built(SimpleNamespace(entries=[]), applied, ["ETL testing"], "Data Engineer")
 
-    monkeypatch.setattr("src.state.master_profile.load_profile", lambda s: object())
+    monkeypatch.setattr("src.state.master_profile.load_profile",
+                        lambda s: SimpleNamespace(work=[], projects=[]))
     monkeypatch.setattr("src.scorer.embeddings.embed_documents", lambda texts: [[0.0]] * len(texts))
     monkeypatch.setattr(tl, "score_job", lambda *a, **k: _result())
     monkeypatch.setattr(tl, "build_applied", fake_build)
@@ -274,3 +275,152 @@ def test_telegram_is_sent_only_with_notify(monkeypatch, tmp_path, stubbed, notif
     assert cli.main(argv) == 0
     assert bool(sent) is notify
     assert sorted(p.suffix for p in (tmp_path / "out").iterdir()) == [".docx", ".pdf"]
+
+
+def test_a_pasted_advert_ends_at_a_line_reading_END():
+    """Ctrl-D was swallowed after a paste (cursor at the end of the last line)."""
+    import io
+
+    from src.cli.tailor import read_until_end
+
+    stream = io.StringIO("Testing Engineer\n\nStrong SQL\n  END  \nnot part of it\n")
+    assert read_until_end(stream) == "Testing Engineer\n\nStrong SQL\n"
+    assert read_until_end(io.StringIO("no marker, input just ends")) == "no marker, input just ends"
+
+
+def test_every_backend_step_is_reported(stubbed):
+    """The operator sees the work happen: save, parse (or reuse), score, build."""
+    s = FakeSession()
+    first: list[str] = []
+    tl.tailor(s, AD, parse_fn=stubbed["parse_fn"], now=NOW, progress=first.append)
+    text = "\n".join(first)
+    for part in ("New advert", "Reading the advert with the AI parser", "required skills",
+                 "Loaded the profile", "Scoring every entry", "score 0.210",
+                 "Building the resume selection", "1 entries, 3 bullets", "Saved"):
+        assert part in text, part
+
+    again: list[str] = []
+    tl.tailor(s, AD, parse_fn=stubbed["parse_fn"], now=NOW, progress=again.append)
+    assert any("Seen this advert before" in m for m in again)
+    assert any("no AI call" in m for m in again)
+
+
+def test_the_llm_observer_reports_providers_and_fallbacks():
+    from src.llm.client import _emit, observe
+
+    seen = []
+    with observe(lambda event, fields: seen.append((event, fields["provider"]))):
+        _emit("trying", provider="groq", model="m")
+        _emit("served", provider="groq", seconds=1.0)
+    _emit("trying", provider="outside", model="m")      # no observer: ignored
+    assert seen == [("trying", "groq"), ("served", "groq")]
+
+
+# --- a LinkedIn link instead of text ------------------------------------------
+
+LINK = "https://www.linkedin.com/jobs/view/4475971015/"
+
+
+@pytest.mark.parametrize("text, expected", [
+    (LINK, "4475971015"),
+    ("linkedin.com/jobs/view/lead-data-engineer-at-acme-4475971015?trk=x", "4475971015"),
+    ("https://www.linkedin.com/jobs/search/?currentJobId=4475971015&keywords=data", "4475971015"),
+    ("  " + LINK + "\n", "4475971015"),
+    # copied from LinkedIn's own search results: tracking parameters after the id
+    ("https://www.linkedin.com/jobs/view/4451200446/?alternateChannel=search&eBP=CwEAAAGh"
+     "H9ZhH2fb-Y2G_8zF&refId=hHk8WQeY%2Ft6jMmUr0WqIVA%3D%3D&trackingId=7rUkxMIOBGJu%3D%3D",
+     "4451200446"),
+    ("Testing Engineer, see " + LINK, None),       # an advert that mentions a link
+    ("https://example.com/jobs/view/4475971015", None),
+])
+def test_a_linkedin_job_link_is_recognised(text, expected):
+    from src.scraper.jobspy_wrapper import linkedin_job_id
+
+    assert linkedin_job_id(text) == expected
+
+
+def _fetched(**overrides):
+    info = {"title": "Lead Data Engineer", "company": "S&P Global",
+            "location": "Chennai, India", "description": AD, "applicants_text": "25 applicants",
+            "applicants_count": 25, "closed": False,
+            "url": "https://www.linkedin.com/jobs/view/4475971015"}
+    info.update(overrides)
+    return info
+
+
+def test_a_new_linkedin_link_is_fetched_and_keyed_like_a_scrape(stubbed):
+    s, fetched, steps = FakeSession(), [], []
+    t = tl.tailor(s, LINK, parse_fn=stubbed["parse_fn"], now=NOW, progress=steps.append,
+                  fetch_fn=lambda jid: fetched.append(jid) or _fetched())
+    assert fetched == ["4475971015"]
+    job = t.job
+    assert job.job_id == "linkedin-li-4475971015" and job.site == "linkedin"
+    assert (job.company, job.role, job.applicants_count) == ("S&P Global", "Lead Data Engineer", 25)
+    assert job.jd_text == AD
+    assert any("Fetching LinkedIn job 4475971015" in m for m in steps)
+    assert any("25 applicants" in m for m in steps)
+
+
+def test_typed_flags_override_what_linkedin_says(stubbed):
+    t = tl.tailor(FakeSession(), LINK, parse_fn=stubbed["parse_fn"], now=NOW,
+                  fetch_fn=lambda jid: _fetched(), company="S&P Dow Jones Indices")
+    assert t.job.company == "S&P Dow Jones Indices"
+
+
+def test_a_closed_posting_is_said_but_still_built(stubbed):
+    steps = []
+    s = FakeSession()
+    tl.tailor(s, LINK, parse_fn=stubbed["parse_fn"], now=NOW, progress=steps.append,
+              fetch_fn=lambda jid: _fetched(closed=True))
+    assert any("no longer accepts applications" in m for m in steps)
+    assert s.of(Applied)
+
+
+def test_a_scraped_job_is_reused_not_fetched_and_leaves_skipped(stubbed):
+    from src.state.models import NotApplied
+
+    s = FakeSession()
+    s.add(AllJobs(job_id="linkedin-li-4475971015", company="S&P Global",
+                  role="Lead Data Engineer", site="linkedin", jd_text=AD))
+    s.add(NotApplied(job_id="linkedin-li-4475971015", reason_category="LOW_SCORE"))
+    steps = []
+
+    def no_fetch(jid):
+        raise AssertionError("a stored job must not be fetched again")
+
+    t = tl.tailor(s, LINK, parse_fn=stubbed["parse_fn"], now=NOW, progress=steps.append,
+                  fetch_fn=no_fetch)
+    assert t.job.job_id == "linkedin-li-4475971015"
+    assert s.of(NotApplied) == []
+    assert any("already stored from a scrape" in m for m in steps)
+    assert any("moving it to Matches" in m for m in steps)
+
+
+def test_url_alone_is_the_source_for_a_linkedin_link(monkeypatch, tmp_path, stubbed):
+    from contextlib import contextmanager
+
+    from src.cli import tailor as cli
+
+    s, seen = FakeSession(), {}
+    real = tl.tailor
+
+    @contextmanager
+    def scope():
+        yield s
+
+    def fake_tailor(session, text, **kw):
+        seen.update(kw, text=text)
+        return real(session, AD, parse_fn=stubbed["parse_fn"], now=NOW)
+
+    monkeypatch.setattr("src.state.db.session_scope", scope)
+    monkeypatch.setattr("src.state.master_profile.rebuild", lambda session: None)
+    monkeypatch.setattr("src.tailor.tailor", fake_tailor)
+    monkeypatch.setattr("src.endpoint.cache.get_or_build", lambda *a: (b"x", "x"))
+    monkeypatch.setattr("src.endpoint.cache.prerender", lambda *a, **k: {})
+
+    assert cli.main(["--url", LINK + "?trackingId=abc", "--out", str(tmp_path)]) == 0
+    assert seen["text"] == LINK + "?trackingId=abc"
+    assert seen["url"] is None, "the fetched job keeps its clean URL"
+
+    # Any other site cannot be fetched: the advert text is needed.
+    assert cli.main(["--url", "https://careers.example.com/job/1", "--out", str(tmp_path)]) == 2
