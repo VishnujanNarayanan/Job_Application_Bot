@@ -184,7 +184,7 @@ scraper:
   #
   # Sizing is a cost/coverage trade: each scraped job costs 1 Gemini call to
   # parse, plus 1 more to build if it scores >= 0.50. More terms per run means
-  # fewer clicks to sweep the 48-term list, but a bigger bill per click.
+  # fewer clicks to sweep the 62-term list, but a bigger bill per click.
   # Currently 1 — the cheapest setting, one term per run as before.
   terms_per_run: 1
   # Every role is searched twice: as-is and with "junior" in front, since
@@ -239,6 +239,25 @@ scraper:
     - "junior quantitative researcher"
     - "quantitative analyst"
     - "junior quantitative analyst"
+    # AI-assisted development and LLM roles. "Claude Code specialist" is a
+    # title in its own right now; the rest are the names the same work is
+    # advertised under. Pairs follow the junior rule above, except where a
+    # junior variant is not a title anyone posts: "Claude Code specialist",
+    # "AI prompt engineer", "AI agent developer", "agentic AI engineer".
+    - "Claude Code specialist"
+    - "prompt engineer"
+    - "junior prompt engineer"
+    - "AI prompt engineer"
+    - "LLM engineer"
+    - "junior LLM engineer"
+    - "generative AI engineer"
+    - "junior generative AI engineer"
+    - "GenAI developer"
+    - "junior GenAI developer"
+    - "AI agent developer"
+    - "agentic AI engineer"
+    - "AI automation engineer"
+    - "junior AI automation engineer"
   # Re-parse and re-score every scraped job each run, skipping only ones
   # already notified. Local inference is unmetered, so the only thing a skip
   # saves is seconds — and skipping cost 176 of 745 jobs (24%) when runs that
