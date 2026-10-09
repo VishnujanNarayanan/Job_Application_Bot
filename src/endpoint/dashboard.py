@@ -351,13 +351,27 @@ def api_tailor(payload: dict = Body(default={})):
 
     Input errors are a plain 400 before any streaming starts.
     """
-    text = str(payload.get("text") or "")
-    if not text.strip():
-        raise HTTPException(status_code=400, detail="Paste the advert text first.")
-
     def _opt(name: str) -> str | None:
         value = str(payload.get(name) or "").strip()
         return value or None
+
+    text = str(payload.get("text") or "")
+    url = _opt("url")
+    if not text.strip():
+        # A LinkedIn link in the URL box alone is the source, as `--url` is for
+        # the CLI; the job then keeps the clean URL rather than the tracking one.
+        from src.scraper.jobspy_wrapper import linkedin_job_id
+
+        if url and linkedin_job_id(url):
+            text, url = url, None
+        elif url:
+            raise HTTPException(
+                status_code=400,
+                detail="Only a LinkedIn job link can be fetched. Paste the advert text"
+                       " too, and the URL becomes its apply link.")
+        else:
+            raise HTTPException(
+                status_code=400, detail="Paste the advert text or a LinkedIn job link first.")
 
     applicants = _opt("applicants")
     if applicants is not None:
@@ -369,7 +383,7 @@ def api_tailor(payload: dict = Body(default={})):
             ) from None
 
     kwargs = dict(company=_opt("company"), role=_opt("role"), applicants=applicants,
-                  url=_opt("url"), location=_opt("location"))
+                  url=url, location=_opt("location"))
     return StreamingResponse(_tailor_stream(text, kwargs), media_type="application/x-ndjson")
 
 
