@@ -10,6 +10,7 @@ meaningless without failing anything.
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,7 +18,7 @@ import pytest
 
 from src.scorer import keywords as kw
 
-GRADER = Path("/home/vishnu/projects/resume guide/score_coverage.py")
+GRADER = Path(os.environ.get("RESUME_GUIDE", Path.home() / "projects" / "resume guide")) / "score_coverage.py"
 
 
 # --------------------------------------------------------------------------

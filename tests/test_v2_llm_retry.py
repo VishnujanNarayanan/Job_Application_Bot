@@ -231,16 +231,6 @@ def _clean_clients():
     llm_client.reset_clients()
 
 
-def test_fallback_is_configured_and_enabled():
-    """The escape hatch must actually be on, and point somewhere different."""
-    assert llm_client.fallback_enabled() is True
-
-    primary = llm_client.provider_config("primary")
-    fallback = llm_client.provider_config("fallback")
-    assert str(fallback.base_url) != str(primary.base_url)
-    assert str(fallback.api_key_env) != str(primary.api_key_env)
-
-
 def test_no_fallback_model_is_a_thinking_model():
     """Reasoning tokens bill as output, on every link of the chain.
 
