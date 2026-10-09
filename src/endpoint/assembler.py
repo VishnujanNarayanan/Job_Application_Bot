@@ -52,7 +52,6 @@ from __future__ import annotations
 
 import copy
 import json
-import math
 from pathlib import Path
 
 import structlog
@@ -666,13 +665,12 @@ def assemble_docx(
                 _set_entry_line(line, entry.header_left, entry.header_right)
             new_elems.append(line)
 
-            # Never strand an entry across a page break. The header is bound to
-            # the first `keep_together_ratio` of its bullets; if that group does
-            # not fit in the remaining space, Word moves the whole group to the
-            # next page instead of leaving a title with one orphaned bullet. The
-            # remainder may flow, so a long entry still uses the page it has.
-            ratio = float(settings.endpoint.render.keep_together_ratio)
-            bound = max(1, math.ceil(ratio * len(entry.bullet_ids)))
+            # Never leave a header alone at the foot of a page: it is bound to
+            # its first `keep_with_first_bullets` bullets and the rest flow
+            # across the break, so the resume reads continuously. Binding 66% of
+            # the entry made Word move the whole group to the next page whenever
+            # it did not fit, leaving up to half a page blank (#82).
+            bound = max(1, int(settings.endpoint.render.keep_with_first_bullets))
             _set_keep(line, keep_next=True)
 
             for position, bid in enumerate(entry.bullet_ids):
@@ -686,8 +684,8 @@ def assemble_docx(
                 spans, shown = keyword_spans(text, to_bold) if to_bold else ([], set())
                 _set_text_with_bold(bp, text, spans)
                 to_bold = [k for k in to_bold if k not in shown]
-                # keepNext on every bullet except the last of the bound group,
-                # which is where the chain is allowed to break.
+                # keepNext only inside the bound group; keepLines (always set)
+                # stops one bullet's wrapped lines splitting.
                 _set_keep(bp, keep_next=position < bound - 1)
                 new_elems.append(bp)
             if protos["spacer"] is not None:
