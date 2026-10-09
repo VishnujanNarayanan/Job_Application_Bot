@@ -182,6 +182,10 @@ def _line_score(line: str) -> int:
     return 2 * known + len(_TECHY.findall(line))
 
 
+_LONG_LINE = 300
+_SENTENCE = re.compile(r"(?<=[.;!?])\s+(?=[A-Z0-9•\-*])|\s+[•▪●]\s+")
+
+
 def fit_lines(body: str, room: int) -> str:
     """Shorten one section to ``room`` characters keeping its most skill-dense
     lines, in their original order, with "…" where lines were skipped.
@@ -191,7 +195,17 @@ def fit_lines(body: str, room: int) -> str:
     624 of the missed skills sat in responsibilities trimmed that way, while
     most lines kept were prose with no skill in them.
     """
-    lines = [ln for ln in body.splitlines() if ln.strip()]
+    lines = []
+    for ln in body.splitlines():
+        if not ln.strip():
+            continue
+        # Some adverts arrive as a few giant lines with no breaks (one stored
+        # advert: 4,794 characters on one line). Whole-line selection then kept
+        # nothing but the heading, so a long line is split into sentences first.
+        if len(ln) > _LONG_LINE:
+            lines.extend(x for x in _SENTENCE.split(ln) if x.strip())
+        else:
+            lines.append(ln)
     if not lines or room <= 0:
         return ""
     head, rest = (lines[0], lines[1:]) if heading_category(lines[0]) else ("", lines)
@@ -221,6 +235,9 @@ def fit_lines(body: str, room: int) -> str:
         if gap and keep:
             out.append("…")
         return "\n".join(out)
+
+    if not keep:  # nothing fitted whole: a plain cut beats a bare heading
+        return (head + "\n" if head else "") + " ".join(rest)[: max(0, left - 2)].rstrip() + " …"
 
     text = render()
     # The "…" markers cost characters too; shed the weakest kept line until

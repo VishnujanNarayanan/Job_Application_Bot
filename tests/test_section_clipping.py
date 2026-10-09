@@ -181,3 +181,19 @@ def test_a_technical_word_counts_even_off_the_curated_list() -> None:
     yet is still preferred over plain prose."""
     body = "**Duties**\nWork closely with many teams every day.\nTune the ZorbleDB cluster.\n"
     assert "ZorbleDB" in fit_lines(body, 45)
+
+
+def test_a_section_written_as_one_giant_line_is_split_into_sentences() -> None:
+    """One stored advert had 4,794 characters on a single line; whole-line
+    selection kept only its heading and the parser saw 0 of its 21 skills."""
+    prose = "We value teamwork and a positive culture across every office. " * 30
+    body = "**The Role**\n" + prose + "You will automate builds with Bazel, CMake and Jenkins. " + prose
+    out = fit_lines(body, 400)
+    assert "Bazel, CMake and Jenkins" in out
+    assert len(out) <= 400
+
+
+def test_nothing_fitting_whole_falls_back_to_a_plain_cut() -> None:
+    body = "**The Role**\n" + "x" * 2000
+    out = fit_lines(body, 300)
+    assert out.startswith("**The Role**") and len(out) > 100
