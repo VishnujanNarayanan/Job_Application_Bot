@@ -17,7 +17,7 @@
 <form id="tailor-form" class="tform" autocomplete="off">
   <label class="tform__field tform__field--wide">
     <span class="tform__label">Advert text or LinkedIn link</span>
-    <textarea id="tf-text" name="text" rows="12" required
+    <textarea id="tf-text" name="text" rows="12"
               placeholder="Paste the whole job advert, or just a LinkedIn job link such as https://www.linkedin.com/jobs/view/4475971015/"></textarea>
   </label>
   <label class="tform__field">
@@ -39,7 +39,8 @@
   </label>
   <label class="tform__field tform__field--wide">
     <span class="tform__label">Listing URL</span>
-    <input id="tf-url" name="url" type="url" placeholder="optional, used as the apply link">
+    <input id="tf-url" name="url" type="text" inputmode="url"
+           placeholder="a LinkedIn job link on its own works; with advert text, the apply link">
   </label>
   <div class="tform__acts">
     <button id="tf-go" class="btn btn--primary" type="submit">
