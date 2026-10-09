@@ -1029,6 +1029,14 @@ prerender:
   link_expiry_days: 7
 
 # ---------------------------------------------------------------------------
+# Tailor a resume for a pasted advert (`python -m src.cli.tailor`, #20).
+# No hard filter or threshold applies; the PDF/DOCX land here unless --out.
+# Relative paths are from the repo root.
+# ---------------------------------------------------------------------------
+tailor:
+  output_dir: "data/tailored"
+
+# ---------------------------------------------------------------------------
 # Resume endpoint + dashboard — FastAPI (Layer 6).
 #
 # base_url is the host embedded in Telegram resume links. It is the machine's
