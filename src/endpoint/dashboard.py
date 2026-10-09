@@ -390,6 +390,7 @@ def _tailor_stream(text: str, kwargs: dict):
     def work() -> None:
         from src.endpoint.cache import get_or_build
         from src.llm.client import LLMError
+        from src.scraper.jobspy_wrapper import LinkedInFetchError
         from src.state import master_profile
         from src.tailor import breakdown, tailor
 
@@ -414,6 +415,9 @@ def _tailor_stream(text: str, kwargs: dict):
         except LLMError as exc:
             log.error("tailor_parse_failed", error=str(exc))
             events.put({"type": "error", "message": f"The advert could not be parsed: {exc}"})
+        except LinkedInFetchError as exc:
+            log.warning("tailor_linkedin_fetch_failed", error=str(exc))
+            events.put({"type": "error", "message": f"LinkedIn: {exc}"})
         except Exception as exc:
             log.error("tailor_failed", error=str(exc), exc_info=True)
             events.put({"type": "error", "message": f"Tailoring failed: {exc}"})
