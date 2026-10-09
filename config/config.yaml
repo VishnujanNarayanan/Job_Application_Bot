@@ -1071,11 +1071,13 @@ endpoint:
     bullet_num_id: "1"          # numbering.xml: entry bullets, 1.5 line spacing
     education_num_id: "2"       # numbering.xml: Education & Certificates lines
     education_max_lines: 3      # the method's hard cap on that section
-    # An entry must not be stranded across a page break with a title and one
-    # orphaned bullet. Its header is bound to this fraction of its bullets; if
-    # that group does not fit, the whole group moves to the next page. The rest
-    # may flow, so a long entry still fills the page it has.
-    keep_together_ratio: 0.66
+    # An entry header must not end a page on its own, so it is bound to its
+    # first N bullets (Word keepNext); the rest flow across the page break and
+    # the resume reads continuously. Every bullet also keeps its own wrapped
+    # lines together. This used to bind 66% of the entry, which moved the whole
+    # group to the next page when it did not fit and left up to half a page
+    # blank (#82).
+    keep_with_first_bullets: 1
     # Bold each JD keyword (selection.jd_keywords) at its FIRST appearance in the
     # rendered bullets, top to bottom across the whole resume. Bullets only —
     # entry title lines are never touched. Literal, boundary-guarded matches
