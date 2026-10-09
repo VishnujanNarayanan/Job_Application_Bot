@@ -7,6 +7,25 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Added
+
+- **Tailor a resume for a pasted advert:** `python -m src.cli.tailor --file jd.txt
+  [--company ...] [--role ...] [--applicants N] [--url ...] [--notify]`.
+  - No hard filter or apply threshold stops the build.
+  - The printed report gives the full score breakdown, the required keywords
+    shown and missing, the chosen entries and what each adds, and what every
+    filter *would* have said.
+  - The same advert pasted twice reuses the stored job and its parse, with no
+    second LLM call.
+  - No company cooldown is written, and no Telegram message is sent without
+    `--notify` (#20).
+
+### Changed
+
+- The run loop's scoring and building (`score_job`, `build_applied`) moved to
+  `src/tailor.py` so pasted adverts are judged exactly like scraped ones. The
+  run's behaviour is unchanged.
+
 ## [v3.1.0] — 2026-10-07
 
 Usable by someone other than its author, steadier LLM handling, and a Telegram
