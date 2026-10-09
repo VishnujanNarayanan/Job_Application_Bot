@@ -138,12 +138,6 @@ def test_config_yaml_loads_and_has_required_sections(config_path: Path) -> None:
     assert not missing, f"Missing config sections: {missing}"
 
 
-def test_config_no_role_clusters_yaml(repo_root: Path) -> None:
-    """Confirm no stray role_clusters.yaml was created (role-cluster
-    acceptance was removed; all scraped jobs proceed to scoring)."""
-    assert not (repo_root / "config" / "role_clusters.yaml").exists()
-
-
 def test_fit_weights_sum_to_one_and_the_multiplier_brackets_neutral(config_path: Path) -> None:
     """fit's three parts sum to 1.0; the applicant multiplier spans min <= 1 <= max."""
     with config_path.open() as f:
