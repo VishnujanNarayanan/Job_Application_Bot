@@ -54,6 +54,9 @@ families:
     members: [REST APIs, RESTful APIs, GraphQL, OpenAPI]
   - head: backend development  # 11
     variants: [back-end development, backend engineering, server-side development]
+    # How bullets say it (#24). Not plain "back end": "backend testing" bullets
+    # would then claim backend development.
+    members: [backend services, back-end service]
   - head: frontend development
     variants: [front-end development, frontend engineering]
   - head: full stack development
@@ -207,3 +210,11 @@ families:
     variants: [problem-solving skills, problem solving skills, analytical and problem solving skills]
   - head: Excel                # 28
     variants: [Microsoft Excel, MS Excel]
+
+  # --- #24: adverts' wording for skills bullets already state (2026-10-09) ------
+  - head: React
+    variants: [React Js, React JS]          # "React Js" (10 adverts) normalises to reactjs, not react
+  - head: Python
+    variants: [Python development, Python programming]   # 11
+  - head: model deployment
+    variants: [deploying models, deployed models, deployed model]   # 22
