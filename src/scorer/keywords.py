@@ -70,7 +70,7 @@ def _boundary_re(tok: str) -> re.Pattern[str]:
 #: A markdown backslash-escape: the scraper stores adverts as markdown, so 99% of
 #: stored ads write ``C\+\+``, ``scikit\-learn``, ``end\-to\-end`` (measured
 #: 2026-10-08 over 1,427 ads).
-_MD_ESCAPE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|~>])")
+_MD_ESCAPE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|~>&])")
 #: Typographic hyphens and dashes (54% of stored ads) and the minus sign.
 _DASHES = re.compile("[‐‑‒–—―−]")
 #: No-break, narrow and thin spaces (6% of stored ads).
