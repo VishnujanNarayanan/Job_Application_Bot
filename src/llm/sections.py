@@ -20,6 +20,10 @@ the head-and-tail cut, so nothing gets worse where the structure is unknown.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
+from pathlib import Path
+
+import yaml
 
 #: Categories, in the order a heading is tested against them. DROP and PAY come
 #: first so "Company description" and "Compensation" are not read as a
@@ -135,6 +139,101 @@ def _pay_lines(body: str) -> list[str]:
     return [ln for ln in body.splitlines() if _PAY_LINE.search(ln) and _DIGIT.search(ln)]
 
 
+#: Words that look like a technology even when no list names them: CamelCase
+#: (PyTorch, FastAPI), short acronyms (AWS, ETL, GCP), and tokens carrying
+#: + # . / or a digit (C++, C#, Node.js, CI/CD, S3, GPT-4).
+_TECHY = re.compile(
+    r"\b(?:[A-Z][a-z]+[A-Z][A-Za-z]*|[A-Z]{2,6}s?|[A-Za-z]+(?:\+\+|#)|[A-Za-z]+\.(?:js|NET|io|ai)"
+    r"|[A-Za-z]+/[A-Za-z]+|[A-Za-z]+-?\d+[A-Za-z]*)\b"
+)
+
+
+@lru_cache(maxsize=1)
+def _skill_pattern() -> re.Pattern[str] | None:
+    """One alternation over the curated skills: every spelling in
+    keyword_families.yaml plus the operator's skills pool (short entries)."""
+    terms: set[str] = set()
+    path = Path(__file__).resolve().parents[2] / "config" / "keyword_families.yaml"
+    try:
+        for fam in (yaml.safe_load(path.read_text()) or {}).get("families") or []:
+            for key in ("head", "variants", "members"):
+                val = fam.get(key)
+                terms.update([val] if isinstance(val, str) else map(str, val or []))
+    except OSError:
+        pass
+    try:
+        from src.parser import _pool_terms
+
+        terms.update(t for t in _pool_terms() if len(t.split()) <= 3)
+    except Exception:  # noqa: BLE001 - the pool is optional here
+        pass
+    terms = {t.strip() for t in terms if len(t.strip()) >= 2}
+    if not terms:
+        return None
+    alts = "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True))
+    return re.compile(rf"(?<![\w+#.])(?:{alts})(?![\w+#])", re.I)
+
+
+def _line_score(line: str) -> int:
+    """How much a line says about skills: a curated skill counts double, a
+    technical-looking word once."""
+    pat = _skill_pattern()
+    known = len(pat.findall(line)) if pat else 0
+    return 2 * known + len(_TECHY.findall(line))
+
+
+def fit_lines(body: str, room: int) -> str:
+    """Shorten one section to ``room`` characters keeping its most skill-dense
+    lines, in their original order, with "…" where lines were skipped.
+
+    Cutting at a fixed point kept a section's first lines whatever they said.
+    On the long adverts still showing the parser under 90% of their skills,
+    624 of the missed skills sat in responsibilities trimmed that way, while
+    most lines kept were prose with no skill in them.
+    """
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    if not lines or room <= 0:
+        return ""
+    head, rest = (lines[0], lines[1:]) if heading_category(lines[0]) else ("", lines)
+    left = room - (len(head) + 1 if head else 0)
+    if left <= 0:
+        return head[:room]
+    ranked = sorted(range(len(rest)), key=lambda i: (-_line_score(rest[i]), i))
+    keep: set[int] = set()
+    for i in ranked:
+        cost = len(rest[i]) + 1
+        if cost <= left:
+            keep.add(i)
+            left -= cost
+        if left < 20:
+            break
+    def render() -> str:
+        out = [head] if head else []
+        gap = False
+        for i, ln in enumerate(rest):
+            if i in keep:
+                if gap:
+                    out.append("…")
+                out.append(ln)
+                gap = False
+            else:
+                gap = True
+        if gap and keep:
+            out.append("…")
+        return "\n".join(out)
+
+    text = render()
+    # The "…" markers cost characters too; shed the weakest kept line until
+    # the section really fits its room.
+    for i in reversed(ranked):
+        if len(text) <= room:
+            break
+        if i in keep:
+            keep.discard(i)
+            text = render()
+    return text if len(text) <= room else text[:room]
+
+
 def clip_by_sections(text: str, budget: int, elision: str) -> str | None:
     """``text`` cut to about ``budget`` characters by section, or None when the
     advert has no requirement, nice-to-have or responsibility heading to go by."""
@@ -170,8 +269,11 @@ def clip_by_sections(text: str, budget: int, elision: str) -> str | None:
                 kept[order] = body
                 left -= cost
             elif left >= _MIN_PARTIAL:
-                kept[order] = body[: left - 2].rstrip() + " …"
-                left = 0
+                # Keep its most skill-dense lines rather than its first ones.
+                part = fit_lines(body, left - 4)
+                if part:
+                    kept[order] = part
+                    left -= len(part) + 1
 
     out: list[str] = []
     orders = [o for o, _, _ in sorted(pieces)]
