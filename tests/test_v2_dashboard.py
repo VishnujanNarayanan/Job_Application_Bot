@@ -623,6 +623,7 @@ def test_tailor_api_streams_steps_then_the_breakdown(client):
 
 @pytest.mark.parametrize("payload, detail", [
     ({"text": "   "}, "Paste the advert"),
+    ({"text": "", "url": "https://careers.example.com/job/1"}, "Only a LinkedIn job link"),
     ({"text": "an advert", "applicants": "lots"}, "whole number"),
 ])
 def test_tailor_api_rejects_bad_input(client, payload, detail):
@@ -641,3 +642,23 @@ def test_a_parse_failure_is_shown_not_swallowed(client):
     last = _events(resp)[-1]
     assert last["type"] == "error"
     assert "all providers failed" in last["message"]
+
+
+def test_a_linkedin_link_in_the_url_box_alone_is_the_source(client):
+    patches = _patch_page()
+    seen = {}
+
+    def fake_tailor(session, text, progress=None, **kw):
+        seen.update(kw, text=text)
+        return object()
+
+    link = "https://www.linkedin.com/jobs/view/4451200446/?refId=x&trackingId=y"
+    with patches[0], patch("src.state.master_profile.rebuild"), \
+            patch("src.tailor.tailor", side_effect=fake_tailor), \
+            patch("src.tailor.breakdown", return_value=_breakdown()), \
+            patch("src.endpoint.cache.get_or_build", return_value=(b"pdf", "application/pdf")):
+        resp = client.post("/api/tailor", json={"text": "  ", "url": link})
+    assert resp.status_code == 200
+    assert _events(resp)[-1]["type"] == "done"
+    assert seen["text"] == link
+    assert seen["url"] is None, "the fetched job keeps its clean URL"
