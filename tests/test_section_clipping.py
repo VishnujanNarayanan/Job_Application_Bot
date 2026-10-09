@@ -143,3 +143,41 @@ def test_plain_line_headings_followed_by_a_blank_line() -> None:
 def test_a_plain_line_without_a_blank_after_is_not_a_heading() -> None:
     assert heading_category("Experience with Python") is None
     assert heading_category("Experience with Python", plain=True) == "req"  # only if a blank follows
+
+
+# --- skill-aware trimming ---------------------------------------------------
+
+from src.llm.sections import fit_lines  # noqa: E402
+
+
+def test_trimming_keeps_skill_lines_over_prose_lines() -> None:
+    """A section that must shrink keeps the lines that name skills, not its
+    first lines: 624 missed skills sat in responsibilities cut at a fixed point."""
+    body = "\n".join([
+        "**Key Responsibilities**",
+        "- Partner with stakeholders across the organisation to drive outcomes.",
+        "- Foster a culture of excellence and continuous improvement in the team.",
+        "- Champion our values and represent the team at company events.",
+        "- Build streaming pipelines with Kafka, Spark and Airflow on AWS.",
+        "- Contribute to a positive and inclusive working environment for all.",
+        "- Ship services in Python and Go behind Kubernetes and Terraform.",
+    ])
+    out = fit_lines(body, 220)
+    assert out.startswith("**Key Responsibilities**")
+    assert "Kafka, Spark and Airflow" in out and "Kubernetes and Terraform" in out
+    assert "culture of excellence" not in out
+    assert len(out) <= 220
+
+
+def test_trimmed_lines_keep_their_order_and_mark_gaps() -> None:
+    body = "**Responsibilities**\nprose one here\n- Use Python daily\nprose two here\n- Run SQL on Postgres"
+    out = fit_lines(body, 70)
+    assert out.index("Python") < out.index("Postgres")
+    assert "…" in out
+
+
+def test_a_technical_word_counts_even_off_the_curated_list() -> None:
+    """CamelCase, acronyms and C++-style tokens score, so a tool no list names
+    yet is still preferred over plain prose."""
+    body = "**Duties**\nWork closely with many teams every day.\nTune the ZorbleDB cluster.\n"
+    assert "ZorbleDB" in fit_lines(body, 45)
