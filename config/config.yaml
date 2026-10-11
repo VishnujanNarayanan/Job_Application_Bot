@@ -490,6 +490,20 @@ selection:
     # does not satisfy it -- a gig competes on merit like a project.
     # 0 disables the guard and lets score alone decide every position.
     job_within_top: 2
+    # Entries whose bullets were hand-rewritten with business numbers. Only
+    # these may sit in the first `featured_within_top` slots; every other entry
+    # starts at slot N+1. Best match among them leads. Empty list = off.
+    featured_within_top: 2
+    featured_entries:
+      - job_application_bot
+      - market_data
+      - dekhlaw
+      - mql5
+      - law_firm_website
+      - product-explorer
+      - accredian_intership
+      - age_gender_classifier
+      - directory-app
 
   # --- How many entries reach the page (v3.4) --------------------------------
   # The best N entries, full stop. No per-kind threshold, no max_shown, no

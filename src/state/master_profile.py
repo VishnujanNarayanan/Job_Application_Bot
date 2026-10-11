@@ -191,7 +191,9 @@ class WorkExperience(_Entry):
                 f"work_experience '{self.id}': role_block title_aliases {missing} "
                 "are not in safe_title_aliases (hard rule #6)"
             )
-        for rb in self.role_blocks:
+        # Freelance shows the label and link in the date slot, never dates, so
+        # it need not carry any.
+        for rb in self.role_blocks if self.employment_type == "employment" else ():
             if not rb.entry_dates:
                 raise ValueError(
                     f"work_experience '{self.id}' block '{rb.role}': entry_dates "
