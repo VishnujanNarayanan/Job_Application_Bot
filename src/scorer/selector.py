@@ -1000,6 +1000,18 @@ def score_entry(
     return selected
 
 
+def featured_rule() -> tuple[frozenset[str], int]:
+    """``(entry ids, slot count)`` for the featured-entries rule, or an empty set.
+
+    The featured entries are the ones whose bullets were rewritten by hand with
+    business numbers; only they may open the page.
+    """
+    cfg = settings.selection.entry
+    ids = frozenset(getattr(cfg, "featured_entries", None) or ())
+    top_n = int(getattr(cfg, "featured_within_top", 0) or 0)
+    return (ids, top_n) if ids and top_n else (frozenset(), 0)
+
+
 def select_top(
     profile: Profile,
     jd: JDContext,
@@ -1068,6 +1080,14 @@ def select_top(
     job = next((s for s in ranked if _is_employment(s)), None)
     if job is not None and job is not ranked[0]:
         selected.append(job)
+    # The featured entries open the page (``ordering.order_entries``), so enough
+    # of them must be on it to fill those slots: the best-scoring ones join.
+    featured, feat_n = featured_rule()
+    for s in ranked:
+        if sum(e.id in featured for e in selected) >= feat_n:
+            break
+        if s.id in featured and s not in selected:
+            selected.append(s)
     shown: set[str] = set().union(*(s.covered for s in selected))
 
     while len(selected) < max_n:
