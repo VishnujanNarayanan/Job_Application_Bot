@@ -1690,3 +1690,43 @@ def test_the_score_floor_keeps_a_weak_entry_off(monkeypatch) -> None:
 
     assert "weak" in page(0.0)
     assert "weak" not in page(0.9)
+
+
+@contextmanager
+def _featured(ids, top=2):
+    data = settings.selection.entry._data
+    saved = {k: data.get(k) for k in ("featured_entries", "featured_within_top")}
+    data.update(featured_entries=list(ids), featured_within_top=top)
+    try:
+        yield
+    finally:
+        data.update(saved)
+
+
+def test_only_featured_entries_take_the_first_two_slots() -> None:
+    """A better-matching unfeatured project drops below the featured ones."""
+    sp = _ordering_entry("p_other", kind="project", score=0.95)
+    sf = _ordering_entry("p_feat", kind="project", score=0.40)
+    sw = _ordering_entry("e1", kind="work", score=0.30)
+    with _featured(["p_feat", "e1"]):
+        assert [e.id for e in order_entries([sp, sf, sw])] == ["p_feat", "e1", "p_other"]
+
+
+def test_best_featured_entry_leads() -> None:
+    sw = _ordering_entry("e1", kind="work", score=0.30)
+    sa = _ordering_entry("pa", kind="project", score=0.50)
+    sb = _ordering_entry("pb", kind="project", score=0.70)
+    with _featured(["pa", "pb", "e1"]):
+        # Featured by match: pb, pa, e1 -- the job guard lifts e1 into slot 2.
+        assert [e.id for e in order_entries([sa, sb, sw])] == ["pb", "e1", "pa"]
+
+
+def test_featured_entry_joins_the_page_even_when_outscored() -> None:
+    job = _simple_entry("job", "Built the service in Python.")
+    feat = _simple_project("feat", "Nothing relevant.")
+    others = [_simple_project(f"p{i}", "Built the service in Python.") for i in range(5)]
+    with _featured(["job", "feat"]):
+        out = select_top(
+            _profile(work=[job], projects=[*others, feat]), _jd(), _kw("Python"), now=NOW,
+        )
+    assert "feat" in [e.id for e in out]

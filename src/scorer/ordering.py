@@ -18,7 +18,7 @@ nothing left to order and was removed with the Skills section.
 from __future__ import annotations
 
 from src.config import settings
-from src.scorer.selector import SelectedEntry, entry_score
+from src.scorer.selector import SelectedEntry, entry_score, featured_rule
 
 
 def _recency_key(end_date: str) -> tuple[int, int]:
@@ -79,6 +79,13 @@ def order_entries(
     ordered = sorted(
         selected, key=lambda x: entry_score(x.similarity, x.coverage), reverse=True
     )
+
+    # Featured entries take the first slots, best match among them first; every
+    # other entry keeps match order below them.
+    featured, feat_n = featured_rule()
+    if feat_n:
+        head = [e for e in ordered if e.id in featured][:feat_n]
+        ordered = head + [e for e in ordered if e not in head]
 
     top_n = int(getattr(settings.selection.entry, "job_within_top", 2) or 0)
     if not top_n:
