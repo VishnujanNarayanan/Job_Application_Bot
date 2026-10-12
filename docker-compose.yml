@@ -21,6 +21,12 @@ x-app: &app
   build: .
   image: job-bot:latest
   env_file: .env
+  # Public resolvers. Without this Docker copies WSL2's resolv.conf, whose
+  # nameserver (10.255.255.254, the dnsTunneling stub) is loopback-only and
+  # unreachable from a bridge-network container -> Neon host never resolves.
+  dns:
+    - 1.1.1.1
+    - 8.8.8.8
   volumes:
     # config.yaml mounted read-only so endpoint.base_url etc. can change without
     # a rebuild (it is also baked in, this just lets you override it live).
