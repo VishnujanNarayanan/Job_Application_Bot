@@ -4,24 +4,18 @@
 # The user owns master_profile.yaml (gitignored); this file is checked in.
 
 # ---------------------------------------------------------------------------
-# Operator identity — architecture doc Section 2 / NFR-11 (instance-ready)
-# These are the CURRENT operator's values; they live in config, never in
-# src/. A different person swaps this block (+ .env, master_profile.yaml,
-# resumes/templates/) and runs their own instance with zero code edits.
-# Resume/cover filenames are DERIVED from full_name (see src/config.py),
-# never hardcoded.
+# Operator identity (NFR-11). Another person swaps this block, .env,
+# master_profile.yaml and resumes/templates/ to run their own instance with no
+# code edits. Resume/cover filenames are derived from full_name.
 # ---------------------------------------------------------------------------
 operator:
-  full_name: "Vishnujan Narayanan"   # drives derived resume/cover filenames
+  full_name: "Vishnujan Narayanan"
   years_experience: 1.5
   timezone: "Asia/Kolkata"
 
-  # Display lines for the resume template header, used by
-  # tools/build_headless_template.py. These are hand-trimmed forms, not the full
-  # records in master_profile.yaml: the method caps Education & Certificates at
-  # three lines, and the entry line has ~89 characters, so the long degree title
-  # and full course names do not fit. Left unset, the tool derives them from the
-  # profile instead.
+  # Resume header lines for tools/build_headless_template.py. Hand-trimmed to
+  # fit the method's three-line Education & Certificates cap (~89 chars a
+  # line). Left unset, they are derived from master_profile.yaml.
   resume_header:
     portfolio_url: "https://vishnujan.dev"
     education_line: "B.Tech CSE (Big Data), UPES Dehradun"
@@ -29,20 +23,16 @@ operator:
     certificates_line: "IBM Generative AI Engineering, Google Advanced Data Analytics, Google Data Analytics, NPTEL (IIT Madras / IIT Kharagpur)"
 
 # ---------------------------------------------------------------------------
-# Hard filters — Layer 2/3 job rejection (architecture doc Section 2)
+# Hard filters — Layers 2/3
 # ---------------------------------------------------------------------------
 filters:
   job_type: "fulltime"
-  # Reject a JD only when it EXPLICITLY requires more years than this. Single
-  # source of truth — re-checked on the Gemini-structured field in Layer 3.
-  # A JD that states no years parses to 0 and always passes: an unstated
-  # requirement is not a reason to reject. There is deliberately no seniority
-  # hard filter — role_level never rejects a job.
+  # Reject a JD only when it explicitly asks for more years than this. A JD
+  # that states none parses to 0 and passes. There is no seniority filter.
   years_ceiling: 6
-  # Open to international relocation; no visa filter applied.
+  # Open to relocation; no visa filter.
   visa_filter: null
-  # Reject scraped jobs whose location string contains any of these
-  # (case-insensitive substring match). Delhi NCR is excluded.
+  # Reject jobs whose location contains any of these (case-insensitive).
   disallowed_regions:
     - "Delhi"
     - "Gurgaon"
@@ -52,15 +42,10 @@ filters:
     - "Faridabad"
   company_blocklist: []   # whole company names, case-insensitive; checked before the parse
 
-  # Titles that name an employment type the operator rejects. Python regexes,
-  # case-insensitive, checked BEFORE the parse -- and they catch what the parse
-  # misses: the parser called "Software Developer Intern" full-time, and two
-  # internships were notified as matches before this existed.
-  #
-  # Measured over 1,221 stored jobs (2026-10-05): 31 titles hit. Deliberately
-  # NOT here: "trainee" -- "Graduate Engineer Trainee" is a full-time entry
-  # role in India -- and "smart contract", a blockchain specialism, not a
-  # contract.
+  # Title regexes (case-insensitive) for employment types the operator
+  # rejects, checked before the parse — the parser has called internships
+  # full-time. Not listed on purpose: "trainee" (Graduate Engineer Trainee is
+  # a full-time role in India) and "smart contract".
   title_blocklist:
     - '\bintern(s|ship|ships)?\b'
     - '\bapprentice(s|ship|ships)?\b'
@@ -69,29 +54,22 @@ filters:
     - '(?<!smart )\bcontract(ual|or|ors)?\b'
 
   # Skip, before the parse, a job whose applicant count means even this fit
-  # could not clear scoring.apply_threshold. final_score = fit x applicant
-  # multiplier; across 1,221 stored jobs the best fit ever was 0.728 and no
-  # job with 180+ applicants has ever matched. At threshold 0.45 this skips
-  # ~180+ applicants -- about 1 parse in 5. Raise it to skip fewer.
+  # could not clear scoring.apply_threshold. The best fit seen over 1,221
+  # stored jobs was 0.728. Raise it to skip fewer.
   best_realistic_fit: 0.75
 
 # ---------------------------------------------------------------------------
-# Salary — informational only (cover letter + notification text). Never
-# auto-filled on any form (FR-12). Expected = JD upper bound if specified,
-# else this default.
+# Salary — informational only, never filled in on a form (FR-12). Expected =
+# the JD's upper bound if stated, else this default.
 # ---------------------------------------------------------------------------
 salary:
   default_expected_lpa: 6.0
 
 # ---------------------------------------------------------------------------
-# Scheduler — Layer 1
+# Scheduler — Layer 1. Cron runs outside Python; these values document the
+# cron entries. No application quotas (hard rule #14).
 # ---------------------------------------------------------------------------
 scheduler:
-  # No application quotas: every match >= 0.50 produces a notification
-  # (CLAUDE.md hard rule #14). The old cycle_quota / peak_hours window
-  # rationed auto-applications, which no longer exist.
-  # Cron cadence is managed at the OS / Oracle Cloud level, not from Python.
-  # These values are documentation for the cron entries to configure.
   cadence:
     peak_interval_minutes: 40     # weekdays 8am–6pm IST
     off_peak_interval_hours: 4    # nights and weekends
@@ -99,97 +77,71 @@ scheduler:
     weekly_report_hour_ist: 8
 
 # ---------------------------------------------------------------------------
-# Scraper — Layer 2 (JobSpy, listings only). LinkedIn is read-only public
-# listings — JobSpy never logs into or acts on the operator's account
-# (CLAUDE.md hard rule #4 / FR-15).
+# Scraper — Layer 2 (JobSpy, public listings only; never logs into the
+# operator's LinkedIn account, hard rule #4 / FR-15)
 # ---------------------------------------------------------------------------
 scraper:
+  # JobSpy `hours_old`: how far back each run looks. Whole hours; 0 disables
+  # the age filter entirely, so 1 is the minimum.
   hours_old:
-    # JobSpy `hours_old` parameter — how far back to look per run.
-    # Narrowed to the freshest postings only. JobSpy takes whole hours, so
-    # 1 is the minimum — 0 (or anything int() rounds to 0) DISABLES the age
-    # filter entirely. Was peak 24 / off_peak 48 to cover a day between
-    # manual clicks; widen again if runs come back empty.
     peak: 1
     off_peak: 1
-  # Stop after this many jobs reach a verdict in one run. 0 = off.
-  # Off since 2026-10-05: at 20, run 37333275047 scraped 40 jobs and never
-  # looked at 10 of them -- and with a 1-hour scrape window they were not
-  # scraped again. `time_budget_minutes` is the guard now, and what it does not
-  # reach is dropped while `backlog_days` is 0, carried over otherwise.
+  # Stop after this many jobs reach a verdict in one run. 0 = off;
+  # time_budget_minutes is the guard instead.
   short_circuit_count: 0
-  # Stop STARTING new jobs this far into a run, so it always finishes cleanly
+  # Stop starting new jobs this far into a run, so it finishes cleanly
   # (verdicts written, summary sent) inside the workflow's 50-minute timeout.
-  # A run killed by the timeout writes no not_applied rows and sends nothing.
   time_budget_minutes: 40
-  # Jobs scraped in the last N days that never got a verdict -- not reached
-  # before the time budget, or abandoned when every LLM was out of budget --
-  # are processed FIRST by the next run. 0 = off.
-  # Off since 2026-10-06 at the operator's call: carried-over jobs piled up
-  # and crowded each run with stale listings. Jobs a run doesn't reach are now
-  # dropped; set this back to 3 to carry them over again.
+  # Jobs from the last N days with no verdict are processed first by the next
+  # run. 0 = off: unreached jobs are dropped rather than piling up as stale
+  # listings. 3 carries them over.
   backlog_days: 0
-  # JobSpy results_wanted cap per query term.
   results_wanted_per_term: 50
-  # country_indeed — geo-filters Indeed AND Glassdoor only.
+  # Geo-filter for Indeed and Glassdoor only.
   country: "india"
-  # location — the ONLY geo-filter LinkedIn honours (it ignores `country`).
-  # Without it LinkedIn returns worldwide listings, not India ones. Also
-  # refines Indeed/Glassdoor within the country. Use a country or city string.
+  # The only geo-filter LinkedIn honours; without it LinkedIn returns
+  # worldwide listings.
   location: "India"
-  # LinkedIn returns listings WITHOUT the description body unless each one is
-  # fetched individually (an extra request per job). Without it jd_text is
-  # empty, which (a) starves the Gemini parser and (b) collapses near-duplicate
-  # detection — every empty-text embedding is identical (cosine 1.0), so all
-  # LinkedIn jobs get flagged as duplicates of the first. Fetching costs more
-  # requests → higher throttle risk, bounded by the rate_limit settings below.
+  # Fetch each LinkedIn description individually. Without it jd_text is empty,
+  # which starves the parser and makes every job a near-duplicate of the
+  # first. Costs a request per job, bounded by rate_limit below.
   linkedin_fetch_description: true
-  # Remote roles. The plain search returns LinkedIn's top listings for
-  # `location`, almost all on-site or hybrid: of 1,182 parsed jobs only 98
-  # (8%) were remote. This adds one LinkedIn call per term with the Remote
-  # filter on, so remote roles in `location` arrive whether or not they rank.
-  # A wider window than the plain search's: remote listings are sparse, and
-  # ones already seen are skipped as duplicates before they cost a parse.
-  # results_wanted 0 turns it off.
+  # One extra LinkedIn call per term with the Remote filter on, since the
+  # plain search is almost all on-site (98 of 1,182 parsed jobs were remote).
+  # Wider window because remote listings are sparse. results_wanted 0 = off.
   remote:
     results_wanted: 15
     hours_old: 24
-  # Anti-rate-limit measures (recoverable scraper-IP throttling, hard rule #4).
   rate_limit:
-    # Scrape each site in its own JobSpy call so one site's throttling or
-    # error doesn't discard the other sites' results.
+    # One JobSpy call per site, so one site failing doesn't lose the others.
     per_site: true
-    # Per-site retry with exponential backoff + jitter on failure.
+    # Retry with exponential backoff + jitter.
     max_retries: 3
     backoff_base_seconds: 5
-    # Randomised pause between site calls to avoid bursty request patterns.
+    # Randomised pause between site calls.
     inter_site_delay_seconds: 4
-    # Fetching LinkedIn descriptions multiplies requests; cap LinkedIn lower
-    # than results_wanted_per_term to bound the request volume per run.
+    # Lower than results_wanted_per_term, since each LinkedIn job costs an
+    # extra description fetch.
     linkedin_results_wanted: 25
-    # Optional rotating proxies passed to JobSpy (empty = direct connection).
-    # Free tier has no proxies; this is a hook for the operator to add their
-    # own if scraper-IP throttling becomes a problem.
+    # Optional rotating proxies (empty = direct connection).
     proxies: []
   sites:
-    # Temporarily LinkedIn-only: apis.indeed.com is timing out from this
-    # network. Re-add "indeed" and "glassdoor" once connectivity is restored.
+    # LinkedIn only while apis.indeed.com times out from this network. Re-add
+    # "indeed" and "glassdoor" once it doesn't.
     - "linkedin"
-  # Search-term rotation. Each run takes `terms_per_run` terms starting at the
-  # persisted index (search_rotation_state table) and advances past them, so
-  # consecutive runs sweep the list rather than repeating its head.
-  # To search a term by hand instead, run `python -m src.main` in a terminal
-  # (arrow-key menu) or pass `--term "..."`; a hand-picked term doesn't move
-  # the rotation. `--auto` skips the menu.
+  # Search-term rotation. Each run takes `terms_per_run` terms from the stored
+  # index (search_rotation_state table) and advances past them. New terms go
+  # at the end so the stored index keeps pointing at the same term.
+  # To pick a term by hand, run `python -m src.main` (arrow-key menu) or pass
+  # `--term "..."`; a hand-picked term doesn't move the rotation. `--auto`
+  # skips the menu.
   #
-  # Sizing is a cost/coverage trade: each scraped job costs 1 Gemini call to
-  # parse, plus 1 more to build if it scores >= 0.50. More terms per run means
-  # fewer clicks to sweep the 66-term list, but a bigger bill per click.
-  # Currently 1 — the cheapest setting, one term per run as before.
+  # Each scraped job costs 1 LLM call to parse, so more terms per run sweeps
+  # the list faster but costs more per run; 1 is the cheapest.
   terms_per_run: 1
-  # Every role is searched twice: as-is and with "junior" in front, since
-  # junior postings are often titled that way and a plain search ranks them
-  # below senior ones. Interleaved, so the rotation alternates between the two.
+  # Each role is searched as-is and with "junior" in front, since junior
+  # postings are often titled that way and a plain search ranks them below
+  # senior ones. The two are interleaved.
   search_terms:
     - "backend engineer"
     - "junior backend engineer"
@@ -239,11 +191,9 @@ scraper:
     - "junior quantitative researcher"
     - "quantitative analyst"
     - "junior quantitative analyst"
-    # AI-assisted development and LLM roles. "Claude Code specialist" is a
-    # title in its own right now; the rest are the names the same work is
-    # advertised under. Pairs follow the junior rule above, except where a
-    # junior variant is not a title anyone posts: "Claude Code specialist",
-    # "AI prompt engineer", "AI agent developer", "agentic AI engineer".
+    # AI-assisted development and LLM roles. No junior variant where nobody
+    # posts one: Claude Code specialist, AI prompt engineer, AI agent
+    # developer, agentic AI engineer.
     - "Claude Code specialist"
     - "prompt engineer"
     - "junior prompt engineer"
@@ -263,103 +213,65 @@ scraper:
     - "junior infrastructure engineer"
     - "data infrastructure engineer"
     - "junior data infrastructure engineer"
-  # Re-parse and re-score every scraped job each run, skipping only ones
-  # already notified. Local inference is unmetered, so the only thing a skip
-  # saves is seconds — and skipping cost 176 of 745 jobs (24%) when runs that
-  # aborted partway left their remainder in all_jobs with no verdict, which
-  # the next run then dismissed as duplicates forever.
-  #
-  # true here re-examines notified jobs too, which means the same match can
-  # arrive on Telegram again. Off by default: compute is cheap, attention is
-  # not.
+  # Every scraped job is re-parsed and re-scored each run unless already
+  # notified, so jobs left without a verdict by an aborted run aren't later
+  # dismissed as duplicates. true re-examines notified jobs too, so the same
+  # match can arrive on Telegram again.
   rescore_notified: false
 
   # Never apply to the same company twice within this many days.
   cooldown_days: 10
 
 # ---------------------------------------------------------------------------
-# Selection — Layer 4 (pure deterministic, no LLM)
+# Selection — Layer 4 (deterministic, no LLM)
 # ---------------------------------------------------------------------------
 selection:
   # --- The JD checklist ------------------------------------------------------
-  # The template has no Skills section, so a qualification counts only when it is
-  # written inside a bullet. These weights define what Layer 4 grades against.
+  # The template has no Skills section, so a qualification counts only when a
+  # bullet states it.
   keywords:
     weight_required: 1.00
-    # Halved because the offline grader (resume guide/score_coverage.py) drops
-    # "Nice to Have:" lines from the required token set entirely. Half weight is
-    # the softest honest version of the same judgement.
+    # Half weight: the offline grader (score_coverage.py) ignores "Nice to
+    # Have" lines entirely.
     weight_nice_to_have: 0.50
-    # resume_method.md: "ignore everything except the Qualifications section".
-    # responsibilities is duty prose — tokenising it floods the checklist with
-    # sentences no bullet can match and deflates every coverage ratio. It still
-    # feeds vec_match, where it drives the embedding tie-break.
+    # Responsibilities are duty prose no bullet can match; tokenising them
+    # deflates coverage. They still feed the embedding tie-break.
     include_responsibilities: false
-    # Vendored copy of the 128-title sheet, used as a TIE-BREAK only (see
-    # src/scorer/qualifications.py). Unset or missing -> the tie-break is off and
-    # selection is unaffected.
+    # The 128-title sheet, used only as a tie-break
+    # (src/scorer/qualifications.py). Unset or missing = tie-break off.
     qualifications_path: "data/job_qualifications.md"
 
   # --- Bullets per entry -----------------------------------------------------
-  # Method: minimum 3, maximum 8 (1 summary + 2-7), "scaled to how long you were
-  # there — under 6 months you need three, not five".
+  # Method: 3 to 8 (1 summary + 2-7), scaled to time in the role.
   bullets:
     min_per_entry: 3
-    # One flat cap for everything. A job, a freelance engagement and a project are
-    # selected by the same method and compete for the same slots — what an entry IS
-    # has no say in how many bullets it gets, only what it covers does. (v3.1
-    # replaced the tenure bands and the separate project cap.)
+    # One cap for jobs, freelance and projects alike.
     max_cap: 8
-    # Projects stop earning space sooner than jobs. Measured: with a flat 8, every
-    # project ran to 8 while jobs stopped at 4-6 — the cap was setting project
-    # length, and the last slots filled with restatement.
+    # Projects stop sooner: with a flat 8 every project filled all 8 slots,
+    # the last ones with restatement.
     project_cap: 5
-    # Beam width for phase 1. Measured: 20 already reaches the same optimum as 200
-    # on a 50-bullet pool, and the whole beam runs faster than the greedy it
-    # replaced because hit sets are computed once instead of per iteration.
+    # Phase 1 beam width; 20 reaches the same optimum as 200 on a 50-bullet pool.
     beam_width: 20
-    # Phase 2: after JD gain is exhausted, fill the remaining slots from the title's
-    # own qualification checklist. Stops at zero canonical gain, never pads to cap.
+    # Phase 2: fill remaining slots from the title's qualification checklist.
+    # Stops at zero gain, never pads to the cap.
     qualification_fill: true
 
     # --- Repetition ------------------------------------------------------------
-    # Inside ONE entry there is no tunable: a bullet restating an already-covered
-    # keyword is never selected. Full stop. v3.3 deleted the knobs that used
-    # to referee repetition (repeat_penalty, repeat_requires_ratio,
-    # duplicate_prefix_words/_jaccard/_min_words, across_entry_jaccard,
-    # max_repeats_across_entries, extras_must_be_unique_source) along with the
-    # cause they existed for — the render set now comes from the lead block alone,
-    # so the extractor's re-wordings of one accomplishment never meet in an entry,
-    # and re-extracted `extra` bullets carry one or two keywords each.
-    #
-    # ACROSS entries the method explicitly permits repetition -- and a real skill
-    # shown in several roles is stronger evidence, which fit's keyword-repetition
-    # term rewards. So the ceiling covers ONLY the filler words listed in
-    # `capped_keywords`: at most `max_keyword_renders` entries may claim one of
-    # them. Measured before it existed: "Agile" rendered in four of six entries,
-    # in four genuinely different sentences, so no text-similarity rule could
-    # ever have caught it. Every other keyword may repeat freely (issue #14; it
-    # used to cap EVERY keyword). A JD token is capped when it contains a listed
-    # term, so "Agile methodologies" counts. 0 or an empty list disables it.
-    #
-    # The AI coding assistants are NOT listed here: `jd_gated_terms` below
-    # already holds them to once per page, and only when the advert asks.
+    # Within one entry, a bullet that only restates covered keywords is never
+    # selected. Across entries repetition is allowed (and rewarded by fit's
+    # keyword_repetition term), except for the filler words below: at most
+    # `max_keyword_renders` entries may claim one. A JD token containing a
+    # listed term counts ("Agile methodologies"). 0 or an empty list = off.
+    # AI coding tools are handled by jd_gated_terms instead.
     max_keyword_renders: 2
     capped_keywords:
       - "Agile"
 
-    # --- Bullets the ADVERT has to ask for -------------------------------------
-    # A bullet naming any of these renders only when the advert's own checklist
-    # names one too, and at most ONCE on a page.
-    #
-    # The AI coding assistants are true of nearly every repo, so they sit in most
-    # recovery pools -- and phase 2 (the title's standing checklist, not this
-    # advert) kept pulling them onto pages for jobs that never mentioned AI
-    # tooling. There the line says nothing about the operator's engineering and
-    # invites a question the advert never asked. Where an advert DOES ask for
-    # them, one mention is the whole signal; a second is repetition.
-    #
-    # Empty list disables the rule.
+    # --- Bullets the advert has to ask for -------------------------------------
+    # A bullet naming any of these renders only when the advert's checklist
+    # names one too, and at most once per page. These tools appear in most
+    # repos, so without the gate they land on pages for jobs that never
+    # mentioned AI tooling. Empty list = off.
     jd_gated_terms:
       - "Claude Code"
       - "OpenAI Codex"
@@ -369,20 +281,12 @@ selection:
       - "Copilot"
       - "Model Context Protocol"
       - "MCP"
-    # Wordings that ALSO open the gate (#21). Adverts usually ask for AI tooling
-    # without naming one of the tools above -- "AI-assisted development tools",
-    # "AI coding assistants" -- and the parser can summarise the phrase away, so
-    # these are matched literally against the RAW advert text as well as the
-    # parsed fields. Mined from 1,053 stored adverts (2026-10-04): 39 distinct
-    # phrasings, each kept only where its contexts meant USING AI to build
-    # software. Deliberately absent, though frequent:
-    #   * "prompt engineering" (78 adverts) -- almost always building LLM apps
-    #     (RAG, re-ranking, guardrails), not using a coding assistant;
-    #   * bare "AI tools" (90) -- as often "generative AI tools (LangChain,
-    #     Hugging Face)" as Cursor/Copilot;
-    #   * bare "AI" (603) -- mostly AI/ML work.
-    # Tool names that no bullet mentions sit here rather than in jd_gated_terms,
-    # because a gated term also marks which bullets are gated.
+    # Wordings that also open the gate (#21), matched literally against the
+    # raw advert as well as the parsed fields. Mined from 1,053 adverts; each
+    # kept only where it meant using AI to build software. Left out on
+    # purpose: "prompt engineering" (usually building LLM apps), bare "AI
+    # tools" and bare "AI". Tool names no bullet mentions go here rather than
+    # in jd_gated_terms, which also marks bullets as gated.
     jd_gate_openers:
       # generic wordings
       - "AI-assisted"
@@ -432,68 +336,43 @@ selection:
       - "Gemini Code Assist"
 
   # --- Common bullets (#30) --------------------------------------------------
-  # master_profile.yaml `common_bullets`: claims true of the operator regardless of
-  # any repo (soft skills, ways of working, AI coding tools), written once. Each
-  # renders at most once per page, only when the advert's checklist names one of
-  # its triggers, and only AFTER every entry has chosen its own bullets -- so it
-  # can never bar a project bullet's keywords (src/scorer/common.py).
+  # master_profile.yaml `common_bullets`: claims true regardless of repo (soft
+  # skills, ways of working). Each renders only when the advert names one of
+  # its triggers, and only after every entry has chosen its own bullets
+  # (src/scorer/common.py).
   common_bullets:
     enabled: true
-    # Soft-skill lines are cheap coverage; past three they read as padding.
+    # Past three they read as padding.
     max_per_page: 3
-    # Per entry, so host-less lines (which all prefer the salaried job) spread out
-    # instead of stacking under one header. Each FAMILY is also once per page.
+    # Spreads them across entries; each family is also once per page.
     max_per_entry: 1
 
   # --- Entry scoring ---------------------------------------------------------
   entry:
-    # No title-alias term (v3.4). `similarity` is the mean cosine of the bullets
-    # actually selected, and nothing else. The old 0.30 alias share handed every
-    # work entry a bonus no project could earn -- alias cosine runs ~0.34 against a
-    # bullet mean of ~0.20 -- so over 120 real JDs the four work entries took 3-4 of
-    # the 5 slots on nearly every resume and a full-stack advert showed a law-firm
-    # website over a React/TypeScript app. An alias is a label, not evidence.
-    #
-    # Two signals, not one. `coverage` is what a recruiter grades in 20 seconds;
-    # `similarity` is "is this the same kind of work". Coverage alone ranks a
-    # keyword-dense but off-topic entry top, which is the "hot dog" failure.
-    #
-    # These weights choose WHICH entries make the page (raw similarity, so in
-    # practice coverage-led -- the page keeps the advert's keywords). Which of
-    # them LEADS is ordered by selector.entry_score, the same formula fit grades
-    # the lead with (scoring.fit.lead_entry_weights, calibrated similarity), so
-    # the lead and its grade agree (#31).
+    # Which entries make the page. `coverage` is what a recruiter grades;
+    # `similarity` (mean cosine of the selected bullets) is "is this the same
+    # kind of work" and stops a keyword-dense, off-topic entry ranking top.
+    # Which entry leads is ordered separately by selector.entry_score, using
+    # scoring.fit.lead_entry_weights (#31).
     weight_similarity: 0.50
     weight_coverage: 0.50
-    # --- Which block leads (v3.3) ----------------------------------------------
-    # The lead block supplies the render set, the header, the dates and the title.
-    # It is chosen on what its AUDITED bullets cover of this JD's checklist, not on
-    # its title aliases: an alias list is a label the extractor attached, two blocks
-    # of one entry can carry near-identical lists, and a project renders its name
-    # rather than a title, so a label was deciding which bullets a recruiter reads.
+    # --- Which block leads -------------------------------------------------------
+    # The lead block supplies the render set, header, dates and title. Chosen
+    # on what its bullets cover of the JD, not its title aliases:
     #
     #   lead = lead_weight_keywords * keyword_score + lead_weight_similarity * cosine
     #
-    # Keywords carry the weight because that is what a screen grades. Cosine keeps a
-    # small share because keywords cannot tell that a block is the same KIND of work
-    # (the "hot dog" failure), and two blocks of one entry routinely cover the same
-    # tokens — there the embedding is the only thing that can separate them.
+    # Cosine separates blocks that cover the same keywords.
     lead_weight_keywords: 0.75
     lead_weight_similarity: 0.25
 
-    # Bullets are pooled across all of an entry's role_blocks, so an off-role
-    # bullet can surface under an on-role header. Rather than excluding those
-    # blocks wholesale (which would drop keywords the operator genuinely has),
-    # scale their coverage gain by how relevant their block is to this JD: an
-    # off-role bullet then wins only when nothing on-role covers that keyword.
+    # Bullets are pooled across an entry's role_blocks. Off-role blocks'
+    # coverage is scaled by their relevance to the JD, so an off-role bullet
+    # wins only when nothing on-role covers that keyword.
     off_role_scaling: true
     off_role_floor: 0.05  # relevance never scales fully to zero
-    # v3.2 merged Work History and Projects into one section ordered purely by
-    # match. This is the single guard: the salaried employment entry
-    # (employment_type: employment) must appear within the first N positions, so
-    # the page never opens without the operator's actual job in view. Freelance
-    # does not satisfy it -- a gig competes on merit like a project.
-    # 0 disables the guard and lets score alone decide every position.
+    # The salaried job (employment_type: employment) must appear within the
+    # first N entries. Freelance doesn't count. 0 = off.
     job_within_top: 2
     # Entries whose bullets were hand-rewritten with business numbers. Only
     # these may sit in the first `featured_within_top` slots; every other entry
@@ -510,114 +389,48 @@ selection:
       - age_gender_classifier
       - directory-app
 
-  # --- How many entries reach the page (v3.4) --------------------------------
-  # The best N entries, full stop. No per-kind threshold, no max_shown, no
-  # min_shown backfill.
-  #
-  # WHY A COUNT AND NOT A CUTOFF. The old thresholds (work 0.199, freelance 0.210,
-  # project 0.153) were percentiles measured by running selection over the corpus
-  # once, so they described a distribution that stopped existing the moment the
-  # scoring formula changed. It changed, and on a real full-stack advert exactly
-  # ONE entry of nineteen cleared its threshold -- the page was then filled by
-  # min_shown backfill rather than by merit. A count cannot drift: the page is
-  # always full, always of the five that answer this JD best, and a formula change
-  # reorders them instead of emptying the page.
-  #
-  # Work, freelance and projects compete in one pool for these slots, which is what
-  # the merged section already renders. The salaried employment entry is always one
-  # of them (see select_top) and always sits in position 1 or 2 (job_within_top).
-  #
-  # #25: the page is chosen as a SET. Entries join in order of the JD keyword
-  # weight they ADD that the page does not yet show; the page stops growing when
-  # nothing adds anything, never holds more than `max_entries`, and is topped up
-  # by score to `min_entries`. `top_n` is kept only as the fallback cap when
-  # max_entries is unset.
+  # --- How many entries reach the page ---------------------------------------
+  # Chosen as a set (#25): entries join in order of the JD keyword weight they
+  # add; the page stops when nothing adds anything, is capped at max_entries,
+  # and topped up by score to min_entries. top_n is the fallback cap when
+  # max_entries is unset. The salaried job is always included.
   top_n: 5
   min_entries: 3
   max_entries: 6
   # A candidate joins only if its score is at least this share of the best
-  # entry's score, so a weak, off-kind entry cannot join on one rare token.
-  # Off (0.0): measured on 1,220 stored jobs (#25), 0.5 and 0.7 only lowered
-  # coverage (0.4266 -> 0.4232 -> 0.4055) and apply count (219 -> 218 -> 209).
+  # entry's. 0.0 = off: 0.5 and 0.7 only lowered coverage and apply count
+  # over 1,220 stored jobs.
   entry_score_floor: 0.0
 
-  # Freelance engagements render under the merged section like everything else;
-  # this is only what their entry line shows in the right slot, where a job shows
-  # dates and a project shows its link.
+  # What a freelance entry shows in the right slot (a job shows dates, a
+  # project its link).
   freelance:
     label: "Freelance"
 
 scoring:
   final:
-    # Weights sum to 1.0. Each factor is counted exactly once: recency used to
-    # enter both here (0.10) and inside success_prob (0.40 x 0.30), which made it
-    # an undeclared 22% of the score. The separate `project` term (0.05) went
-    # when fit started grading the lead entry of ANY kind: with a project leading,
-    # the same score would have counted twice.
-    #
     # final = min(max_score, fit x success_prob)
-    #
-    # success_prob is the APPLICANT MULTIPLIER (#26): it boosts early postings and
-    # penalises crowded ones, neutral at `scoring.success_prob.neutral_at`
-    # applicants. It used to cap at x1.0 (#16, #18), which made being early a
-    # protection but never a reward -- a near-miss fit (Staffnix 0.450, first 25)
-    # could not pass however early. Now an early posting can lift it over.
+    # success_prob is the applicant multiplier (#26): early postings are
+    # boosted, crowded ones penalised.
     max_score: 1.0
-  # How many DISTINCT job ads a term must appear in before it joins the
-  # technology vocabulary that Layer 3 scans each JD against. Recurrence is
-  # what separates a technology from a hallucination: an invented skill does
-  # not turn up in five unrelated listings. Measured over 767 parsed jobs,
-  # 5 keeps 228 terms (Python 276 ads, LangChain 25, FastAPI 18) and discards
-  # the 4,349 one-off strings.
+  # How many distinct job ads a term must appear in to join the technology
+  # vocabulary Layer 3 scans each JD for. Filters out one-off and
+  # hallucinated terms.
   vocabulary_min_jobs: 5
 
-  # Jobs below this threshold are not applied to (reason: LOW_SCORE).
-  #
-  # STAGE 6, measured 2026-09-01 over all 767 parsed all_jobs rows: final_score
-  # p50=0.254 p90=0.341 p95=0.372 p99=0.457, MAXIMUM 0.523. The previous 0.50
-  # would have notified on one or two ads out of 767 — the inert-threshold
-  # failure this file already records once, repeated.
-  #
-  # p95, so roughly 1 ad in 20 notifies. This is the one number to turn if the
-  # volume is wrong: lower it for more matches, raise it for fewer. Same
-  # provisional caveat as the selection thresholds above — re-measure after the
-  # bullet-extract re-run.
-  #
-  # 0.65 (2026-10-04, #26), set with the 0.5-1.5 applicant multiplier: a
-  # first-25 posting needs fit 0.43 (~18% of scored jobs), one at 100
-  # applicants needs 0.65 (~4%). Re-measure from the job_scored logs once the
-  # coverage fixes (#23, #24, #25) shift the fit distribution.
-  #
-  # 0.45 (2026-10-05): 0.65 matched 3 of 11 scored jobs on run 37324500555 and
-  # 0 of 18 on 2026-10-04's "software engineer python" run. A first-25 posting
-  # now needs fit 0.30, one at 100 applicants needs 0.45, and one with 200+
-  # needs 0.90. Watch the volume and raise it if it's noisy.
-  #
-  # 0.60 (2026-10-07): 0.45 matched 23 of 35 scored jobs on the 2026-10-06
-  # 11:08 UTC local run -- too many to act on. On those same scores 0.52
-  # would keep 17, 0.55 keeps 12, 0.60 keeps 9 (the top scores were 0.88,
-  # 0.74, 0.69). The operator chose 0.60.
+  # Jobs below this are not applied to (LOW_SCORE). The one number to turn if
+  # match volume is wrong: lower for more, raise for fewer. At 0.60 a
+  # first-25 posting needs fit 0.40 and one at 100 applicants needs 0.60.
   apply_threshold: 0.60
 
   fit:
     # Weights sum to 1.0.
-    #
-    # The old split was best_experience 0.50 + selected_summary 0.20 +
-    # avg_skill_pool_match 0.30. Both of those measured cosine against things the
-    # new template does not put on the page, so half the fit score was graded on
-    # content no recruiter would ever read. keyword_coverage replaces them: the
-    # weighted fraction of the JD's own qualifications that the SELECTED bullets
-    # literally contain (src/scorer/keywords.py).
-    #
-    # lead_entry grades the entry that LEADS the page, of any kind (a project
-    # led 70 of 84 stored resumes), on two things: is it the same KIND of work
-    # (similarity, calibrated below) and does it state the JD's keywords (its
-    # own coverage). keyword_repetition rewards a
-    # required skill shown in several roles: for EVERY required JD keyword,
-    # min(entries showing it, repetition_cap) / repetition_cap, averaged -- a
-    # keyword the page misses counts 0, so this cannot max out on Python/SQL/Git
-    # alone. Filler words are capped separately (selection.bullets.
-    # capped_keywords), so they cannot farm this term.
+    #   lead_entry         the entry leading the page: same kind of work
+    #                      (calibrated similarity) and its own JD coverage
+    #   keyword_coverage   weighted share of the JD's qualifications the
+    #                      selected bullets contain (src/scorer/keywords.py)
+    #   keyword_repetition per required JD keyword, min(entries showing it,
+    #                      repetition_cap) / repetition_cap, averaged
     lead_entry: 0.45
     keyword_coverage: 0.35
     keyword_repetition: 0.20
@@ -626,51 +439,30 @@ scoring:
     lead_entry_weights:
       similarity: 0.50
       coverage: 0.50
-    # Similarity is calibrated to its MEASURED range before it is weighted (#16).
-    # Raw bullet-vs-JD cosine sits in 0.22-0.40 for 90% of jobs (p5 / p95 over
-    # 648 scored jobs, 2026-10-04), so used raw it moved the final score by
-    # ~0.007 whatever its weight. Rescaled, `low` maps to 0 and `high` to 1
-    # (clamped). Re-measure as the corpus grows.
+    # Raw bullet-vs-JD cosine sits in 0.22-0.40 for 90% of jobs, so it is
+    # rescaled: `low` -> 0, `high` -> 1 (clamped). Re-measure as the corpus
+    # grows.
     similarity_scale:
       low: 0.22
       high: 0.40
 
-  # success_prob = the applicant multiplier, and nothing else: FEWER applicants
-  # scores higher. Read from LinkedIn's public job page at scrape time
-  # (all_jobs.applicants_count). Linear in the count between three anchors:
-  # at or below `boost_full_at` -> `max`, at `neutral_at` -> 1.0, at or above
-  # `penalty_full_at` -> `min`. "Be among the first 25" is stored as 24 and
-  # "Over 200" as 201. Seniority and time since posting are not scored (#13).
-  #
-  # With apply_threshold 0.45: a first-25 posting needs fit 0.30, one at 100
-  # applicants needs 0.45, and one with 200+ needs 0.90 -- crowded postings
-  # are still filtered out in effect (accepted, #26).
+  # success_prob = the applicant multiplier: fewer applicants scores higher.
+  # Read from LinkedIn's job page (all_jobs.applicants_count). Linear between
+  # `boost_full_at` -> `max`, `neutral_at` -> 1.0 and `penalty_full_at` ->
+  # `min`. "Be among the first 25" is stored as 24, "Over 200" as 201.
   success_prob:
     max: 1.50
     min: 0.50
     boost_full_at: 24
     neutral_at: 100
     penalty_full_at: 200
-    # No count: a non-LinkedIn portal, a page without the caption, or a row
-    # scraped before counts were captured. Neutral -- an absent measurement
-    # neither rewards nor punishes a job.
+    # No count available: neutral.
     unknown: 1.00
 
-  # RECORDED, NOT SCORED. Time since posting is still computed for every job and
-  # stored in applied/not_applied.recency_score (and logged), so it stays
-  # available for analysis; it no longer enters final_score.
+  # Recorded, not scored: stored in applied/not_applied.recency_score for
+  # analysis only.
   recency_score:
-    # Bands by hours since the job was posted, first match wins. Ordered
-    # ascending by `under_hours`; both the edges and the scores are tunable
-    # here (they used to be hardcoded at 1/3/6/12h in apply_decision.py).
-    #
-    # Sized to the 24h `scraper.hours_old` window. The old bands topped out at
-    # "over_12h" so, once runs became manual and the lookback widened to 24h,
-    # EVERY scraped job landed in the last band and recency became a constant
-    # 0.20 rather than a signal — costing every job up to 0.08 of final score
-    # (0.10 weight x the 0.8 spread) and pushing a cluster of real candidates
-    # from ~0.50 down to ~0.43. Observed on the live run of 2026-08-08, where
-    # all 9 scored jobs reported recency 0.2.
+    # Bands by hours since posting, first match wins, ascending.
     bands:
       - under_hours: 6
         score: 1.00
@@ -678,20 +470,10 @@ scoring:
         score: 0.60
       - under_hours: 72
         score: 0.40
-    # Measured, and older than every band above.
-    #
-    # This no longer covers "no timestamp". Most portals give none — LinkedIn
-    # supplied date_posted on 1 of 472 listings (2026-08-09) and is currently
-    # the only enabled source — so treating a missing timestamp as "older than
-    # everything" was charging almost every job the maximum age penalty. An
-    # undated listing is now dated from `scraped_at` plus half the scrape
-    # window, which is sound because JobSpy only returns postings younger than
-    # `scraper.hours_old`.
+    # Older than every band. An undated listing is dated from scraped_at plus
+    # half the scrape window.
     default: 0.30
-    # No timestamp of ANY kind — neither posted_at nor scraped_at. Nothing is
-    # inferred here; the job scores neutral rather than worst, because an
-    # absent measurement is not a stale posting. Remove this key to derive the
-    # midpoint from the bands instead.
+    # Neither posted_at nor scraped_at. Remove to use the bands' midpoint.
     unknown: 0.65
 
 # ---------------------------------------------------------------------------
@@ -700,18 +482,15 @@ scoring:
 builder:
   template_path: "resumes/templates/headless_v1.docx"
   output_dir: "resumes/applied"
-  # Diff check: reject any build that modifies content outside permitted
-  # regions. Header (before first WORK EXPERIENCE Heading1) is never touched.
+  # Reject any build that changes content outside permitted regions. The
+  # header (before the first WORK EXPERIENCE Heading1) is never touched.
   diff_check_enabled: true
   # Regenerate up to this many times when Pydantic or post-validation fails.
   llm_regenerate_attempts: 2
   cover_letter_max_chars: 900
 
 # ---------------------------------------------------------------------------
-# Voice / fabrication guard — cover letter text (Layer 5)
-# Applied to the LLM-generated cover letter. The old form-answer voice
-# validation was removed with auto-apply; the banned-word list stays and
-# will be re-homed into the builder in Phase B.
+# Voice guard — banned phrases in the generated cover letter (Layer 5)
 # ---------------------------------------------------------------------------
 voice:
   banned_words:
@@ -726,12 +505,10 @@ voice:
     - "I am writing to"
     - "with X years of experience in"
     - "as a [role]"
-  # Post-validation: regenerate up to builder.llm_regenerate_attempts times.
 
 # ---------------------------------------------------------------------------
-# Cover letter PDF render contract — Layer 6 pdf_render.py
-# Plain black text. Arial 11pt. 2cm margins. Single page. No header/footer.
-# Structure: line 1 = name + email, line 2 = date, body below.
+# Cover letter PDF — Layer 6 pdf_render.py. Line 1 = name + email, line 2 =
+# date, body below.
 # ---------------------------------------------------------------------------
 cover_pdf:
   font_family: "Arial"
@@ -753,25 +530,11 @@ spacy:
   model: "en_core_web_sm"
 
 # ---------------------------------------------------------------------------
-# LLM — Gemini (2-call budget max per job)
-# Call 1a: JD parse (always). Call 1b: title+skills+cover (if score >= 0.50).
-# Old Call 2 (batched form questions) removed with auto-apply.
-#
-# Model choice: `gemini-2.5-flash` was retired mid-flight on 2026-08-08 —
-# every call 404'd with "no longer available to new users", which killed a
-# live run. Note the model still appeared in list_models(); being listed does
-# NOT mean it is callable. Verify with a real generateContent call.
-#
-# `gemini-3.6-flash` is the newest stable flash, so it buys the longest runway
-# before the next retirement. Avoid `-preview` suffixes (withdrawn without
-# notice) and `gemini-flash-latest` (silently changes under you, which can
-# break structured output mid-run). Lite variants are cheaper and ~3x faster
-# but measurably worse at extraction — one dropped "Senior" from a job title,
-# and seniority feeds the success_prob score directly.
+# LLM — one JD parse per job
 # ---------------------------------------------------------------------------
 llm:
   # Any OpenAI-compatible endpoint. Switching provider is an edit here plus a
-  # key in .env — no code change, and every Pydantic schema is unaffected.
+  # key in .env.
   #
   #   groq       https://api.groq.com/openai/v1                 GROQ_API_KEY
   #   cerebras   https://api.cerebras.ai/v1                     CEREBRAS_API_KEY
@@ -779,117 +542,60 @@ llm:
   #   gemini     https://generativelanguage.googleapis.com/v1beta/openai/
   #                                                             GEMINI_API_KEY
   #
-  # List a provider's real model names before setting `model` — a name that
-  # merely appears in a docs page or a list_models() call is not necessarily
-  # callable (Gemini listed a retired model that 404'd on every request):
+  # Check a model is actually callable before setting it — being listed is not
+  # enough (Gemini listed a retired model that 404'd every request):
   #     python -m src.cli.llm_check --list
-  # Groq leads. Ollama led until 2026-10-05 (#33): it answered only while the
-  # operator's laptop was awake, so every GitHub Actions run opened on
-  # `llm_provider_unusable` and fell through -- and it is no longer used at all.
   #
-  # Groq free tier: 200,000 tokens/day and a per-minute token cap on
-  # openai/gpt-oss-120b. The per-minute cap, not the daily one, is what a
-  # single run hits (37 TPM 429s on run 37324500555), so Groq now SHARES the
-  # load with OpenRouter -- see `rotation` below -- instead of carrying every
-  # parse until it breaks.
-  #
-  # llama-3.3-70b-versatile was retired and 404'd every request on 2026-08-19.
-  # Of what the key can call, gpt-oss-120b was the strongest that parses a JD
-  # correctly (4/4 skills, years and level right) in TOOLS mode, 1.9s.
-  # gpt-oss-20b also passes at 1.0s if this one is ever retired too;
-  # qwen3.6-27b needs JSON_SCHEMA -- it 400s in TOOLS mode.
+  # Groq free tier: 200,000 tokens/day plus a per-minute cap, which is what a
+  # run hits; hence `rotation` below. gpt-oss-20b also works in TOOLS mode if
+  # 120b is retired; qwen3.6-27b needs JSON_SCHEMA.
   provider: "groq"
   base_url: "https://api.groq.com/openai/v1"
   api_key_env: "GROQ_API_KEY"
   model: "openai/gpt-oss-120b"
-  # Instructor strategy. TOOLS works on providers with function calling (Groq,
-  # Cerebras, OpenAI); JSON_SCHEMA where native schema enforcement exists; JSON
-  # is the lowest common denominator. Verify with llm_check after changing it.
+  # Instructor mode: TOOLS needs function calling, JSON_SCHEMA native schema
+  # enforcement, JSON works anywhere. Verify with llm_check after changing.
   instructor_mode: "TOOLS"
   request_timeout_seconds: 60
-  # Hard wall-clock cap on ONE call, for every provider (a provider block may
-  # override it). request_timeout_seconds above only bounds the gap between
-  # bytes, and OpenRouter pads a queued request with blank bytes, so single
-  # calls ran 5-10 minutes on 2026-10-06/07. Past this, the job goes to the
-  # next provider at once (no retries on the stalled one). 0 = no cap.
+  # Wall-clock cap on one call (a provider block may override). The timeout
+  # above only bounds gaps between bytes, and OpenRouter pads queued requests
+  # with blank bytes. Past this the job moves to the next provider. 0 = no cap.
   call_deadline_seconds: 90
-  max_calls_per_job: 1   # Call 1b was removed; only the JD parse remains
+  max_calls_per_job: 1
 
-  # Shared default, used by any provider that does not override it. Kept
-  # separate from the primary provider's own `jd_text` block on purpose: the
-  # primary IS the top-level llm block, so reading the bound from there would
-  # hand a hosted fallback whatever the local model is configured for — which
-  # is "unlimited", and would spend Groq's daily budget in one run.
-  #
-  # Bound how much of a job description reaches the model. BOTH ends are kept:
-  # the head carries the role and its requirements, the tail carries pay and
-  # application details.
-  #
-  # Measured over 667 real listings (median 4,172 chars, max 11,815):
+  # How much of a JD reaches the model, for any provider without its own
+  # `jd_text`. Head (role, requirements) and tail (pay, application details)
+  # are both kept. Measured over 667 listings (median 4,172 chars):
   #   head+tail    chars   pay   years   level   jobs clipped
   #   1600+900      53%    70%     53%     86%       78%
   #   2000+1000     61%    73%     67%     90%       70%
   #   3000+1500     81%    87%     88%     97%       45%   <- configured
   #   5000+2000     96%    99%     97%    100%       12%
-  #
-  # Clipping harder saves real tokens but measurably degrades years_required
-  # and role_level, which drive success_prob (30% of the final score). This
-  # setting exists to cap the OUTLIERS that spike the per-minute token limit,
-  # not to shave every job — the big saving belongs to an embedding pre-filter
-  # that skips the parse entirely, which costs no accuracy at all.
+  # Clipping harder degrades years_required and role_level; this exists to
+  # cap outliers that spike the per-minute token limit.
   jd_text_default:
     head_chars: 3000
     tail_chars: 1500
 
-  # Rotation: which provider LEADS a parse. Every `every` parses (one parse
-  # per job, max_calls_per_job above) the lead passes to the next name here;
-  # the others follow it in this order, then the rest of the chain.
-  #
-  # Why: Groq alone carried every parse and hit its per-minute token cap
-  # dozens of times a run. Alternating spreads the load. Names are `provider`
-  # values; an empty list turns rotation off.
-  #
-  # 2026-10-07, operator's call: Groq, gemini-free and the METERED gemini key
-  # take turns; OpenRouter is out of the rotation and only a last-resort
-  # backup. Measured on the 2026-10-07 run: gemini-free 2.5s median, Groq
-  # 9.5s, OpenRouter 111s median / 302s worst, with empty replies -- a third
-  # of the parses and 85% of the run's LLM wait. Cost: the paid key now leads
-  # a third of the jobs (flash-lite, one short parse each), so runs are no
-  # longer strictly $0.
+  # Which provider leads a parse. Every `every` parses the lead passes to the
+  # next name; the others follow in order, then the rest of the chain. Only
+  # enabled providers take a turn. Empty list = off. OpenRouter is left out
+  # (slow, sometimes empty replies) and is only the last-resort backup. The
+  # paid `gemini` key leads a third of jobs, so runs are not strictly $0.
   rotation:
-    # Only ENABLED providers take a turn, so a name here whose block is still
-    # `enabled: false` is skipped rather than breaking the rotation.
     providers: ["groq", "gemini-free", "gemini"]
     every: 2
 
-  # Providers tried, in order, when the one before gives up. Both of the
-  # 2026-08-08 failures were provider-wide rather than per-job — a retired
-  # model 404'd every request, and a spend cap 429'd every request — so either
-  # would have taken a whole run down. A chain turns that into a slower run.
-  #
-  # Ordinary rate limiting does NOT advance the chain: each provider's own
-  # backoff handles that, and switching on it would send steady traffic
-  # downstream for nothing. Only permanent errors and budget exhaustion do.
-  #
-  # Order matters only for providers OUTSIDE llm.rotation: they are tried,
-  # in this order, after every rotation member has failed a job. That leaves
-  # OpenRouter as the final backup (rotation members are listed further down,
-  # but the rotation moves them ahead of it).
-  # Disabled entries are skipped entirely, so a provider can sit here ready to
-  # switch on without affecting a single run.
+  # Providers tried when the one before gives up. Only permanent errors and
+  # budget exhaustion advance the chain; ordinary rate limits are handled by
+  # each provider's backoff. Order matters only for providers outside
+  # `rotation`, which are tried after every rotation member fails. Disabled
+  # entries are skipped.
   fallbacks:
-    # OpenRouter -- free models (ids ending ":free"; $0 per call). Limits: ~20
-    # requests/minute and 50/day, or 1,000/day once $10 of credit has ever been
-    # bought. Slow and sometimes returns empty replies, so since 2026-10-07 it
-    # is only the last-resort backup (see llm.rotation).
-    # Re-check with: python -m src.cli.llm_check openrouter
-    #
-    # `openrouter/free`, not a named model: OpenRouter's router picks one of
-    # the free models available AT THE TIME of each call (priced 0/0), so a
-    # free variant being withdrawn -- gpt-oss-120b:free already was, for this
-    # key -- cannot break the chain or move it onto a paid model. It only
-    # routes to models supporting what the request needs (structured output).
-    # JSON mode: the lowest common denominator across whichever model answers.
+    # OpenRouter free models: ~20 requests/minute, 50/day (1,000/day once $10
+    # of credit has been bought). `openrouter/free` lets OpenRouter pick a free
+    # model per call, so a withdrawn free model can't break the chain or move
+    # it onto a paid one. Check: python -m src.cli.llm_check openrouter
     - enabled: true
       provider: "openrouter"
       base_url: "https://openrouter.ai/api/v1"
@@ -898,16 +604,10 @@ llm:
       instructor_mode: "JSON"
       request_timeout_seconds: 60
 
-    # Gemini on a FREE key -- a separate AI Studio key whose Google project has
-    # no billing attached, so it can only ever hit the free tier (~15
-    # requests/minute, ~1,000/day for flash-lite). Distinct from the metered
-    # `gemini` entry at the tail: `provider` is what llm.rotation matches on,
-    # so naming this one plain "gemini" would pull the PAID key into the
-    # rotation too. Re-check with: python -m src.cli.llm_check gemini-free
-    #
-    # gemini-3.5-flash-lite, not 2.5 like the paid entry: 2.5-flash-lite 404s
-    # for projects created after its cutoff ("no longer available to new
-    # users"), and this key's project is new. Passed llm_check 2026-10-06, 2.3s.
+    # Gemini on a free key (its Google project has no billing). Named
+    # "gemini-free" so the rotation doesn't confuse it with the paid `gemini`
+    # entry. 3.5-flash-lite because 2.5-flash-lite is unavailable to new
+    # projects. Check: python -m src.cli.llm_check gemini-free
     - enabled: true
       provider: "gemini-free"
       base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -916,10 +616,8 @@ llm:
       instructor_mode: "JSON"
       request_timeout_seconds: 60
 
-    # Mistral -- OFF. Meant for the free "Experiment" plan (phone verification,
-    # no card, ~1B tokens/month), but on 2026-10-06 the console offered no free
-    # API plan: keys were locked behind "Upgrade". Kept ready in case that
-    # changes; switch on only after: python -m src.cli.llm_check mistral
+    # Mistral — off: the console offered no free API plan (2026-10-06).
+    # Check before enabling: python -m src.cli.llm_check mistral
     - enabled: false
       provider: "mistral"
       base_url: "https://api.mistral.ai/v1"
@@ -928,15 +626,9 @@ llm:
       instructor_mode: "JSON"
       request_timeout_seconds: 60
 
-    # Cerebras — OFF, and it must stay off: verified 2026-08-08 that the API
-    # requires payment despite issuing a working key. Listing models succeeds,
-    # so only a real call reveals it:
-    #     402 payment_required — "Payment required to access this resource"
-    # That fails the free-tier rule (#12). Kept here, disabled, so the next
-    # person does not spend the same hour rediscovering it; if Cerebras ever
-    # opens a free tier, this belongs BEFORE Gemini, since a free provider
-    # absorbing an outage costs nothing where reaching Gemini costs money.
-    # Re-check with: python -m src.cli.llm_check cerebras
+    # Cerebras — off: real calls return 402 payment_required even though the
+    # key works for listing models (hard rule #12, free tier only).
+    # Check: python -m src.cli.llm_check cerebras
     - enabled: false
       provider: "cerebras"
       base_url: "https://api.cerebras.ai/v1"
@@ -945,9 +637,8 @@ llm:
       instructor_mode: "TOOLS"
       request_timeout_seconds: 60
 
-    # gemini-2.5-flash-lite is deliberate: cheap, and NON-thinking. The pricier
-    # gemini-3.6-flash emits reasoning tokens that bill as output — 60 job-ad
-    # parses cost roughly 20x what the token count implied.
+    # Paid key. flash-lite is cheap and non-thinking; thinking models bill
+    # reasoning tokens as output (~20x the cost per parse).
     - enabled: true
       provider: "gemini"
       base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -956,11 +647,9 @@ llm:
       instructor_mode: "JSON"
       request_timeout_seconds: 60
 
+  # Permanent errors (retired model, bad key, malformed request) skip retries
+  # entirely — see _is_permanent() in src/llm/client.py.
   backoff:
-    # Sized for paid Tier 1 (hundreds of requests/minute), not the free tier's
-    # 5/min which the old 20s/90s values were fighting. Permanent errors (404
-    # retired model, bad key, malformed request) no longer consume this budget
-    # at all — see _is_permanent() in src/llm/client.py.
     initial_seconds: 2
     max_seconds: 30
     max_attempts: 5
@@ -971,7 +660,7 @@ llm:
 database:
   pool_size: 2
   max_overflow: 5
-  pool_pre_ping: true   # SQLAlchemy auto-recovers on network blip
+  pool_pre_ping: true   # recover from network blips
   # A dead socket (laptop slept mid-run) must fail, not hang — see db._connect_args.
   connect_timeout_seconds: 10
   keepalives_idle_seconds: 30      # idle socket: dead after ~30 + 3×10 = 60s
@@ -982,9 +671,9 @@ database:
   outage_backoff_attempts: 3
 
 storage:
-  resumes_applied_dir: "resumes/applied"    # NEVER auto-cleaned (audit trail)
-  # Filename a resume opens and saves under, from Telegram or the endpoint
-  # (#42). {name} is personal.name from the profile, spaces -> underscores.
+  resumes_applied_dir: "resumes/applied"    # never auto-cleaned (audit trail)
+  # Download filename for a resume (#42). {name} is personal.name from the
+  # profile, spaces -> underscores.
   resume_download_name: "{name}_Resume"
   logs_dir: "data/logs"
   cleanup:
@@ -996,33 +685,25 @@ storage:
 # ---------------------------------------------------------------------------
 notifications:
   digest_hour_ist: 8
-  # Progress messages while a run works: started, found per search term
-  # (with the remote-search share), and what the pre-parse checks skipped.
-  # Match messages and the end-of-run summary are sent either way.
+  # Progress messages during a run (started, found per term, pre-parse
+  # skips). Match messages and the summary are sent either way.
   progress: true
-  # How often the always-on endpoint checks Telegram for "Mark applied" /
-  # "Dismiss" taps (#15). Pipeline runs also check at their start and end, so
-  # taps made while the laptop is off land on the next run. 0 = endpoint off.
+  # How often the endpoint polls Telegram for "Mark applied" / "Dismiss" taps
+  # (#15). Runs also poll at start and end. 0 = endpoint polling off.
   tap_poll_seconds: 5
-  # Telegram alert sent immediately when any of these conditions trigger.
+  # Sent immediately when any of these trigger.
   critical_alert_triggers:
     - "gemini_api_failure"
     - "database_connection_failure"
     - "master_profile_validation_failure"
     - "portal_zero_results_consecutive"
-  # Alert after this many consecutive zero-result runs from a portal.
+  # Consecutive zero-result runs from a portal before alerting.
   portal_zero_results_threshold: 3
 
 # ---------------------------------------------------------------------------
-# Analytics — Layer 9 (local files). Google Sheets/Docs were removed in v2:
-# they needed a GCP project, a service-account JSON, and a bind mount to
-# produce a table and a text report that local files do just as well.
-#
-# The CSVs are DERIVED from Postgres by `export_index`, never appended during
-# a run — a phone-triggered run executes on an ephemeral GitHub Actions runner
-# whose disk is destroyed at job end, so inline appends would be lost. Every
-# column is derivable from the DB, so regenerating on the laptop picks up
-# remote runs automatically. Paths are relative to the repo root.
+# Analytics — Layer 9 (local files). The CSVs are regenerated from Postgres
+# by `export_index`, never appended during a run, since GitHub Actions runs
+# lose their disk. Paths are relative to the repo root.
 # ---------------------------------------------------------------------------
 analytics:
   local:
@@ -1033,132 +714,88 @@ analytics:
   report:
     monthly_enabled: true
     dir: "data/reports"
-    # Skills appearing in >= this fraction of the month's JDs trigger a
-    # "consider learning" alert in the report.
+    # Skills in at least this share of the month's JDs get a "consider
+    # learning" alert.
     skill_demand_alert_threshold: 0.30
 
 # ---------------------------------------------------------------------------
-# AWS — S3 cache + backup (Iteration 2+). Region ap-south-1 always.
-# Credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) live in .env only.
+# AWS — S3 cache + backup, region ap-south-1. Credentials live in .env only.
 # ---------------------------------------------------------------------------
 aws:
   region: "ap-south-1"
-  # Bucket name is operator-specific (not a secret). Override here per instance.
   s3_bucket: "application-bot-vishnujan-resumes"
 
 # ---------------------------------------------------------------------------
-# Pre-render — Layer 6 at build time (amends CLAUDE.md hard rule #8).
-#
-# Rule #8 says resumes render on demand and are never stored at build time.
-# The operator explicitly overrode this so resume links work with the laptop
-# switched off: the on-demand endpoint runs on the laptop, so a run triggered
-# from the phone would otherwise produce links that 404 until it is reopened.
-#
-# It stays a CACHE, not a permanent pile — renders go to the same
-# `{ext}_cache/` S3 prefix, which already carries a 1-month lifecycle rule,
-# and are recorded in render_cache with a matching TTL. The endpoint still
-# renders on demand for anything expired or never pre-rendered.
+# Pre-render resumes at build time (an operator override of hard rule #8), so
+# links work while the laptop is off. Renders go to the `{ext}_cache/` S3
+# prefix (1-month lifecycle rule) and render_cache; the endpoint still renders
+# anything expired or never pre-rendered.
 # ---------------------------------------------------------------------------
 prerender:
   enabled: true
-  # Presigned-URL lifetime. AWS SigV4 caps this at 7 days; longer values are
-  # clamped. A listing is usually stale by then anyway, and the endpoint still
-  # serves the resume once the laptop is back on.
+  # Presigned-URL lifetime; AWS caps it at 7 days.
   link_expiry_days: 7
 
 # ---------------------------------------------------------------------------
-# Tailor a resume for a pasted advert (`python -m src.cli.tailor`, #20).
-# No hard filter or threshold applies; the PDF/DOCX land here unless --out.
-# Relative paths are from the repo root.
+# Tailor a resume for a pasted advert (`python -m src.cli.tailor`, #20). No
+# filter or threshold applies. Output goes here unless --out is given.
 # ---------------------------------------------------------------------------
 tailor:
   output_dir: "data/tailored"
 
 # ---------------------------------------------------------------------------
-# Resume endpoint + dashboard — FastAPI (Layer 6).
+# Resume endpoint + dashboard — FastAPI (Layer 6)
 #
-# base_url is the host embedded in Telegram resume links. It is the machine's
-# Tailscale name: reachable from the operator's phone and laptop and from
-# nothing else, with a stable hostname and real certificates. ngrok was
-# dropped in v2 — it published the endpoint, which has no authentication, to
-# the whole internet on a guessable URL scheme (/resume/{job_id} where job_id
-# is the portal's own public posting id).
+# base_url is the machine's Tailscale name, reachable only from the
+# operator's tailnet — the security boundary, since the endpoint has no auth.
+# Pre-rendered resumes are served from S3, so those links work anywhere.
 #
-# Set this up once on the host:   tailscale serve --bg 8000
-# then read the name from:        tailscale status --json | grep DNSName
-#
-# Links only resolve on tailnet devices. Build-time pre-rendered resumes
-# (see `prerender` above) are served from S3 instead, so a phone-triggered
-# run still produces links that work anywhere.
+# Setup:   tailscale serve --bg 8000
+# Name:    tailscale status --json | grep DNSName
 # ---------------------------------------------------------------------------
 endpoint:
-  # Reachable only from devices on this operator's tailnet, which is the
-  # security boundary — the dashboard and resume endpoint have no auth.
-  # Telegram also rejects a localhost url outright, discarding the whole
-  # notification, so leaving this as the placeholder silently cost a match.
+  # Must be a real host: Telegram rejects a localhost URL and drops the whole
+  # notification.
   base_url: "https://asus-tuf-f16-vishnu.tail106cde.ts.net"
   port: 8000
-  # Template path is config-driven so any instance can swap the file.
   template_path: "resumes/templates/headless_v1.docx"
-  # How long a cached render stays valid, in days.
-  #
-  # MUST be kept in step with the S3 lifecycle rule on the `pdf_cache/` and
-  # `docx_cache/` prefixes. If S3 expires objects sooner than this, the
-  # render_cache table goes on claiming hits for objects that no longer exist;
-  # the endpoint still serves the resume (it re-renders), but every "hit"
-  # silently costs a full rebuild.
+  # Days a cached render stays valid. Keep in step with the S3 lifecycle rule
+  # on `pdf_cache/` and `docx_cache/`, or cache "hits" silently re-render.
   render_cache_ttl_days: 90
 
-  # Structural knobs for the Headless template. These are numbering.xml ids, not
-  # style names: the assembler detects structure, never text (the template ships
-  # placeholder headings).
+  # Headless template structure. The *_num_id values are numbering.xml ids;
+  # the assembler detects structure, never text.
   render:
-    # v3.2: ONE section for work, freelance and projects, ordered by match rather
-    # than by kind. Two headings forced every project below every job regardless
-    # of fit.
+    # One section for work, freelance and projects, ordered by match.
     section_heading: "Work & Projects"
-    # What the right-slot link reads as. The label follows the URL rather than
-    # being fixed: master_profile links point at a live demo where one exists and
-    # fall back to the repo where none does, and promising a demo that turns out
-    # to be a source tree is worse than promising nothing.
-    #
-    # The gap before the arrow is U+00A0. At the right-aligned tab stop Word
-    # breaks a normal space, which dropped the arrow onto its own line.
-    link_text_demo: "View\u00a0Demo\u00a0\u2192"
-    link_text_code: "View\u00a0Code\u00a0\u2192"
+    # Right-slot link label, chosen by whether the URL is a code host. The
+    # gaps are U+00A0 so Word doesn't wrap the arrow onto its own line.
+    link_text_demo: "View Demo →"
+    link_text_code: "View Code →"
     code_hosts: ["github.com", "gitlab.com", "bitbucket.org"]
-    bullet_num_id: "1"          # numbering.xml: entry bullets, 1.5 line spacing
-    education_num_id: "2"       # numbering.xml: Education & Certificates lines
+    bullet_num_id: "1"          # entry bullets, 1.5 line spacing
+    education_num_id: "2"       # Education & Certificates lines
     education_max_lines: 3      # the method's hard cap on that section
-    # An entry header must not end a page on its own, so it is bound to its
-    # first N bullets (Word keepNext); the rest flow across the page break and
-    # the resume reads continuously. Every bullet also keeps its own wrapped
-    # lines together. This used to bind 66% of the entry, which moved the whole
-    # group to the next page when it did not fit and left up to half a page
-    # blank (#82).
+    # Keep an entry header with its first N bullets (Word keepNext) so it
+    # never ends a page alone (#82).
     keep_with_first_bullets: 1
-    # Bold each JD keyword (selection.jd_keywords) at its FIRST appearance in the
-    # rendered bullets, top to bottom across the whole resume. Bullets only —
-    # entry title lines are never touched. Literal, boundary-guarded matches
-    # only (Java never bolds inside "JavaScript"), longest match wins.
+    # Bold each JD keyword at its first appearance in the rendered bullets
+    # (never title lines). Whole-word matches, longest wins.
     bold_jd_keywords: true
-  # Operator dashboard (Layer 6 browser surface).
   dashboard:
-    # The skipped table is the biggest one and only its top is ever scanned.
+    # Only the top of the skipped table is ever scanned.
     skipped_limit: 200
     github:
-      # Dispatch target for the "GitHub" run option. Repo and token come from
-      # GITHUB_REPO / GITHUB_TOKEN in .env — the token needs only
-      # `actions: write` on this repository.
+      # Workflow the "GitHub" run option dispatches. GITHUB_REPO / GITHUB_TOKEN
+      # come from .env; the token needs only `actions: write`.
       workflow_file: "pipeline.yml"
-      # The branch the workflow runs from. GitHub also only lists
-      # workflow_dispatch workflows in the Actions UI (and the mobile app)
-      # for the DEFAULT branch, so this must stay in step with it.
+      # Must be the default branch: GitHub only lists workflow_dispatch
+      # workflows from it.
       ref: "main"
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 logging:
-  level: "INFO"   # overridden by LOG_LEVEL env var at runtime
+  level: "INFO"   # overridden by LOG_LEVEL env var
   format: "json"  # structlog JSON output
