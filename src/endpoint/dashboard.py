@@ -43,6 +43,7 @@ from fastapi.templating import Jinja2Templates
 from src.config import settings
 from src.endpoint import runner
 from src.state.db import session_scope
+from src.state import status_queue
 from src.state.job_status import STATUSES as _STATUSES
 
 log = structlog.get_logger(__name__)
@@ -69,8 +70,16 @@ def _title_of(selection_json, fallback: str) -> str:
     return title_alias_of(selection_json, fallback)
 
 
-def _view(applied, job) -> dict:
-    """One row, shared by every view and the JSON API."""
+def _view(applied, job, queued: tuple | None = None) -> dict:
+    """One row, shared by every view and the JSON API.
+
+    ``queued`` is a click not yet flushed to Postgres (``status_queue``); it
+    wins over the stored status, as the newer decision.
+    """
+    status = applied.user_status or "pending"
+    actioned_at = applied.user_status_at
+    if queued is not None:
+        status, actioned_at = queued[0], (None if queued[0] == "pending" else queued[1])
     return {
         "job_id": job.job_id,
         "company": job.company or "—",
@@ -83,16 +92,14 @@ def _view(applied, job) -> dict:
         "location_type": job.location_type or "",
         "salary": f"{job.salary_max_lpa:.0f} LPA" if job.salary_max_lpa else "",
         "source": job.site or "",
-        "status": applied.user_status or "pending",
+        "status": status,
         "gap_skills": list(applied.gap_skills or []),
         "apply_url": job.job_url or "",
         "pdf_url": f"/resume/{job.job_id}.pdf",
         "docx_url": f"/resume/{job.job_id}.docx",
         "built_at": applied.built_at.isoformat() if applied.built_at else None,
         "scraped_at": job.scraped_at.isoformat() if job.scraped_at else None,
-        "actioned_at": (
-            applied.user_status_at.isoformat() if applied.user_status_at else None
-        ),
+        "actioned_at": actioned_at.isoformat() if actioned_at else None,
     }
 
 
@@ -106,26 +113,39 @@ def _match_views(session, status: str = "pending") -> list[dict]:
     gauge on every card keeps it visible.
 
     Applied sorts by when the operator acted — a record.
+
+    Clicks still in ``status_queue`` are applied on top, so a job clicked
+    since the last flush already shows in its new view.
     """
-    from sqlalchemy import select
+    from datetime import datetime, timezone
+
+    from sqlalchemy import or_, select
 
     from src.state.models import AllJobs, Applied
 
+    queued = status_queue.pending()
+    match = Applied.user_status == status
+    if queued:
+        match = or_(match, Applied.job_id.in_(list(queued)))
     stmt = (
         select(Applied, AllJobs)
         .join(AllJobs, Applied.job_id == AllJobs.job_id)
-        .where(Applied.user_status == status)
+        .where(match)
     )
-    if status == "applied":
-        stmt = stmt.order_by(
-            Applied.user_status_at.desc().nullslast(), Applied.built_at.desc()
-        )
-    else:
-        stmt = stmt.order_by(
-            Applied.built_at.desc().nullslast(), Applied.final_score.desc()
-        )
-
-    return [_view(applied, job) for applied, job in session.execute(stmt)]
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    rows = []
+    for applied, job in session.execute(stmt):
+        q = queued.get(applied.job_id)
+        if (q[0] if q else applied.user_status or "pending") != status:
+            continue
+        acted = q[1] if q else applied.user_status_at
+        if status == "applied":
+            key = (acted or oldest, applied.built_at or oldest)
+        else:
+            key = (applied.built_at or oldest, applied.final_score or 0.0)
+        rows.append((key, _view(applied, job, q)))
+    rows.sort(key=lambda r: r[0], reverse=True)
+    return [view for _key, view in rows]
 
 
 def _skipped_views(session, limit: int) -> list[dict]:
@@ -180,6 +200,18 @@ def _counts(session) -> dict[str, int]:
             select(Applied.user_status, func.count()).group_by(Applied.user_status)
         ).all()
     )
+    # Move each queued click from its stored status to its new one.
+    queued = status_queue.pending()
+    if queued:
+        stored = session.execute(
+            select(Applied.job_id, Applied.user_status)
+            .where(Applied.job_id.in_(list(queued)))
+        ).all()
+        for job_id, was in stored:
+            was = was or "pending"
+            by_status[was] = by_status.get(was, 0) - 1
+            now = queued[job_id][0]
+            by_status[now] = by_status.get(now, 0) + 1
     skipped = session.scalar(
         select(func.count())
         .select_from(NotApplied)
@@ -280,8 +312,12 @@ def api_set_status(job_id: str, payload: dict = Body(default={})) -> JSONRespons
 
     The system never applies to anything, so it only knows an application
     happened when the operator says so: here, after returning from the
-    posting, or with the Telegram "Mark applied" button (#15). Both go through
-    ``set_job_status``.
+    posting, or with the Telegram "Mark applied" button (#15).
+
+    No database call: the click goes to ``status_queue`` and the next run (or
+    a GitHub dispatch from here) writes it through ``set_job_status``. That
+    keeps the button instant -- Neon is ~110 ms a round trip away. The page
+    adjusts its own tab counts.
     """
     status = str(payload.get("status", "")).strip()
     if status not in _STATUSES:
@@ -290,22 +326,9 @@ def api_set_status(job_id: str, payload: dict = Body(default={})) -> JSONRespons
             detail=f"status must be one of {_STATUSES}, got {status!r}",
         )
 
-    from src.state.job_status import UnknownJobError, set_job_status
-
-    with session_scope() as session:
-        try:
-            previous, _when = set_job_status(session, job_id, status)
-        except UnknownJobError:
-            raise HTTPException(
-                status_code=404, detail=f"No matched job with id {job_id!r}"
-            ) from None
-
-        counts = _counts(session)
-
-    log.info(
-        "job_status_changed", job_id=job_id, was=previous, now=status
-    )
-    return JSONResponse({"ok": True, "job_id": job_id, "status": status, "counts": counts})
+    status_queue.enqueue(job_id, status)
+    log.info("job_status_queued", job_id=job_id, now=status)
+    return JSONResponse({"ok": True, "job_id": job_id, "status": status})
 
 
 @router.post("/api/run")

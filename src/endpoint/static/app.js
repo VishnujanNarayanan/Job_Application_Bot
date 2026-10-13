@@ -165,29 +165,37 @@
     "/dashboard/skipped": "skipped"
   };
 
-  function updateCounts(counts) {
-    if (!counts) return;
+  // Move one job between the tab badges. The server no longer returns counts
+  // (it only queues the click), so the page keeps its own.
+  function shiftCount(from, to) {
     var tabs = document.querySelectorAll(".tabs .tab");
     Array.prototype.forEach.call(tabs, function (tab) {
       var key = COUNT_KEY_BY_HREF[tab.getAttribute("href")];
       var slot = tab.querySelector(".tab__n");
-      if (key && slot && typeof counts[key] === "number") {
-        slot.textContent = counts[key];
-      }
+      if (!key || !slot || from === to) return;
+      var n = parseInt(slot.textContent, 10);
+      if (isNaN(n)) return;
+      if (key === from) slot.textContent = Math.max(0, n - 1);
+      if (key === to) slot.textContent = n + 1;
     });
   }
 
-  function dropRow(jobId) {
-    var row = document.querySelector('.job[data-job-id="' + jobId + '"]');
-    if (!row) return;
+  // Take the card off the page now, and return a function that puts it back
+  // where it was if the save fails.
+  function dropRow(row) {
     var list = row.parentNode;
+    var next = row.nextSibling;
+    var gone = false;
     row.classList.add("is-going");
-    setTimeout(function () {
-      row.remove();
-      // The empty state is server-rendered, so hand the page back to the
-      // server once the last row goes.
-      if (list && !list.querySelector(".job")) window.location.reload();
-    }, 200);
+    var t = setTimeout(function () { row.remove(); gone = true; }, 200);
+    return {
+      list: list,
+      restore: function () {
+        clearTimeout(t);
+        if (gone && list) list.insertBefore(row, next);
+        row.classList.remove("is-going");
+      }
+    };
   }
 
   var DONE_SAYS = {
@@ -196,7 +204,22 @@
     pending: "Moved back to matches"
   };
 
+  // Instant: the card leaves and the badges move before the request is sent.
+  // The server only appends the click to a local queue; the next run writes
+  // it to the database.
   function setStatus(jobId, status) {
+    var row = document.querySelector('.job[data-job-id="' + jobId + '"]');
+    var from = row ? row.getAttribute("data-status") : null;
+    var dropped = row ? dropRow(row) : null;
+    shiftCount(from, status);
+    toast(DONE_SAYS[status] || "Saved");
+
+    function undo(why) {
+      if (dropped) dropped.restore();
+      shiftCount(status, from);
+      toast(why, "bad");
+    }
+
     return fetch("/api/jobs/" + encodeURIComponent(jobId) + "/status", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -207,15 +230,19 @@
       })
       .then(function (res) {
         if (!res.ok) {
-          toast(res.body.detail || "Could not save that", "bad");
+          undo(res.body.detail || "Could not save that");
           return;
         }
-        updateCounts(res.body.counts);
-        dropRow(jobId);
-        toast(DONE_SAYS[status] || "Saved");
+        // The empty state is server-rendered, so hand the page back to the
+        // server once the last row goes -- only after the save, so the
+        // reload cannot cancel it.
+        var list = dropped && dropped.list;
+        if (list && !list.querySelector(".job:not(.is-going)")) {
+          setTimeout(function () { window.location.reload(); }, 250);
+        }
       })
       .catch(function (err) {
-        toast("Could not reach the server: " + err.message, "bad");
+        undo("Could not reach the server: " + err.message);
       });
   }
 
