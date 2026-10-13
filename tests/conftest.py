@@ -52,3 +52,12 @@ def repo_root() -> Path:
 def config_path(repo_root: Path) -> Path:
     """Absolute path to config/config.yaml."""
     return repo_root / "config" / "config.yaml"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_status_queue(tmp_path, monkeypatch):
+    """Dashboard clicks go to a per-test file, never the real data/ queue."""
+    from src.state import status_queue
+
+    monkeypatch.setattr(status_queue, "QUEUE_PATH", tmp_path / "status_queue.jsonl")
+    monkeypatch.setattr(status_queue, "_FLUSH_LOCK_PATH", tmp_path / "status_queue.flush.lock")

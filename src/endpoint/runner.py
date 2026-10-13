@@ -144,6 +144,11 @@ def dispatch_github_run(dry_run: bool = False) -> tuple[bool, str]:
     """
     import httpx
 
+    from src.state import status_queue
+
+    # A GitHub run can't see data/, so write queued dashboard clicks now.
+    status_queue.flush()
+
     repo = os.environ.get("GITHUB_REPO", "").strip()
     token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not repo or not token:
