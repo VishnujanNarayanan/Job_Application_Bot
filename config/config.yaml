@@ -54,9 +54,9 @@ filters:
     - '(?<!smart )\bcontract(ual|or|ors)?\b'
 
   # Skip, before the parse, a job whose applicant count means even this fit
-  # could not clear scoring.apply_threshold. The best fit seen over 1,221
-  # stored jobs was 0.728. Raise it to skip fewer.
-  best_realistic_fit: 0.75
+  # could not clear scoring.apply_threshold. The best fit seen so far is
+  # 0.787 (2026-10-09). Raise it to skip fewer.
+  best_realistic_fit: 0.80
 
 # ---------------------------------------------------------------------------
 # Salary — informational only, never filled in on a form (FR-12). Expected =
