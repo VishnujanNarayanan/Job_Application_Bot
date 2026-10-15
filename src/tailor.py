@@ -215,8 +215,6 @@ def filter_verdicts(session, job, parsed, now: datetime) -> list[FilterVerdict]:
     title_patterns = list(cfg.filters.get("title_blocklist") or [])
     best_fit = float(cfg.filters.get("best_realistic_fit", 1.0))
     threshold = float(cfg.scoring.apply_threshold)
-    cooldown_days = int(cfg.scraper.cooldown_days)
-    last = filters.company_last_notified(session, job.company) if job.company != UNKNOWN else None
 
     return [
         FilterVerdict(
@@ -249,11 +247,6 @@ def filter_verdicts(session, job, parsed, now: datetime) -> list[FilterVerdict]:
             filters.cannot_reach_threshold(job.applicants_count, best_fit, threshold),
             "unknown" if job.applicants_count is None
             else f"{job.applicants_count} (multiplier {applicant_multiplier(job.applicants_count):.3f})",
-        ),
-        FilterVerdict(
-            "company cooldown",
-            filters.company_in_cooldown(last, now, cooldown_days),
-            "never notified" if last is None else f"last notified {last:%Y-%m-%d}",
         ),
     ]
 
@@ -376,8 +369,7 @@ def tailor(
     LinkedIn's public page (``fetch_fn``, for tests).
 
     Writes the ``all_jobs`` and ``applied`` rows (so the dashboard, the render
-    cache and "Mark applied" work unchanged) but never a company cooldown: a
-    pasted advert is the operator's own choice, not a notification.
+    cache and "Mark applied" work unchanged).
 
     Raises ``ValueError`` for an empty advert and lets the parser's
     ``LLMError`` through, so the caller can show it instead of a silent skip.

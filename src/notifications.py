@@ -89,14 +89,16 @@ def match_display_fields(
         "display_title": title_alias or job.role,
         "salary_str": salary_str,
         "loc_str": loc_str,
-        "apply_url": _usable_apply_url(parsed.apply_url) or job.job_url or "",
+        "apply_url": (_usable_apply_url(parsed.apply_url) or job.job_url_direct
+                      or job.job_url or ""),
     }
 
 
 def _usable_apply_url(candidate: str | None) -> str:
     """The model's apply_url, but only when it is really a link.
 
-    `parsed.apply_url` WINS over `job.job_url` — the JD's own application link
+    `parsed.apply_url` WINS over `job.job_url_direct` (the portal's link to
+    the employer's site) and `job.job_url` — the JD's own application link
     beats a portal listing page — so a bad value does not merely add noise, it
     replaces the one URL known to work. Measured 2026-08-19: a JD ending in
     "send it to hiring@example.com" yielded `" hiring@example.com"`, which would
@@ -237,8 +239,9 @@ _OUTCOME_LABELS = (
     ("LOCATION_DISALLOWED", "Blocked location"),
     ("COMPANY_BLOCKED", "Blocked company"),
     ("TITLE_DISALLOWED", "Intern/contract/part-time title"),
+    ("JOB_LEVEL_DISALLOWED", "Too senior (portal level)"),
+    ("EXPERIENCE_TOO_HIGH", "Too many years (portal band)"),
     ("TOO_MANY_APPLICANTS", "Too many applicants to match"),
-    ("COMPANY_COOLDOWN", "Company in cooldown"),
     ("PARSE_FAILURE", "Parse failed"),
     ("PARSE_FAILED", "Parse failed (carried to next run)"),
     ("JOB_TYPE_DISALLOWED", "Not full-time"),

@@ -188,9 +188,10 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
     from src.reasons import (
         BUILD_FAILURE,
         COMPANY_BLOCKED,
-        COMPANY_COOLDOWN,
         DUPLICATE,
+        EXPERIENCE_TOO_HIGH,
         HARD_FILTER_LAYER_3,
+        JOB_LEVEL_DISALLOWED,
         JOB_TYPE_DISALLOWED,
         LOCATION_DISALLOWED,
         LOW_SCORE,
@@ -202,7 +203,7 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
     from src.scraper import filters, jobspy_wrapper, rotation
     from src.state import master_profile
     from src.state.db import session_scope
-    from src.state.models import AllJobs, CompanyCooldown, NotApplied
+    from src.state.models import AllJobs, NotApplied
     from src.tailor import build_applied, score_job
 
     cfg = settings
@@ -266,7 +267,7 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
                     location=cfg.scraper.get("location"),
                     results_wanted=int(cfg.scraper.results_wanted_per_term),
                     hours_old=hours_old,
-                    linkedin_fetch_description=bool(cfg.scraper.linkedin_fetch_description),
+                    fetch_description=bool(cfg.scraper.fetch_description),
                     linkedin_results_wanted=int(rl.linkedin_results_wanted),
                     per_site=bool(rl.per_site),
                     max_retries=int(rl.max_retries),
@@ -319,9 +320,10 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         # --- Layer 2: hard filters (raw fields) ---
         existing_ids = filters.existing_job_ids(session, [j.job_id for j in raw_jobs])
         disallowed = list(cfg.filters.disallowed_regions)
-        cooldown_days = int(cfg.scraper.cooldown_days)
         blocklist = list(cfg.filters.get("company_blocklist") or [])
         title_patterns = list(cfg.filters.get("title_blocklist") or [])
+        level_blocklist = list(cfg.filters.get("job_level_blocklist") or [])
+        years_ceiling = int(cfg.filters.years_ceiling)
         best_fit = float(cfg.filters.get("best_realistic_fit", 1.0))
         threshold = float(cfg.scoring.apply_threshold)
         empty_jd_count = 0
@@ -364,13 +366,15 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
             if filters.title_disallowed(job.role, title_patterns):
                 not_applied_queue.append((job, TITLE_DISALLOWED, job.role, None))
                 continue
+            if filters.job_level_disallowed(job.job_level, level_blocklist):
+                not_applied_queue.append((job, JOB_LEVEL_DISALLOWED, job.job_level, None))
+                continue
+            if filters.experience_exceeds_ceiling(job.experience_range, years_ceiling):
+                not_applied_queue.append((job, EXPERIENCE_TOO_HIGH, job.experience_range, None))
+                continue
             if filters.cannot_reach_threshold(job.applicants_count, best_fit, threshold):
                 not_applied_queue.append(
                     (job, TOO_MANY_APPLICANTS, str(job.applicants_count), None))
-                continue
-            last_notified = filters.company_last_notified(session, job.company)
-            if filters.company_in_cooldown(last_notified, now, cooldown_days):
-                not_applied_queue.append((job, COMPANY_COOLDOWN, job.company, None))
                 continue
             passing.append(job)
 
@@ -532,13 +536,6 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
             job.outcome = "matched"
             job.outcome_at = now
 
-            # Update company cooldown
-            cooldown_row = session.get(CompanyCooldown, job.company)
-            if cooldown_row is None:
-                session.add(CompanyCooldown(company=job.company, last_applied_at=now))
-            else:
-                cooldown_row.last_applied_at = now
-
             session.flush()
 
             # --- Layer 8: notify ---
@@ -668,14 +665,14 @@ def _write_not_applied(session, queue: list, now: datetime, *, dry_run: bool = F
 
     `not_applied.job_id` is a NOT NULL FK to all_jobs.job_id. Post-parse
     rejections went through `dedup.resolve_batch` so they exist; pre-filter
-    rejections (DUPLICATE/LOCATION/COOLDOWN) are rejected BEFORE the batch
+    rejections (DUPLICATE/LOCATION/...) are rejected BEFORE the batch
     insert, so they did not.
 
     This used to skip those absent rows to protect the commit, and the effect
     was that two whole rejection reasons never reached the database at all:
-    across 693 rows there was not one COMPANY_COOLDOWN and not one
-    LOCATION_DISALLOWED, despite 51 companies sitting in cooldown. The filters
-    were invisible — there was no way to ask what the 10-day rule cost. So the
+    across 693 rows there was not one company-cooldown (since removed) and not
+    one LOCATION_DISALLOWED, despite 51 companies sitting in cooldown. The
+    filters were invisible — there was no way to ask what a rule cost. So the
     missing all_jobs rows are now INSERTED first (`_ensure_all_jobs_rows`)
     instead of the verdict being dropped.
 
@@ -714,6 +711,7 @@ def _write_not_applied(session, queue: list, now: datetime, *, dry_run: bool = F
 _SCRAPED_FIELDS = (
     "company", "role", "site", "location", "job_url", "posted_at", "scraped_at",
     "jd_text", "jd_embedding", "job_type", "applicants_text", "applicants_count",
+    "job_url_direct", "job_level", "experience_range",
 )
 
 

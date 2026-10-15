@@ -1,7 +1,7 @@
 """Layer 2 — JobSpy scraper (listings only).
 
-Reads PUBLIC listings from Indeed, Glassdoor and LinkedIn. JobSpy never
-logs into or acts on the operator's account (CLAUDE.md hard rule #4 /
+Reads PUBLIC listings from LinkedIn, Naukri, Indeed and Glassdoor. JobSpy
+never logs into or acts on the operator's account (CLAUDE.md hard rule #4 /
 FR-15) — LinkedIn is a read-only listings source, so the only risk is
 recoverable scraper-IP throttling.
 
@@ -100,7 +100,7 @@ def _job_id(site: str, raw_id: Any, job_url: str | None) -> str:
 # ---------------------------------------------------------------------------
 #
 # JobSpy returns no applicant count, but the public job page it already fetches
-# for the description (`linkedin_fetch_description`) shows one in its top card:
+# for the description (`fetch_description`) shows one in its top card:
 # "Be among the first 25 applicants", "139 applicants", "Over 200 applicants".
 # JobSpy parses that page internally and discards the caption, so
 # :func:`install_applicant_capture` wraps its detail fetch to read the caption
@@ -158,10 +158,14 @@ def install_applicant_capture() -> None:
     except ImportError as exc:  # a JobSpy layout change: lose the count, not the run
         log.warning("applicants_capture_unavailable", error=str(exc))
         return
+    # JobSpy 1.2 renamed the detail fetch from _get_job_details.
+    name = next((n for n in ("_fetch_details", "_get_job_details") if hasattr(LinkedIn, n)), None)
+    if name is None:
+        log.warning("applicants_capture_unavailable", error="no LinkedIn detail fetch")
+        return
+    original = getattr(LinkedIn, name)
 
-    original = LinkedIn._get_job_details
-
-    def _get_job_details(self, job_id: str) -> dict:
+    def _fetch_details(self, job_id: str) -> dict:
         seen: list[Any] = []
         real_get = self.session.get
 
@@ -183,8 +187,80 @@ def install_applicant_capture() -> None:
             log.warning("applicants_capture_failed", job_id=job_id, error=str(exc))
         return details
 
-    LinkedIn._get_job_details = _get_job_details
+    setattr(LinkedIn, name, _fetch_details)
     _capture_installed = True
+
+
+_retry_installed = False
+
+
+def install_linkedin_retry(backoff_factor: float = 5.0) -> None:
+    """Retry LinkedIn requests on 429/5xx, as JobSpy did before 1.2.
+
+    JobSpy 1.1 built the LinkedIn session with ``Retry(total=3, status_forcelist=
+    [500, 502, 503, 504, 429], backoff_factor=5)``; 1.2 dropped it, so one 429
+    on a description fetch empties that job's ``jd_text`` and it is skipped as
+    EMPTY_JD. The same retry is mounted on the session each scraper builds.
+    Idempotent; a JobSpy layout change loses the retry, not the run.
+    """
+    global _retry_installed
+    if _retry_installed:
+        return
+    try:
+        from jobspy.linkedin import LinkedIn
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+    except ImportError as exc:
+        log.warning("linkedin_retry_unavailable", error=str(exc))
+        return
+    original = LinkedIn.__init__
+
+    def __init__(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        retries = Retry(total=3, connect=3, status=3,
+                        status_forcelist=[500, 502, 503, 504, 429],
+                        backoff_factor=backoff_factor)
+        try:
+            adapter = HTTPAdapter(max_retries=retries)
+            self.session.mount("http://", adapter)
+            self.session.mount("https://", adapter)
+        except Exception as exc:  # not a requests session any more
+            log.warning("linkedin_retry_unavailable", error=str(exc))
+
+    LinkedIn.__init__ = __init__
+    _retry_installed = True
+
+
+_remote_filter_installed = False
+
+
+def install_remote_filter() -> None:
+    """Send LinkedIn's Remote workplace filter (``f_WT=2``) for ``is_remote``.
+
+    JobSpy 1.2 dropped it ("LinkedIn: is_remote isn't supported, ignoring
+    it"), which turned the remote pass into a second copy of the plain search.
+    The guest search endpoint still honours the parameter, so it is added back
+    to the search params JobSpy builds. Idempotent; a JobSpy layout change
+    loses the remote pass, not the run.
+    """
+    global _remote_filter_installed
+    if _remote_filter_installed:
+        return
+    try:
+        from jobspy.linkedin import LinkedIn
+        original = LinkedIn._search_params
+    except (ImportError, AttributeError) as exc:
+        log.warning("remote_filter_unavailable", error=str(exc))
+        return
+
+    def _search_params(self) -> dict:
+        params = original(self)
+        if self.scraper_input.is_remote:
+            params["f_WT"] = 2
+        return params
+
+    LinkedIn._search_params = _search_params
+    _remote_filter_installed = True
 
 
 # LinkedIn's guest job page for a posting that has closed.
@@ -344,6 +420,9 @@ def _row_to_job(row: dict[str, Any]) -> AllJobs | None:
         job_type=_as_str(row.get("job_type")),
         applicants_text=_as_str(row.get("applicants_text")),
         applicants_count=parse_applicants(_as_str(row.get("applicants_text"))),
+        job_url_direct=_as_str(row.get("job_url_direct")),
+        job_level=_as_str(row.get("job_level")),
+        experience_range=_as_str(row.get("experience_range")),
     )
 
 
@@ -356,7 +435,7 @@ def _scrape_with_retry(
     location: str | None,
     results_wanted: int,
     hours_old: int,
-    linkedin_fetch_description: bool,
+    fetch_description: bool,
     proxies: Sequence[str] | None,
     max_retries: int,
     backoff_base_seconds: float,
@@ -375,7 +454,7 @@ def _scrape_with_retry(
         country_indeed=country,
         results_wanted=results_wanted,
         hours_old=hours_old,
-        linkedin_fetch_description=linkedin_fetch_description,
+        fetch_description=fetch_description,
     )
     # location is LinkedIn's only geo-filter (country_indeed is ignored there)
     # and refines Indeed/Glassdoor within the country.
@@ -418,7 +497,7 @@ def scrape(
     location: str | None = None,
     results_wanted: int,
     hours_old: int,
-    linkedin_fetch_description: bool = False,
+    fetch_description: bool = False,
     linkedin_results_wanted: int | None = None,
     per_site: bool = True,
     max_retries: int = 1,
@@ -438,8 +517,8 @@ def scrape(
 
     Anti-rate-limit (hard rule #4): with ``per_site`` each site is scraped in
     its own JobSpy call wrapped in retry/backoff, so one throttled portal does
-    not lose the others' results. ``linkedin_fetch_description`` pulls the full
-    JD body per LinkedIn listing (without it ``jd_text`` is empty); LinkedIn's
+    not lose the others' results. ``fetch_description`` pulls the full
+    JD body per LinkedIn and Naukri listing (without it ``jd_text`` is empty); LinkedIn's
     request volume is capped separately by ``linkedin_results_wanted`` and runs
     are spaced by ``inter_site_delay_seconds``.
 
@@ -455,8 +534,12 @@ def scrape(
     """
     from jobspy import scrape_jobs  # lazy: heavy import, network-bound
 
-    if linkedin_fetch_description and "linkedin" in sites:
+    if "linkedin" in sites:
+        install_linkedin_retry()
+    if fetch_description and "linkedin" in sites:
         install_applicant_capture()
+    if remote_results_wanted > 0 and "linkedin" in sites:
+        install_remote_filter()
 
     site_list = list(sites)
     site_groups: list[list[str]] = [[s] for s in site_list] if per_site else [site_list]
@@ -485,7 +568,7 @@ def scrape(
             location=location,
             results_wanted=rw,
             hours_old=hours,
-            linkedin_fetch_description=linkedin_fetch_description,
+            fetch_description=fetch_description,
             proxies=proxies,
             max_retries=max_retries,
             backoff_base_seconds=backoff_base_seconds,
