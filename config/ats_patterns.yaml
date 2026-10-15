@@ -1,0 +1,201 @@
+# ATS board patterns for direct job polling (#97). Each entry was checked on
+# 2026-10-15 against one real board ("example") and one made-up id, so the
+# hit/miss signals below are observed, not documented. `{id}` is the
+# company's board id on that ATS.
+#
+# status:
+#   confirmed  - hit and miss tell apart cleanly; safe to probe by guessed id
+#   from_link  - works, but the id can't be guessed from a company name; take
+#                it from a job's direct apply URL
+#   unconfirmed - no real board found yet; don't probe in bulk
+
+guessable:
+  greenhouse:
+    status: confirmed
+    probe: "https://boards-api.greenhouse.io/v1/boards/{id}"
+    jobs: "https://boards-api.greenhouse.io/v1/boards/{id}/jobs?content=true"
+    hit: "200, JSON with `name` (the board's company name)"
+    miss: "404 {\"error\":\"Job board not found\"}"
+    example: stripe
+    id_notes: "Ids can carry a number suffix: BambooHR's board is `bamboohr17`, `bamboohr` is 404."
+    link_hosts: ["boards.greenhouse.io", "job-boards.greenhouse.io"]
+
+  lever:
+    status: confirmed
+    probe: "https://api.lever.co/v0/postings/{id}?limit=1&mode=json"
+    jobs: "https://api.lever.co/v0/postings/{id}?mode=json"
+    hit: "200, JSON array (empty when the board has no openings)"
+    miss: "404 {\"ok\":false,\"error\":\"Document not found\"}"
+    example: palantir
+    link_hosts: ["jobs.lever.co"]
+
+  ashby:
+    status: confirmed
+    probe: "https://api.ashbyhq.com/posting-api/job-board/{id}"
+    jobs: "https://api.ashbyhq.com/posting-api/job-board/{id}"
+    hit: "200, JSON with `jobs`"
+    miss: "404 Not Found"
+    example: openai
+    id_notes: "No limit parameter; a large board returns everything (OpenAI: 13 MB)."
+    link_hosts: ["jobs.ashbyhq.com"]
+
+  smartrecruiters:
+    status: confirmed
+    probe: "https://api.smartrecruiters.com/v1/companies/{id}/postings?limit=1"
+    jobs: "https://api.smartrecruiters.com/v1/companies/{id}/postings"
+    hit: "200 with totalFound > 0"
+    miss: "200 with totalFound 0 - same as a real board with no openings, so a 0 is never a match"
+    example: BoschGroup
+    id_notes: "Case-insensitive (Freshworks = freshworks). Ids can carry a number suffix (Ubisoft2)."
+    link_hosts: ["jobs.smartrecruiters.com", "careers.smartrecruiters.com"]
+
+  workable:
+    status: confirmed
+    probe: "https://apply.workable.com/api/v1/widget/accounts/{id}"
+    jobs: "https://apply.workable.com/api/v1/widget/accounts/{id}"
+    hit: "200, JSON with `name` and `jobs`"
+    miss: "404 Not Found"
+    example: huggingface
+    link_hosts: ["apply.workable.com"]
+
+  recruitee:
+    status: confirmed
+    probe: "https://{id}.recruitee.com/api/offers"
+    jobs: "https://{id}.recruitee.com/api/offers"
+    hit: "200, JSON with `offers` (may be empty)"
+    miss: "404 {\"error\":\"Not Found\"}"
+    example: tellent
+    link_hosts: ["{id}.recruitee.com"]
+
+  bamboohr:
+    status: confirmed
+    probe: "https://{id}.bamboohr.com/careers/list"
+    jobs: "https://{id}.bamboohr.com/careers/list"
+    hit: "200, JSON with `meta.totalCount` and `result` (may be empty)"
+    miss: "302 to https://www.bamboohr.com - probe without following redirects"
+    example: toggl
+    link_hosts: ["{id}.bamboohr.com"]
+
+  breezy:
+    status: confirmed
+    probe: "https://{id}.breezy.hr/json"
+    jobs: "https://{id}.breezy.hr/json"
+    hit: "200, JSON array"
+    miss: "404 HTML"
+    example: breezy
+    link_hosts: ["{id}.breezy.hr"]
+
+  teamtailor:
+    status: confirmed
+    probe: "https://{id}.teamtailor.com/jobs.rss"
+    jobs: "https://{id}.teamtailor.com/jobs.rss"
+    hit: "200 RSS; channel <title> is the company name"
+    miss: "404 HTML"
+    example: antonsport
+    id_notes: "Some customers keep the subdomain but serve jobs elsewhere (spotify.teamtailor.com/jobs is 404)."
+    link_hosts: ["{id}.teamtailor.com"]
+
+  jazzhr:
+    status: confirmed
+    probe: "https://{id}.applytojob.com/apply"
+    jobs: "https://{id}.applytojob.com/apply"
+    hit: "200 HTML on {id}.applytojob.com (\"Inactive Career Page\" title = exists, no openings)"
+    miss: "redirect to www.jazzhr.com/job-seekers - check the final host"
+    example: jazzhr
+    id_notes: "HTML only; jobs have to be parsed from the page."
+    link_hosts: ["{id}.applytojob.com"]
+
+  rippling:
+    status: confirmed
+    probe: "https://api.rippling.com/platform/api/ats/v1/board/{id}/jobs"
+    jobs: "https://api.rippling.com/platform/api/ats/v1/board/{id}/jobs"
+    hit: "200, JSON array"
+    miss: "404 {\"error_code\":\"RESOURCE_NOT_FOUND\"}"
+    example: rippling
+    link_hosts: ["ats.rippling.com"]
+
+  manatal:
+    status: confirmed
+    probe: "https://api.manatal.com/open/v3/career-page/{id}/jobs/"
+    jobs: "https://api.manatal.com/open/v3/career-page/{id}/jobs/"
+    hit: "200, JSON with `count` and `results`"
+    miss: "404 {\"detail\":\"No ClientPortalSettings matches...\"}"
+    example: manatal
+    link_hosts: ["www.careers-page.com"]
+
+  eightfold:
+    status: confirmed
+    probe: "https://{id}.eightfold.ai/api/apply/v2/jobs?domain={company_domain}&num=1"
+    jobs: "https://{id}.eightfold.ai/api/apply/v2/jobs?domain={company_domain}"
+    hit: "200, JSON with `positions`"
+    miss: "DNS failure (subdomain doesn't exist)"
+    example: "netflix (domain=netflix.com)"
+    id_notes: "Needs the company's web domain as well as the id. Large customers use custom hosts (explore.jobs.netflix.net) with the same API path."
+    link_hosts: ["{id}.eightfold.ai"]
+
+  darwinbox:
+    status: unconfirmed
+    probe: "https://{id}.darwinbox.in/ms/candidate/careers"
+    hit: "200 HTML with the company in <title> / og:title"
+    miss: "200 HTML with no <title> (561 bytes vs 951)"
+    example: "darwinbox (vendor's own tenant only)"
+    id_notes: "Page is a JS shell; the jobs JSON endpoint behind it is not found yet. No customer tenant tested."
+
+  keka:
+    status: unconfirmed
+    probe: "https://{id}.keka.com/careers"
+    miss: "redirect to /careers/Content/TenantNotFound.html"
+    id_notes: "keka, haptik, fyle, zeta all TenantNotFound. An old link used {id}.kekahire.com, which no longer resolves. No real tenant found yet."
+
+  freshteam:
+    status: unconfirmed
+    probe: "https://{id}.freshteam.com/jobs"
+    miss: "200 HTML that loads /src/404.css (status code doesn't signal a miss)"
+    id_notes: "No real customer found yet."
+
+  zoho_recruit:
+    status: unconfirmed
+    probe: "https://{id}.zohorecruit.com/jobs/Careers  (also .in)"
+    id_notes: "zoho and a made-up id both return ~2.6 KB 200 pages; no hit/miss signal found. Zoho's own board is on a custom domain (careers.zohocorp.com/jobs/Careers)."
+
+  pinpoint:
+    status: unconfirmed
+    probe: "https://{id}.pinpointhq.com/postings.json"
+    miss: "404 HTML"
+    id_notes: "The vendor's own subdomain is also 404; no customer found yet."
+
+  dover:
+    status: unconfirmed
+    id_notes: "No board URL found yet."
+
+from_link:
+  workday:
+    status: from_link
+    jobs: "POST https://{tenant}.wd{n}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs"
+    body: '{"appliedFacets":{},"limit":20,"offset":0,"searchText":""}'
+    hit: "200, JSON with `total` and `jobPostings`"
+    example: "nvidia / wd5 / NVIDIAExternalCareerSite"
+    id_notes: "Three unknowns (tenant, server number, site name); read them off a job URL {tenant}.wd{n}.myworkdayjobs.com/{site}/job/..."
+    link_hosts: ["*.myworkdayjobs.com"]
+
+  icims:
+    status: from_link
+    probe: "https://{prefix}-{id}.icims.com/jobs/search?ss=1"
+    hit: "200 HTML job search"
+    miss: "404 'gone: ...icims.com' page"
+    example: internal-evms
+    id_notes: "The prefix varies (careers-, internal-, jobs-, ...), so take the host from a job URL."
+    link_hosts: ["*.icims.com"]
+
+  successfactors:
+    status: from_link
+    id_notes: "career{n}.successfactors.com/career?company={id} or a custom domain; not tested."
+
+  oracle_hcm:
+    status: from_link
+    id_notes: "{pod}.fa.{region}.oraclecloud.com/hcmUI/CandidateExperience/... ; not tested."
+
+# Skipped on purpose: staffing/agency tools (Bullhorn, CEIPAL, JobDiva, Loxo,
+# Crelate, TrackerRMS, PCRecruiter, Recruit CRM, Recruiterflow) - their boards
+# belong to agencies; hourly-hiring tools (Fountain, Harri, Paradox, TalentReef,
+# Workstream, Apploi); desktop and legacy products.
