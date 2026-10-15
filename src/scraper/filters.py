@@ -1,22 +1,20 @@
 """Layer 2 — hard filters applied at scrape time (architecture §4 / §7.4).
 
 The predicates are pure (data in, bool out) so they unit-test without a DB.
-The DB-backed lookups (`existing_job_ids`, `company_last_notified`) are
-thin wrappers the orchestrator calls to gather the data the predicates
-need. The years-ceiling predicate is shared with Layer 3, which re-checks
+The DB-backed lookup (`existing_job_ids`) is a thin wrapper the
+orchestrator calls to gather the data the predicates need. The years-ceiling predicate is shared with Layer 3, which re-checks
 it on the Gemini-structured field.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime, timedelta
 
 from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from src.config import settings
-from src.state.models import AllJobs, Applied, CompanyCooldown
+from src.state.models import AllJobs, Applied
 
 
 def location_disallowed(location: str | None, disallowed_regions: Iterable[str]) -> bool:
@@ -32,6 +30,43 @@ def exceeds_years_ceiling(years_required: int | None, ceiling: int) -> bool:
     if years_required is None:
         return False
     return years_required > ceiling
+
+
+def experience_floor(experience_range: str | None) -> int | None:
+    """The lower bound of a portal experience band: "3-6 Yrs" -> 3, "5+ Yrs"
+    -> 5, "Fresher" -> 0. None when the text holds no number."""
+    import re
+
+    if not experience_range:
+        return None
+    if "fresher" in experience_range.casefold():
+        return 0
+    m = re.search(r"\d+", experience_range)
+    return int(m.group()) if m else None
+
+
+def experience_exceeds_ceiling(experience_range: str | None, ceiling: int) -> bool:
+    """True if the portal's experience band STARTS above the years ceiling.
+
+    Read before the parse: Naukri states a band on every listing, and its
+    keyword search is loose -- "backend developer" returned 12-20 and 10-18
+    year roles -- so most of what it returns would otherwise cost an LLM call
+    only to fail the same ceiling at Layer 3. The lower bound is used, matching
+    that check's "more years than this" rule: a 5-8 band passes a ceiling of 6.
+    """
+    floor = experience_floor(experience_range)
+    return floor is not None and floor > ceiling
+
+
+def job_level_disallowed(job_level: str | None, blocklist: Iterable[str]) -> bool:
+    """True if the portal's seniority label is on the blocklist (case-insensitive,
+    whole label). LinkedIn files most experienced-hire roles, including plain
+    "Java Developer" and "Software Engineer II", as "mid-senior level", so only
+    labels that are senior without exception belong on the list."""
+    if not job_level:
+        return False
+    level = job_level.strip().casefold()
+    return any(level == str(b).strip().casefold() for b in blocklist)
 
 
 def job_type_disallowed(job_type: str | None, wanted: str | None) -> bool:
@@ -50,17 +85,6 @@ def job_type_disallowed(job_type: str | None, wanted: str | None) -> bool:
     if not wanted or job_type is None:
         return False
     return str(job_type).strip().casefold() != str(wanted).strip().casefold()
-
-
-def company_in_cooldown(
-    last_notified_at: datetime | None,
-    now: datetime,
-    cooldown_days: int,
-) -> bool:
-    """True if the company was notified within the cooldown window."""
-    if last_notified_at is None:
-        return False
-    return now - last_notified_at < timedelta(days=cooldown_days)
 
 
 def company_blocked(company: str | None, blocklist: Iterable[str]) -> bool:
@@ -147,11 +171,3 @@ def existing_job_ids(session: Session, job_ids: Iterable[str]) -> set[str]:
     ).all()
     return set(rows)
 
-
-def company_last_notified(session: Session, company: str) -> datetime | None:
-    """Last time we notified for ``company``, or None (cooldown lookup)."""
-    return session.scalar(
-        select(CompanyCooldown.last_applied_at).where(
-            CompanyCooldown.company == company
-        )
-    )

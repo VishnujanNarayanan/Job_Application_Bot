@@ -9,6 +9,16 @@ and this project loosely tracks iterations rather than semver.
 
 ### Added
 
+- **Naukri is scraped alongside LinkedIn** (`scraper.sites`).
+  - Each Naukri listing's experience band ("3-6 Yrs") is checked against
+    `filters.years_ceiling` before the parse (`EXPERIENCE_TOO_HIGH`). Naukri's
+    search is loose, and in a sample this skipped 5 of 15 listings without an
+    LLM call.
+  - LinkedIn seniority labels on `filters.job_level_blocklist` (director,
+    executive) are skipped before the parse (`JOB_LEVEL_DISALLOWED`).
+  - `all_jobs` keeps `job_url_direct`, `job_level` and `experience_range`
+    (migration `0011_portal_fields`). The Apply button uses the employer's own
+    link when Naukri gives one and the JD has none.
 - **Tailor a resume for a pasted advert:** `python -m src.cli.tailor --file jd.txt
   [--company ...] [--role ...] [--applicants N] [--url ...] [--notify]`.
   - No hard filter or apply threshold stops the build.
@@ -36,6 +46,18 @@ and this project loosely tracks iterations rather than semver.
 
 ### Changed
 
+- **The company cooldown filter is removed.** A company notified in the last
+  `scraper.cooldown_days` (10) days was skipped before the parse, including a
+  different role there. A job is now skipped only when its own job id was
+  already notified. `cooldown_days` and the `COMPANY_COOLDOWN` reason are gone;
+  the `company_cooldown` table and its rows are kept, unused.
+- **JobSpy 1.1.80 → 1.3.0.** 1.1.80's Naukri requests are rejected
+  ("recaptcha required").
+  - `scraper.linkedin_fetch_description` is renamed `scraper.fetch_description`;
+    it now covers Naukri too.
+  - Three LinkedIn behaviours 1.2 dropped are restored in the wrapper: the
+    Remote filter on the remote pass, the 429/5xx retry, and the applicant
+    count capture.
 - The run loop's scoring and building (`score_job`, `build_applied`) moved to
   `src/tailor.py` so pasted adverts are judged exactly like scraped ones. The
   run's behaviour is unchanged.

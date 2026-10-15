@@ -24,7 +24,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from src.main import _write_not_applied
-from src.reasons import COMPANY_COOLDOWN, LOW_SCORE
+from src.reasons import LOCATION_DISALLOWED, LOW_SCORE
 from src.state.models import AllJobs
 
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=timezone.utc)
@@ -62,7 +62,7 @@ def test_a_scored_rejection_records_the_numbers_behind_it() -> None:
 
 
 def test_an_unscored_rejection_records_nulls_rather_than_inventing_zeros() -> None:
-    """A cooldown skip never reached the scorer, so it has no scores.
+    """A location skip never reached the scorer, so it has no scores.
 
     Zeros would be a lie that reads as "scored terribly" in any later
     analysis; NULL correctly says "never scored".
@@ -70,7 +70,7 @@ def test_an_unscored_rejection_records_nulls_rather_than_inventing_zeros() -> No
     job = _job("linkedin-2")
     session = _session({"linkedin-2"})
 
-    _write_not_applied(session, [(job, COMPANY_COOLDOWN, "ACME", None)], NOW)
+    _write_not_applied(session, [(job, LOCATION_DISALLOWED, "Noida", None)], NOW)
 
     (row,), _ = session.merge.call_args
     assert row.final_score is None
@@ -86,7 +86,7 @@ def test_a_prefilter_rejection_is_persisted_instead_of_dropped() -> None:
     job = _job("linkedin-new")
     session = _session(set())          # all_jobs has never seen it
 
-    _write_not_applied(session, [(job, COMPANY_COOLDOWN, "ACME", None)], NOW)
+    _write_not_applied(session, [(job, LOCATION_DISALLOWED, "Noida", None)], NOW)
 
     assert session.add.call_args_list, "the missing all_jobs row must be inserted"
     assert session.add.call_args_list[0].args[0] is job
@@ -115,7 +115,7 @@ def test_the_same_job_twice_in_one_batch_is_inserted_once() -> None:
 
     _write_not_applied(
         session,
-        [(job, COMPANY_COOLDOWN, "ACME", None), (job, COMPANY_COOLDOWN, "ACME", None)],
+        [(job, LOCATION_DISALLOWED, "Noida", None), (job, LOCATION_DISALLOWED, "Noida", None)],
         NOW,
     )
 
