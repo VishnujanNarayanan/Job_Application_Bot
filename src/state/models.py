@@ -77,6 +77,14 @@ class AllJobs(Base):
     # shows none -- only LinkedIn does. Drives success_prob (fewer = better).
     applicants_text: Mapped[str | None] = mapped_column(Text)
     applicants_count: Mapped[int | None] = mapped_column(Integer)
+    # The employer's own apply link when the portal gives one (Naukri, for jobs
+    # that redirect to the company's site; LinkedIn's public page has none).
+    job_url_direct: Mapped[str | None] = mapped_column(Text)
+    # The portal's seniority label, lower-cased ("entry level", "mid-senior
+    # level", "director"). LinkedIn only.
+    job_level: Mapped[str | None] = mapped_column(Text)
+    # The portal's experience band ("3-6 Yrs"). Naukri only.
+    experience_range: Mapped[str | None] = mapped_column(Text)
     outcome: Mapped[str | None] = mapped_column(Text)
     # The original this JD duplicates (>0.95 cosine). Self-referential FK:
     # the DB guarantees the target row exists, so the scraper must insert +
@@ -278,6 +286,9 @@ class PortalHealth(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
 
 
+# Last notification per company, for the company cooldown filter. The filter
+# is removed (a different job id at the same company is a different job), so
+# nothing reads or writes this any more; the table and its rows are kept.
 class CompanyCooldown(Base):
     __tablename__ = "company_cooldown"
 

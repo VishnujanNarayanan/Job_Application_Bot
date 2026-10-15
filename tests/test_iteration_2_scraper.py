@@ -47,17 +47,6 @@ def test_exceeds_years_ceiling() -> None:
     assert exceeds_years_ceiling(0, 6) is False
 
 
-def test_company_in_cooldown() -> None:
-    from src.scraper.filters import company_in_cooldown
-
-    now = datetime(2026, 6, 4, tzinfo=timezone.utc)
-    recent = datetime(2026, 5, 30, tzinfo=timezone.utc)   # 5 days ago
-    old = datetime(2026, 5, 20, tzinfo=timezone.utc)      # 15 days ago
-    assert company_in_cooldown(recent, now, 10) is True
-    assert company_in_cooldown(old, now, 10) is False
-    assert company_in_cooldown(None, now, 10) is False
-
-
 # ---------------------------------------------------------------------------
 # Embedding math — cosine is pure (src/scorer/embeddings.py)
 # ---------------------------------------------------------------------------
@@ -289,11 +278,11 @@ def test_scrape_linkedin_cap_and_fetch_flag(monkeypatch) -> None:
         results_wanted=50,
         hours_old=2,
         per_site=True,
-        linkedin_fetch_description=True,
+        fetch_description=True,
         linkedin_results_wanted=25,
     )
     assert seen["linkedin"]["results_wanted"] == 25
-    assert seen["linkedin"]["linkedin_fetch_description"] is True
+    assert seen["linkedin"]["fetch_description"] is True
     assert seen["indeed"]["results_wanted"] == 50
 
 
@@ -401,9 +390,105 @@ def test_captured_captions_land_on_their_own_rows(monkeypatch) -> None:
 
     jobs = {j.job_id: j for j in jw.scrape(
         "sde", sites=["linkedin"], country="india", results_wanted=5, hours_old=1,
-        linkedin_fetch_description=True,
+        fetch_description=True,
     )}
     assert jobs["linkedin-li-111"].applicants_count == 139
     assert jobs["linkedin-li-111"].applicants_text == "139 applicants"
     assert jobs["linkedin-li-222"].applicants_count is None
     assert jw._APPLICANTS == {}, "captions must not leak into the next scrape"
+
+
+@pytest.mark.parametrize("band, floor", [
+    ("3-6 Yrs", 3), ("0-2 Yrs", 0), ("12-20 Yrs", 12), ("5+ Yrs", 5),
+    ("Fresher", 0), ("", None), (None, None), ("Not disclosed", None),
+])
+def test_experience_floor(band, floor) -> None:
+    from src.scraper.filters import experience_floor
+
+    assert experience_floor(band) == floor
+
+
+def test_experience_exceeds_ceiling_uses_the_lower_bound() -> None:
+    from src.scraper.filters import experience_exceeds_ceiling
+
+    assert experience_exceeds_ceiling("10-18 Yrs", 6)
+    assert not experience_exceeds_ceiling("5-8 Yrs", 6)   # could be 5: passes
+    assert not experience_exceeds_ceiling("6-11 Yrs", 6)  # ceiling is inclusive
+    assert not experience_exceeds_ceiling(None, 6)        # LinkedIn has no band
+
+
+def test_job_level_disallowed_whole_label_case_insensitive() -> None:
+    from src.scraper.filters import job_level_disallowed
+
+    assert job_level_disallowed("Director", ["director", "executive"])
+    assert not job_level_disallowed("mid-senior level", ["director", "executive"])
+    assert not job_level_disallowed(None, ["director"])
+    assert not job_level_disallowed("director", [])
+
+
+def test_row_to_job_keeps_portal_fields() -> None:
+    from src.scraper.jobspy_wrapper import _row_to_job
+
+    job = _row_to_job({
+        "site": "naukri", "id": "nk-1", "company": "Acme", "title": "SDE",
+        "job_url_direct": "https://careers.acme.invalid/1",
+        "experience_range": "3-6 Yrs", "job_level": float("nan"),
+    })
+    assert job.job_url_direct == "https://careers.acme.invalid/1"
+    assert job.experience_range == "3-6 Yrs"
+    assert job.job_level is None
+
+
+def test_remote_filter_adds_f_wt_only_for_remote_searches(monkeypatch) -> None:
+    """JobSpy 1.2+ ignores is_remote on LinkedIn; the patch restores f_WT=2."""
+    from jobspy.linkedin import LinkedIn
+
+    from src.scraper import jobspy_wrapper as jw
+
+    monkeypatch.setattr(LinkedIn, "_search_params", lambda self: {"keywords": "sde"})
+    monkeypatch.setattr(jw, "_remote_filter_installed", False)
+    jw.install_remote_filter()
+
+    remote = types.SimpleNamespace(scraper_input=types.SimpleNamespace(is_remote=True))
+    plain = types.SimpleNamespace(scraper_input=types.SimpleNamespace(is_remote=False))
+    assert LinkedIn._search_params(remote) == {"keywords": "sde", "f_WT": 2}
+    assert LinkedIn._search_params(plain) == {"keywords": "sde"}
+
+
+def test_applicant_capture_wraps_the_renamed_detail_fetch(monkeypatch) -> None:
+    """JobSpy 1.2 renamed _get_job_details to _fetch_details; the caption is
+    still read from the response that fetch received."""
+    from jobspy.linkedin import LinkedIn
+
+    from src.scraper import jobspy_wrapper as jw
+
+    page = '<span class="num-applicants__caption">  139 applicants </span>'
+
+    def original(self, job_id):
+        self.session.get(f"https://x.invalid/jobs/view/{job_id}")
+        return {"description": "JD"}
+
+    monkeypatch.setattr(LinkedIn, "_fetch_details", original)
+    monkeypatch.setattr(jw, "_capture_installed", False)
+    monkeypatch.setattr(jw, "_APPLICANTS", {})
+    jw.install_applicant_capture()
+
+    session = types.SimpleNamespace(get=lambda *_a, **_k: types.SimpleNamespace(text=page))
+    scraper = types.SimpleNamespace(session=session)
+    assert LinkedIn._fetch_details(scraper, "42") == {"description": "JD"}
+    assert jw._APPLICANTS == {"li-42": "139 applicants"}
+
+
+def test_linkedin_retry_is_mounted_on_each_scraper_session(monkeypatch) -> None:
+    """JobSpy 1.2 dropped the LinkedIn session's 429/5xx retry; it is restored."""
+    from jobspy.linkedin import LinkedIn
+
+    from src.scraper import jobspy_wrapper as jw
+
+    monkeypatch.setattr(LinkedIn, "__init__", LinkedIn.__init__)
+    monkeypatch.setattr(jw, "_retry_installed", False)
+    jw.install_linkedin_retry()
+
+    retries = LinkedIn().session.get_adapter("https://www.linkedin.com").max_retries
+    assert retries.total == 3
+    assert 429 in retries.status_forcelist

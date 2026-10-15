@@ -3,7 +3,7 @@
 The scoring and building themselves are the run's own (`score_job`,
 `build_applied`, shared with `src.main`) and are tested there; these tests pin
 what is different for a pasted advert -- the gates are reported, never applied;
-the same text maps to the same stored job; no cooldown and no Telegram message.
+the same text maps to the same stored job; no Telegram message.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pytest
 from src import tailor as tl
 from src.llm.schemas import JDParsed
 from src.scorer.keywords import Keyword
-from src.state.models import AllJobs, Applied, CompanyCooldown, RenderCache
+from src.state.models import AllJobs, Applied, RenderCache
 
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
 AD = """Testing Engineer\n\nRequired: 8+ years of ETL testing.\nStrong SQL querying skills."""
@@ -139,12 +139,6 @@ def test_a_score_below_the_threshold_still_builds_and_says_so(stubbed):
     assert t.below_threshold
     assert s.of(Applied)
     assert "BELOW THRESHOLD" in _report(t)
-
-
-def test_no_cooldown_is_written(stubbed):
-    s = FakeSession()
-    _run(s, stubbed, company="NTT DATA")
-    assert s.of(CompanyCooldown) == []
 
 
 def test_company_and_role_default_to_unknown(stubbed):
