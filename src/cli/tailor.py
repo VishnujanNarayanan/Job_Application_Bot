@@ -12,7 +12,7 @@ stops the build: the resume is ALWAYS generated, and the report says what the
 filters and the threshold would have decided.
 
 Writes the ``all_jobs`` and ``applied`` rows (so the dashboard and "Mark applied"
-work) but no company cooldown, and sends no Telegram message unless --notify.
+work), and sends no Telegram message unless --notify.
 """
 
 from __future__ import annotations

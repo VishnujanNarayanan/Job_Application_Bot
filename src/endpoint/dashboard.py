@@ -85,7 +85,7 @@ def _view(applied, job) -> dict:
         "source": job.site or "",
         "status": applied.user_status or "pending",
         "gap_skills": list(applied.gap_skills or []),
-        "apply_url": job.job_url or "",
+        "apply_url": job.job_url_direct or job.job_url or "",
         "pdf_url": f"/resume/{job.job_id}.pdf",
         "docx_url": f"/resume/{job.job_id}.docx",
         "built_at": applied.built_at.isoformat() if applied.built_at else None,
@@ -162,7 +162,7 @@ def _skipped_views(session, limit: int) -> list[dict]:
             "score": score,
             "location": job.location or "",
             "source": job.site or "",
-            "apply_url": job.job_url or "",
+            "apply_url": job.job_url_direct or job.job_url or "",
             "skipped_at": na.not_applied_at.isoformat() if na.not_applied_at else None,
         })
     return views

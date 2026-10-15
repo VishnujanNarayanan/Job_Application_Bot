@@ -27,7 +27,7 @@
 
 ## What it does
 
-- **Scrapes** recent LinkedIn listings for your search terms.
+- **Scrapes** recent LinkedIn and Naukri listings for your search terms.
 - **Parses** each job ad with an LLM (Groq, Gemini or OpenRouter, rotating) into structured
   requirements.
 - **Scores** the job against your profile and the number of applicants; anything above the
@@ -313,7 +313,7 @@ Add `DATABASE_URL`, your LLM keys (`GROQ_API_KEY`, `GEMINI_FREE_API_KEY`, ...), 
 
 ## Limitations
 
-- **LinkedIn only** for now; Indeed and Glassdoor are switched off.
+- **LinkedIn and Naukri only** for now; Indeed and Glassdoor are switched off.
 - **The dashboard needs your computer on.** Telegram messages and (with AWS) resume links work
   with it off; resume links expire after 7 days.
 - **Phone access to the dashboard needs Tailscale.** The dashboard has no login, so it is only

@@ -10,7 +10,6 @@ from __future__ import annotations
 # Layer 2 — rejected at scrape on raw/structured-at-scrape data
 HARD_FILTER_LAYER_2 = "HARD_FILTER_LAYER_2"
 LOCATION_DISALLOWED = "LOCATION_DISALLOWED"
-COMPANY_COOLDOWN = "COMPANY_COOLDOWN"
 DUPLICATE = "DUPLICATE"
 # Company on filters.company_blocklist.
 COMPANY_BLOCKED = "COMPANY_BLOCKED"
@@ -18,6 +17,10 @@ COMPANY_BLOCKED = "COMPANY_BLOCKED"
 TITLE_DISALLOWED = "TITLE_DISALLOWED"
 # Too many applicants for even a best-case fit to clear the threshold.
 TOO_MANY_APPLICANTS = "TOO_MANY_APPLICANTS"
+# Portal seniority label on filters.job_level_blocklist (LinkedIn).
+JOB_LEVEL_DISALLOWED = "JOB_LEVEL_DISALLOWED"
+# Portal experience band starts above filters.years_ceiling (Naukri).
+EXPERIENCE_TOO_HIGH = "EXPERIENCE_TOO_HIGH"
 # LinkedIn says the posting no longer accepts applications (backlog refresh).
 JOB_CLOSED = "JOB_CLOSED"
 # Listing arrived with no description body (e.g. a throttled LinkedIn

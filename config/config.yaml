@@ -28,7 +28,8 @@ operator:
 filters:
   job_type: "fulltime"
   # Reject a JD only when it explicitly asks for more years than this. A JD
-  # that states none parses to 0 and passes. There is no seniority filter.
+  # that states none parses to 0 and passes. Also checked before the parse
+  # against Naukri's experience band ("3-6 Yrs"), using its lower bound.
   years_ceiling: 6
   # Open to relocation; no visa filter.
   visa_filter: null
@@ -57,6 +58,13 @@ filters:
   # could not clear scoring.apply_threshold. The best fit seen over 1,221
   # stored jobs was 0.728. Raise it to skip fewer.
   best_realistic_fit: 0.75
+
+  # LinkedIn seniority labels to skip before the parse (case-insensitive).
+  # "mid-senior level" is not listed: LinkedIn files plain "Java Developer"
+  # and "Software Engineer II" roles under it.
+  job_level_blocklist:
+    - "director"
+    - "executive"
 
 # ---------------------------------------------------------------------------
 # Salary — informational only, never filled in on a form (FR-12). Expected =
@@ -102,10 +110,11 @@ scraper:
   # The only geo-filter LinkedIn honours; without it LinkedIn returns
   # worldwide listings.
   location: "India"
-  # Fetch each LinkedIn description individually. Without it jd_text is empty,
-  # which starves the parser and makes every job a near-duplicate of the
-  # first. Costs a request per job, bounded by rate_limit below.
-  linkedin_fetch_description: true
+  # Fetch each LinkedIn and Naukri description individually. Without it
+  # jd_text is empty, which starves the parser and makes every job a
+  # near-duplicate of the first. Costs a request per job, bounded by
+  # rate_limit below.
+  fetch_description: true
   # One extra LinkedIn call per term with the Remote filter on, since the
   # plain search is almost all on-site (98 of 1,182 parsed jobs were remote).
   # Wider window because remote listings are sparse. results_wanted 0 = off.
@@ -126,9 +135,10 @@ scraper:
     # Optional rotating proxies (empty = direct connection).
     proxies: []
   sites:
-    # LinkedIn only while apis.indeed.com times out from this network. Re-add
-    # "indeed" and "glassdoor" once it doesn't.
+    # Indeed and Glassdoor are off while apis.indeed.com times out from this
+    # network. Re-add "indeed" and "glassdoor" once it doesn't.
     - "linkedin"
+    - "naukri"
   # Search-term rotation. Each run takes `terms_per_run` terms from the stored
   # index (search_rotation_state table) and advances past them. New terms go
   # at the end so the stored index keeps pointing at the same term.
@@ -218,9 +228,6 @@ scraper:
   # dismissed as duplicates. true re-examines notified jobs too, so the same
   # match can arrive on Telegram again.
   rescore_notified: false
-
-  # Never apply to the same company twice within this many days.
-  cooldown_days: 10
 
 # ---------------------------------------------------------------------------
 # Selection — Layer 4 (deterministic, no LLM)

@@ -125,7 +125,7 @@ def test_a_zero_day_backlog_is_off():
 
 def test_the_summary_accounts_for_every_job():
     outcomes = {"LOW_SCORE": 5, "HARD_FILTER_LAYER_3": 5, "JOB_TYPE_DISALLOWED": 1,
-                "COMPANY_COOLDOWN": 4, "LOCATION_DISALLOWED": 4, "NOT_REACHED": 10,
+                "COMPANY_BLOCKED": 4, "LOCATION_DISALLOWED": 4, "NOT_REACHED": 10,
                 "EMPTY_JD": 1}
     text = run_summary_text(scraped=40, skipped=11, applied=10,
                             outcomes=outcomes, dry_run=False)
