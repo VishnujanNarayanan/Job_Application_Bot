@@ -8,7 +8,7 @@ failing board is visible) and ``tier`` / ``next_poll_at``: hot boards are
 polled hourly, active ones every 3 hours, quiet ones every 12.
 
 Revision ID: 0014_ats_postings
-Revises: 0012_ats_boards
+Revises: 0013_parse_route
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0014_ats_postings"
-down_revision: Union[str, None] = "0012_ats_boards"
+down_revision: Union[str, None] = "0013_parse_route"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
