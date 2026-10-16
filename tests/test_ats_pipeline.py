@@ -136,7 +136,7 @@ def test_collect_runs_the_stages_in_order(monkeypatch):
         def record(self, res, classify, **_k):
             return [p for p in res.postings if classify(p) is None]
 
-        def schedule(self, res):
+        def schedule(self, res, stats=None):
             pass
 
         def flush(self, session):

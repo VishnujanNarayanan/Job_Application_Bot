@@ -166,7 +166,7 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     session.commit()
     log.info("ats_poll_started", due=len(boards))
     results = ats_poller.fetch_lists(boards, lanes, budget_s=60 * float(a.get("time_budget_minutes", 10)),
-                                     sr_max_pages=int(a.get("sr_max_pages", 30)), delay=delay)
+                                     sr_max_pages=int(a.get("sr_max_pages", 30)), delay=delay, stats=stats)
 
     candidates: list[tuple[ats.Posting, ats_poller.Board]] = []
     ledger = ats_poller.Ledger.load(session, [r.board for r in results], now, tier_hours)
@@ -180,7 +180,7 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
             sent = ledger.record(res, lambda p: classify(p, rules),
                                  baseline_hours=float(a.get("baseline_hours", 24)), stats=stats)
             candidates += [(p, res.board) for p in sent]
-        ledger.schedule(res)
+        ledger.schedule(res, stats)
     statements = ledger.flush(session)
     session.commit()
     reached = {(r.board.ats, r.board.board_id) for r in results}
@@ -304,7 +304,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         jobs = collect(session, cfg, atses=atses, now=now, stats=stats, log=log)
         backlog = _backlog(session, now, int(a.get("backlog_days", 2)), {j.job_id for j in jobs})
         closed = ats_poller.closed_job_ids(session, [j.job_id for j in backlog])
-        if jobs or stats.failed:
+        if jobs or stats.failed or stats.atses_skipped:
             send_status(ats_poll_done_text(stats))
         raw = backlog + jobs
         started = time.monotonic()  # the processing budget starts after the poll

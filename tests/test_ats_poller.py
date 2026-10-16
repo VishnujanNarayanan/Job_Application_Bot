@@ -65,8 +65,8 @@ def test_requests_are_spaced_by_the_delay():
 
 # --- one board -----------------------------------------------------------------------
 
-def _board(ats_name="lever", board_id="acme", polled_at=None):
-    return poller.Board(ats_name, board_id, "Acme", "acme", polled_at)
+def _board(ats_name="lever", board_id="acme", polled_at=None, poll_error=None):
+    return poller.Board(ats_name, board_id, "Acme", "acme", polled_at, poll_error=poll_error)
 
 
 def test_a_failing_board_is_reported_not_raised():
@@ -196,6 +196,83 @@ def test_a_failed_board_keeps_its_tier_and_is_retried_next_run():
     row = _tier(_board(), error="HTTP 503")
     assert row["error"] == "HTTP 503" and row["tier"] is None  # COALESCE keeps the stored tier
     assert row["due"] == NOW + timedelta(hours=1)
+    assert row["stop"] is False
+
+
+# --- what a response may change (comment on #97) -------------------------------------------
+
+def test_a_gone_board_is_retried_after_a_day_and_stopped_after_three():
+    row = _tier(_board(), error="HTTP 404")
+    assert row["error"] == "HTTP 404 (gone x1)" and row["due"] == NOW + timedelta(hours=24)
+    assert row["stop"] is False
+    row = _tier(_board(poll_error="HTTP 404 (gone x2)"), error="HTTP 404")
+    assert row["error"] == "HTTP 404 (gone x3, polling stopped)" and row["stop"] is True
+
+
+def test_a_gone_board_closes_nothing():
+    # A failed fetch never reaches record(): only the schedule is written.
+    ledger = poller.Ledger(NOW, {("lever", "acme"): _known("a", "b")})
+    stats = poller.PollStats()
+    ledger.schedule(poller.BoardResult(_board(poll_error="HTTP 404 (gone x2)"), error="HTTP 404"), stats)
+    assert ledger.closed == [] and stats.gone_stopped == 1
+
+
+def test_a_board_that_answers_again_starts_counting_afresh():
+    assert _board(poll_error="HTTP 503").gone_count == 0
+    assert _tier(_board(poll_error="HTTP 404 (gone x2)"))["error"] is None
+
+
+def test_a_sudden_empty_list_is_held_open_once():
+    board = _board(polled_at=NOW - timedelta(hours=1))
+    ledger, sent, stats = _record(board, [], known=_known("a", "b"))
+    assert sent == [] and ledger.closed == [] and stats.closed == 0 and stats.held_empty == 1
+    res = poller.BoardResult(board, [])
+    ledger.record(res, _classify, baseline_hours=24, stats=stats)
+    ledger.schedule(res)
+    assert ledger.boards[-1]["error"] == poller.EMPTY_ONCE
+    assert ledger.boards[-1]["due"] == NOW + timedelta(hours=1)
+
+
+def test_a_second_empty_list_closes_the_postings():
+    board = _board(polled_at=NOW - timedelta(hours=1), poll_error=poller.EMPTY_ONCE)
+    ledger, _sent, stats = _record(board, [], known=_known("a", "b"))
+    assert stats.closed == 2 and stats.held_empty == 0
+
+
+def test_an_empty_board_with_nothing_open_is_not_held():
+    ledger, _sent, stats = _record(_board(polled_at=NOW), [], known=_known("a", closed=NOW - timedelta(days=1)))
+    assert stats.held_empty == 0
+
+
+@pytest.mark.parametrize("name,answer,ok", [
+    ("lever", (404, '{"ok":false}'), True),
+    ("greenhouse", (404, "{}"), True),
+    ("ashby", (404, "Not Found"), True),
+    ("lever", (429, ""), False),
+    ("lever", (403, ""), False),
+    ("lever", (200, "[]"), False),
+    ("smartrecruiters", (200, '{"offset":0,"limit":100,"totalFound":0,"content":[]}'), True),
+    ("smartrecruiters", (200, '{"totalFound":3,"content":[{}]}'), False),
+    ("smartrecruiters", (429, ""), False),
+])
+def test_the_canary_expects_the_usual_no_such_board_answer(name, answer, ok):
+    sleeps = []
+    lane = poller.Lane(name, 0.0, sleep=sleeps.append, get=FakeGet(answer))
+    assert poller.canary_ok(lane) is ok
+    assert 120 not in sleeps  # a 429 at the canary is not waited out
+
+
+def test_an_ats_whose_canary_fails_is_skipped_and_its_boards_stay_due():
+    lanes = {"lever": poller.Lane("lever", 0.0, sleep=lambda _s: None, get=FakeGet((429, "")))}
+    stats = poller.PollStats()
+    assert poller.fetch_lists([_board()], lanes, budget_s=60, stats=stats) == []
+    assert stats.atses_skipped == ["lever"]
+
+
+def test_a_healthy_canary_lets_the_boards_be_polled():
+    lanes = {"lever": poller.Lane("lever", 0.0, sleep=lambda _s: None, get=FakeGet((404, ""), (200, "[]")))}
+    results = poller.fetch_lists([_board()], lanes, budget_s=60)
+    assert len(results) == 1 and results[0].error is None
 
 
 # --- writing -------------------------------------------------------------------------
@@ -223,6 +300,7 @@ def test_a_whole_poll_is_written_in_a_few_bulk_statements():
     assert statements == 4 == len(session.calls)
     assert len(session.calls[1][1]["a"]) == 300  # the seen update carries every key
     assert "unnest" in session.calls[3][0] and "COALESCE(u.tier" in session.calls[3][0]
+    assert "poll = x.poll AND NOT u.stop" in session.calls[3][0]
 
 
 # --- order within a run (#110) ----------------------------------------------------------
@@ -230,7 +308,7 @@ def test_a_whole_poll_is_written_in_a_few_bulk_statements():
 def _row(board_id, tier=None, fits=None, due=None):
     return SimpleNamespace(ats="lever", board_id=board_id, board_name=None, company=None, company_key=None,
                            polled_at=None if tier is None else NOW, fits_7d=fits, target_posted_7d=None,
-                           tier=tier, next_poll_at=due)
+                           tier=tier, next_poll_at=due, poll_error=None)
 
 
 class _Rows:
