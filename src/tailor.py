@@ -63,7 +63,7 @@ def bullet_texts(profile) -> tuple[str, ...]:
 
 def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None):
     """Layer 4: embed the parsed advert and score it against the profile."""
-    from src.scorer.apply_decision import evaluate
+    from src.scorer.apply_decision import evaluate, threshold_for
     from src.scorer.keywords import jd_keywords
     from src.scorer.selector import build_jd_context
 
@@ -78,7 +78,7 @@ def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None)
         applicants_count=job.applicants_count,
         jd_text=job.jd_text,
     )
-    return evaluate(profile, jd_context, keywords=jd_keywords(parsed))
+    return evaluate(profile, jd_context, keywords=jd_keywords(parsed), threshold=threshold_for(job.site))
 
 
 @dataclass
@@ -204,7 +204,7 @@ class FilterVerdict:
 def filter_verdicts(session, job, parsed, now: datetime) -> list[FilterVerdict]:
     """What every hard filter WOULD have said. Information only: nothing here
     stops the resume being built."""
-    from src.scorer.apply_decision import applicant_multiplier
+    from src.scorer.apply_decision import applicant_multiplier, threshold_for
     from src.scraper import filters
 
     cfg = settings
@@ -214,7 +214,7 @@ def filter_verdicts(session, job, parsed, now: datetime) -> list[FilterVerdict]:
     blocklist = list(cfg.filters.get("company_blocklist") or [])
     title_patterns = list(cfg.filters.get("title_blocklist") or [])
     best_fit = float(cfg.filters.get("best_realistic_fit", 1.0))
-    threshold = float(cfg.scoring.apply_threshold)
+    threshold = threshold_for(job.site)
 
     return [
         FilterVerdict(
@@ -378,6 +378,8 @@ def tailor(
     account of what the backend is doing and what it found, so the CLI and the
     Tailor page can show the work as it happens.
     """
+    from src.scorer.apply_decision import threshold_for
+
     from src.llm.client import observe
     from src.parser import apply_to_row, parse
     from src.scraper.jobspy_wrapper import linkedin_job_id
@@ -468,7 +470,7 @@ def tailor(
         result=result,
         built=built,
         verdicts=filter_verdicts(session, job, parsed, now),
-        threshold=float(settings.scoring.apply_threshold),
+        threshold=threshold_for(job.site),
         reused_parse=reused,
     )
 
