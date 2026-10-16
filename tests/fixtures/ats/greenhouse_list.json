@@ -1,0 +1,6 @@
+{"jobs": [
+  {"absolute_url": "https://job-boards.greenhouse.io/acme/jobs/111", "id": 111, "title": "Backend Engineer", "company_name": "Acme",
+   "location": {"name": "Bengaluru, India"}, "updated_at": "2026-10-16T09:00:00-04:00", "first_published": "2026-10-15T08:00:00-04:00"},
+  {"absolute_url": "https://job-boards.greenhouse.io/acme/jobs/112", "id": 112, "title": "Account Executive - France", "company_name": "Acme",
+   "location": {"name": "Remote, France"}, "updated_at": "2026-10-16T09:00:00-04:00", "first_published": "2026-10-01T08:00:00-04:00"}
+], "meta": {"total": 2}}

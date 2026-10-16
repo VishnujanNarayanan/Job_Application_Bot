@@ -327,6 +327,11 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         best_fit = float(cfg.filters.get("best_realistic_fit", 1.0))
         threshold = float(cfg.scoring.apply_threshold)
         empty_jd_count = 0
+        # Jobs the ATS poll (src.ats_pipeline, #97) already found: a LinkedIn
+        # or Naukri copy is a duplicate, and the ATS row keeps the direct link.
+        from src.scraper import ats_poller
+        ats_found = ats_poller.ats_index(
+            session, now, int((cfg.get("ats_poll") or {}).get("dedupe_days", 30)))
 
         passing: list[AllJobs] = []
         # (job, reason, detail, scores) — `scores` is the SelectionResult when
@@ -342,6 +347,10 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         for job in raw_jobs:
             if job.job_id in existing_ids:
                 not_applied_queue.append((job, DUPLICATE, None, None))
+                continue
+            ats_copy = ats_poller.ats_copy(ats_found, job.company, job.role) if ats_found else None
+            if ats_copy:
+                not_applied_queue.append((job, DUPLICATE, ats_copy, None))
                 continue
             if not (job.jd_text or "").strip():
                 # No description body (e.g. throttled LinkedIn fetch). Drop

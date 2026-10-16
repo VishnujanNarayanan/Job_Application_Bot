@@ -64,6 +64,17 @@ from src.scorer.selector import (
 )
 
 
+def threshold_for(site: str | None) -> float:
+    """The apply bar for a job from ``site``: ATS jobs use
+    ``ats_poll.apply_threshold`` when set (#120), everything else
+    ``scoring.apply_threshold``."""
+    if site and site.startswith("ats:"):
+        value = (settings.get("ats_poll") or {}).get("apply_threshold")
+        if value is not None:
+            return float(value)
+    return float(settings.scoring.apply_threshold)
+
+
 @dataclass
 class SelectionResult:
     """Everything Layer 5 needs to build a selection_json, plus the scores."""
@@ -252,8 +263,10 @@ def evaluate(
     *,
     keywords: tuple[Keyword, ...] = (),
     now: datetime | None = None,
+    threshold: float | None = None,
 ) -> SelectionResult:
-    """Score one job against the profile and decide build-or-skip."""
+    """Score one job against the profile and decide build-or-skip.
+    ``threshold`` defaults to ``scoring.apply_threshold``."""
     now = now or datetime.now(timezone.utc)
 
     # One pool, one ranking (v3.4). Work, freelance and projects are scored the
@@ -338,7 +351,8 @@ def evaluate(
 
     final_score = min(float(settings.scoring.final.max_score), fit * success_prob)
 
-    apply = final_score >= settings.scoring.apply_threshold
+    bar = float(settings.scoring.apply_threshold) if threshold is None else threshold
+    apply = final_score >= bar
     return SelectionResult(
         apply=apply,
         final_score=final_score,
