@@ -6,9 +6,9 @@ Transport and bookkeeping only; what to keep is decided by the caller
 - :func:`due_boards`: boards marked ``poll`` whose ``next_poll_at`` has come,
   oldest first.
 - :func:`fetch_lists` / :func:`fetch_details`: one paced lane per ATS.
-- :func:`record`: ``ats_postings`` bookkeeping (seen, closed, first-poll
-  baseline) for one board.
-- :func:`schedule`: the board's tier and next poll time.
+- :class:`Ledger`: ``ats_postings`` bookkeeping (seen, closed, first-poll
+  baseline) and each board's tier and next poll time, in memory, written in
+  bulk.
 
 Pacing (hard rule #4): one lane per ATS, one request at a time, ``delay``
 seconds apart. A 429 pauses that lane for 2 minutes, a second one for 10, and
@@ -253,47 +253,152 @@ class PollStats:
         self.skipped[reason] = self.skipped.get(reason, 0) + 1
 
 
-def record(session, res: BoardResult, now: datetime, classify: Callable, *, baseline_hours: float,
-           stats: PollStats) -> list[ats.Posting]:
-    """Update ``ats_postings`` for one fetched board; return the postings to
-    send on (new, not skipped, and not part of a first poll's baseline)."""
-    from sqlalchemy import select
+@dataclass
+class Known:
+    """One ``ats_postings`` row, as much of it as the bookkeeping needs."""
+    first_seen_at: datetime
+    skipped: str | None
+    closed_at: datetime | None
 
-    from src.state.models import AtsPosting
 
-    board = res.board
-    known = {r.posting_id: r for r in session.scalars(
-        select(AtsPosting).where(AtsPosting.ats == board.ats, AtsPosting.board_id == board.board_id))}
-    first_poll = board.polled_at is None or not known
-    send, kept = [], set()
-    for p in res.postings:
-        reason = classify(p)
-        if reason == DROP:
-            continue
-        kept.add(p.posting_id)
-        row = known.get(p.posting_id)
-        if row is not None:
-            row.last_seen_at = now
-            row.closed_at = None
-            continue
-        if reason:
-            stats.skip(reason)
-        elif first_poll and not (p.posted_at and now - p.posted_at <= timedelta(hours=baseline_hours)):
-            reason = "baseline"
-            stats.baseline += 1
-        session.add(AtsPosting(
-            ats=p.ats, board_id=p.board_id, posting_id=p.posting_id, job_id=p.job_id,
-            title=p.title[:500], location=(p.location or "")[:500], place=ats.place(p),
-            posted_at=p.posted_at, first_seen_at=now, last_seen_at=now, skipped=reason))
-        if reason is None:
-            send.append(p)
-    if res.complete:
-        for pid, row in known.items():
-            if pid not in kept and row.closed_at is None:
-                row.closed_at = now
-                stats.closed += 1
-    session.flush()
-    return send
+class Ledger:
+    """Bookkeeping for one poll, in memory, written in a few bulk statements.
+
+    It used to be several Neon round trips per board (load its postings,
+    insert, flush, load the board row, a tier query): the first full sweep
+    (2,695 boards, 2026-10-16) spent 21 minutes writing after a 20-minute list
+    phase (#109). Now the known postings of every fetched board are loaded in
+    one query (:meth:`load`), :meth:`record` and :meth:`schedule` only work
+    in memory, and :meth:`flush` writes inserts, seen/closed updates and the
+    boards' schedules in bulk.
+    """
+
+    def __init__(self, now: datetime, known: dict | None = None, tier_hours: dict | None = None):
+        self.now = now
+        self.known: dict[tuple[str, str], dict[str, Known]] = known or {}
+        self.hours = {**TIER_HOURS, **(tier_hours or {})}
+        self.inserts: list[dict] = []
+        self.seen: list[tuple[str, str, str]] = []
+        self.closed: list[tuple[str, str, str]] = []
+        self.boards: list[dict] = []
+        self._sent: set[tuple[str, str]] = set()
+
+    @classmethod
+    def load(cls, session, boards: list[Board], now: datetime, tier_hours: dict | None = None) -> "Ledger":
+        from sqlalchemy import select, tuple_
+
+        from src.state.models import AtsPosting
+
+        known: dict[tuple[str, str], dict[str, Known]] = {(b.ats, b.board_id): {} for b in boards}
+        keys = list(known)
+        for i in range(0, len(keys), 1000):
+            rows = session.execute(
+                select(AtsPosting.ats, AtsPosting.board_id, AtsPosting.posting_id, AtsPosting.first_seen_at,
+                       AtsPosting.skipped, AtsPosting.closed_at)
+                .where(tuple_(AtsPosting.ats, AtsPosting.board_id).in_(keys[i:i + 1000])))
+            for a, b, pid, first, skipped, closed in rows:
+                known[(a, b)][pid] = Known(first, skipped, closed)
+        return cls(now, known, tier_hours)
+
+    def record(self, res: BoardResult, classify: Callable, *, baseline_hours: float,
+               stats: PollStats) -> list[ats.Posting]:
+        """New postings to send on (not skipped, not a first poll's
+        baseline); queues what to write."""
+        board, now = res.board, self.now
+        known = self.known.setdefault((board.ats, board.board_id), {})
+        first_poll = board.polled_at is None or not known
+        send, kept = [], set()
+        for p in res.postings:
+            reason = classify(p)
+            if reason == DROP:
+                continue
+            kept.add(p.posting_id)
+            if p.posting_id in known:
+                self.seen.append((p.ats, p.board_id, p.posting_id))
+                continue
+            if reason:
+                stats.skip(reason)
+            elif first_poll and not (p.posted_at and now - p.posted_at <= timedelta(hours=baseline_hours)):
+                reason = "baseline"
+                stats.baseline += 1
+            self.inserts.append(dict(
+                ats=p.ats, board_id=p.board_id, posting_id=p.posting_id, job_id=p.job_id,
+                title=p.title[:500], location=(p.location or "")[:500], place=ats.place(p),
+                posted_at=p.posted_at, first_seen_at=now, last_seen_at=now, skipped=reason))
+            known[p.posting_id] = Known(now, reason, None)
+            if reason is None:
+                send.append(p)
+                self._sent.add((board.ats, board.board_id))
+        if res.complete:
+            for pid, row in known.items():
+                if pid not in kept and row.closed_at is None:
+                    self.closed.append((board.ats, board.board_id, pid))
+                    row.closed_at = now
+                    stats.closed += 1
+        return send
+
+    def tier(self, res: BoardResult) -> str:
+        """hot / active / quiet, from what this board has shown."""
+        board, week = res.board, self.now - timedelta(days=7)
+        known = self.known.get((board.ats, board.board_id), {})
+        sent = (board.ats, board.board_id) in self._sent or any(
+            k.skipped is None and k.first_seen_at >= week for k in known.values())
+        if sent or (board.polled_at is None and ((board.fits_7d or 0) > 0 or (board.target_posted_7d or 0) > 0)):
+            return "hot"
+        if any(p.posted_at and p.posted_at >= week for p in res.postings):
+            return "active"
+        return "quiet"
+
+    def schedule(self, res: BoardResult) -> None:
+        """Queue the board's poll stamp and next due time. A failed board
+        keeps its tier and is retried after RETRY_HOURS."""
+        if res.error:
+            tier, due = None, self.now + timedelta(hours=RETRY_HOURS)
+        else:
+            tier = self.tier(res)
+            # A few minutes early, so a board due hourly is not pushed past
+            # the next run by the minutes this one took.
+            due = self.now + timedelta(hours=float(self.hours[tier])) - timedelta(minutes=10)
+        self.boards.append(dict(ats=res.board.ats, board_id=res.board.board_id, error=res.error,
+                                tier=tier, due=due))
+
+    def flush(self, session) -> int:
+        """Write everything queued; returns the number of statements sent."""
+        from sqlalchemy import insert, text
+
+        from src.state.models import AtsPosting
+
+        statements = 0
+        for i in range(0, len(self.inserts), 1000):
+            session.execute(insert(AtsPosting), self.inserts[i:i + 1000])
+            statements += 1
+        for keys, sql in ((self.seen, _SEEN_SQL), (self.closed, _CLOSED_SQL)):
+            for i in range(0, len(keys), 5000):
+                chunk = keys[i:i + 5000]
+                session.execute(text(sql), {"now": self.now, "a": [k[0] for k in chunk],
+                                            "b": [k[1] for k in chunk], "c": [k[2] for k in chunk]})
+                statements += 1
+        for i in range(0, len(self.boards), 5000):
+            chunk = self.boards[i:i + 5000]
+            session.execute(text(_BOARDS_SQL), {
+                "now": self.now, "a": [r["ats"] for r in chunk], "b": [r["board_id"] for r in chunk],
+                "err": [r["error"] for r in chunk], "tier": [r["tier"] for r in chunk],
+                "due": [r["due"] for r in chunk]})
+            statements += 1
+        self.inserts, self.seen, self.closed, self.boards = [], [], [], []
+        return statements
+
+
+_KEYS = ("FROM unnest(CAST(:a AS text[]), CAST(:b AS text[]), CAST(:c AS text[])) AS u(ats, board_id, posting_id) "
+         "WHERE p.ats = u.ats AND p.board_id = u.board_id AND p.posting_id = u.posting_id")
+_SEEN_SQL = f"UPDATE ats_postings AS p SET last_seen_at = :now, closed_at = NULL {_KEYS}"
+_CLOSED_SQL = f"UPDATE ats_postings AS p SET closed_at = :now {_KEYS}"
+_BOARDS_SQL = (
+    "UPDATE ats_boards AS x SET polled_at = :now, poll_error = u.err, "
+    "tier = COALESCE(u.tier, x.tier), next_poll_at = u.due "
+    "FROM unnest(CAST(:a AS text[]), CAST(:b AS text[]), CAST(:err AS text[]), CAST(:tier AS text[]), "
+    "CAST(:due AS timestamptz[])) AS u(ats, board_id, err, tier, due) "
+    "WHERE x.ats = u.ats AND x.board_id = u.board_id")
 
 
 def mark_skipped(session, p: ats.Posting, reason: str) -> None:
@@ -308,47 +413,12 @@ def mark_skipped(session, p: ats.Posting, reason: str) -> None:
 def forget(session, p: ats.Posting) -> None:
     """Drop a posting's row so the next poll treats it as new (its
     description could not be fetched)."""
-    from src.state.models import AtsPosting
-
-    row = session.get(AtsPosting, (p.ats, p.board_id, p.posting_id))
-    if row is not None:
-        session.delete(row)
-
-
-def tier_of(session, res: BoardResult, now: datetime) -> str:
-    """hot / active / quiet, from what this board has shown."""
-    from sqlalchemy import select
+    from sqlalchemy import delete
 
     from src.state.models import AtsPosting
 
-    week = now - timedelta(days=7)
-    board = res.board
-    sent = session.scalar(
-        select(AtsPosting.posting_id)
-        .where(AtsPosting.ats == board.ats, AtsPosting.board_id == board.board_id)
-        .where(AtsPosting.skipped.is_(None), AtsPosting.first_seen_at >= week).limit(1))
-    if sent or (board.polled_at is None and ((board.fits_7d or 0) > 0 or (board.target_posted_7d or 0) > 0)):
-        return "hot"
-    if any(p.posted_at and p.posted_at >= week for p in res.postings):
-        return "active"
-    return "quiet"
-
-
-def schedule(session, res: BoardResult, now: datetime, tier_hours: dict | None = None) -> None:
-    """Stamp the board's poll and set when it is next due."""
-    from src.state.models import AtsBoard
-
-    hours = {**TIER_HOURS, **(tier_hours or {})}
-    row = session.get(AtsBoard, (res.board.ats, res.board.board_id))
-    row.polled_at = now
-    row.poll_error = res.error
-    if res.error:
-        row.next_poll_at = now + timedelta(hours=RETRY_HOURS)
-        return
-    row.tier = tier_of(session, res, now)
-    # A few minutes early, so a board due hourly is not pushed past the next
-    # run by the minutes this one took.
-    row.next_poll_at = now + timedelta(hours=float(hours[row.tier])) - timedelta(minutes=10)
+    session.execute(delete(AtsPosting).where(AtsPosting.ats == p.ats, AtsPosting.board_id == p.board_id,
+                                             AtsPosting.posting_id == p.posting_id))
 
 
 def prune(session, *, now: datetime | None = None, days: int = 60) -> int:
