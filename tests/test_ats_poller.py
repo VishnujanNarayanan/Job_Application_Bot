@@ -39,15 +39,21 @@ def _lane(*answers, delay=0.0):
 def test_a_429_pauses_the_lane_then_retries():
     lane, get, sleeps = _lane((429, ""), (200, "[]"))
     assert lane.get("u") == (200, "[]")
-    assert sleeps == [120]
+    assert sleeps[0] == 120
     assert get.urls == ["u", "u"]
+
+
+def test_a_429_slows_the_lane_to_one_request_a_second():
+    lane, _get, _sleeps = _lane((429, ""), (200, "[]"), delay=0.5)
+    lane.get("u")
+    assert lane.delay == poller.SAFE_DELAY == 1.0
 
 
 def test_the_third_429_stops_the_lane():
     lane, _get, sleeps = _lane((429, ""), (429, ""), (429, ""))
     with pytest.raises(poller.LaneStopped):
         lane.get("u")
-    assert sleeps == [120, 600]
+    assert [s for s in sleeps if s >= 120] == [120, 600]
 
 
 def test_requests_are_spaced_by_the_delay():

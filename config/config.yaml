@@ -236,8 +236,10 @@ scraper:
 # ---------------------------------------------------------------------------
 ats_poll:
   atses: [greenhouse, lever, ashby, smartrecruiters]
-  # One request per ATS this far apart; ATSes run in parallel.
-  delay_seconds: 1.0
+  # One request per ATS this far apart; ATSes run in parallel. 0.5 s = two
+  # a second (#111: no 429 in 50,000+ requests at 1 s). A 429 slows that
+  # ATS back to 1 s for the rest of the run.
+  delay_seconds: 0.5
   # Each ATS stops starting boards after this long; boards not reached stay
   # due and go first next run. Hot boards are polled first, so they are
   # always reached (#110).
@@ -262,6 +264,10 @@ ats_poll:
   dedupe_days: 30
   # Jobs a poll found but did not reach are retried for this long.
   backlog_days: 2
+  # ATS jobs have no applicant count (x1.0), so they get their own bar:
+  # 0.40 = the fit an early LinkedIn job needs at x1.5 (#120). Other sources
+  # keep scoring.apply_threshold.
+  apply_threshold: 0.40
   # Minutes for parse/score/build after the poll.
   process_budget_minutes: 25
   closed_retention_days: 60

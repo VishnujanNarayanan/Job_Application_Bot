@@ -11,9 +11,10 @@ Transport and bookkeeping only; what to keep is decided by the caller
   bulk.
 
 Pacing (hard rule #4): one lane per ATS, one request at a time, ``delay``
-seconds apart. A 429 pauses that lane for 2 minutes, a second one for 10, and
+seconds apart (0.5 s, #111). A 429 slows that lane to one request a second
+for the rest of the run and pauses it for 2 minutes, a second one for 10, and
 a third stops it for the run. Lanes run in parallel, so no ATS sees more than
-one request a second. A lane stops starting boards once its time budget is
+two requests a second. A lane stops starting boards once its time budget is
 spent; the boards not reached stay due and go first next run.
 
 Tiers: ``hot`` (a posting sent on in the last 7 days, or the measurement saw
@@ -40,6 +41,7 @@ log = structlog.get_logger(__name__)
 
 UA = "Mozilla/5.0 (job-application-bot; personal use)"
 PAUSES = (120, 600)  # seconds after the 1st and 2nd 429; the 3rd stops the lane
+SAFE_DELAY = 1.0  # a lane's delay after any 429
 TIMEOUT = 40
 TIER_HOURS = {"hot": 1.0, "active": 3.0, "quiet": 12.0}
 # A board whose fetch failed is retried after this long.
@@ -82,6 +84,7 @@ class Lane:
             if status != 429:
                 return status, body
             self.throttled += 1
+            self.delay = max(self.delay, SAFE_DELAY)
             if self.throttled > len(PAUSES):
                 raise LaneStopped(self.name)
             log.warning("ats_throttled", ats=self.name, pause_s=PAUSES[self.throttled - 1])

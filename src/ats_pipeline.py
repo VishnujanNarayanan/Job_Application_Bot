@@ -154,7 +154,7 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     now = now or datetime.now(timezone.utc)
     stats = stats if stats is not None else ats_poller.PollStats()
     lanes = lanes if lanes is not None else {}
-    delay = float(a.get("delay_seconds", 1.0))
+    delay = float(a.get("delay_seconds", 0.5))
     rules = rules_from(cfg)
     # The config section is a wrapper, not a dict: read the keys it has.
     tiers = a.get("tier_hours") or {}
@@ -272,6 +272,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
     from src.main import _upsert_scraped, _write_not_applied
     from src.notifications import ats_poll_done_text, send_match_notification, send_status
     from src.parser import apply_to_row, parse
+    from src.scorer.apply_decision import threshold_for
     from src.reasons import (
         BUILD_FAILURE,
         COMPANY_BLOCKED,
@@ -363,7 +364,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
                 continue
             result = score_job(profile, job, parsed, scrape_window_hours=hours)
             log.info("job_scored", job_id=job.job_id, company=job.company, role=job.role, source=job.site,
-                     score=round(result.final_score, 3), threshold=float(cfg.scoring.apply_threshold),
+                     score=round(result.final_score, 3), threshold=threshold_for(job.site),
                      matched=result.apply, fit=round(result.fit, 3), success_prob=round(result.success_prob, 3),
                      years_required=parsed.years_required, role_level=parsed.role_level)
             if not result.apply:
