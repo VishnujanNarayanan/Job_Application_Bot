@@ -1,0 +1,7 @@
+{"offset": 0, "limit": 100, "totalFound": 250, "content": [
+  {"id": "3743990016049646", "name": "Software Engineer", "company": {"identifier": "Acme", "name": "Acme Corp"},
+   "releasedDate": "2026-10-12T09:49:46.367Z",
+   "location": {"city": "Bengaluru", "region": "KA", "country": "in", "remote": false, "hybrid": true, "fullLocation": "Bengaluru, KA, India"},
+   "typeOfEmployment": {"id": "permanent", "label": "Full-time"}, "experienceLevel": {"id": "entry_level", "label": "Entry Level"},
+   "ref": "https://api.smartrecruiters.com/v1/companies/acme/postings/3743990016049646"}
+]}
