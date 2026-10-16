@@ -17,6 +17,16 @@ a third stops it for the run. Lanes run in parallel, so no ATS sees more than
 two requests a second. A lane stops starting boards once its time budget is
 spent; the boards not reached stay due and go first next run.
 
+What a response may change: only a 200 with the expected JSON marks postings
+closed. 429 / 403 / 5xx / anything else changes nothing and the board is
+retried in an hour. A 404 / 410 means the board is gone: retried after a day,
+and after three in a row it stops being polled (``poll_error`` says why, for
+a human to check); its postings are not closed. A board that suddenly lists
+nothing is held open once and closed only if it is still empty next poll.
+Each run starts with a canary per ATS (a board that cannot exist): anything
+but the usual "no such board" answer means the ATS is throttling us, and it
+is skipped for the run.
+
 Tiers: ``hot`` (a posting sent on in the last 7 days, or the measurement saw
 fitting jobs), ``active`` (anything posted in the last 7 days), ``quiet``
 (nothing). Each tier has its own interval (``ats_poll.tier_hours``).
@@ -46,6 +56,15 @@ TIMEOUT = 40
 TIER_HOURS = {"hot": 1.0, "active": 3.0, "quiet": 12.0}
 # A board whose fetch failed is retried after this long.
 RETRY_HOURS = 1.0
+# 404 / 410: the board is gone. Retried after GONE_HOURS; polling stops after
+# GONE_LIMIT in a row.
+GONE = ("HTTP 404", "HTTP 410")
+GONE_HOURS = 24.0
+GONE_LIMIT = 3
+# poll_error of a board held open after it suddenly listed nothing.
+EMPTY_ONCE = "empty list (held open once)"
+# A board id no ATS can have, asked for at the start of each run.
+CANARY = "zzqx-no-such-board-7f3k"
 
 
 class LaneStopped(Exception):
@@ -68,8 +87,9 @@ class Lane:
             get = session.get
         self._get = get
 
-    def get(self, url: str) -> tuple[int, str]:
-        """(status, body); status -1 on a network error."""
+    def get(self, url: str, *, patient: bool = True) -> tuple[int, str]:
+        """(status, body); status -1 on a network error. ``patient=False``
+        returns a 429 instead of pausing and retrying."""
         while True:
             wait = self._last + self.delay - time.monotonic()
             if wait > 0:
@@ -85,6 +105,8 @@ class Lane:
                 return status, body
             self.throttled += 1
             self.delay = max(self.delay, SAFE_DELAY)
+            if not patient:
+                return status, body
             if self.throttled > len(PAUSES):
                 raise LaneStopped(self.name)
             log.warning("ats_throttled", ats=self.name, pause_s=PAUSES[self.throttled - 1])
@@ -105,11 +127,23 @@ class Board:
     fits_7d: int | None = None
     target_posted_7d: int | None = None
     tier: str | None = None
+    # The last poll's error: counts 404s in a row, and marks a board held
+    # open after an empty list.
+    poll_error: str | None = None
 
     @classmethod
     def of(cls, row) -> "Board":
         return cls(row.ats, row.board_id, row.board_name or row.company, row.company_key,
-                   row.polled_at, row.fits_7d, row.target_posted_7d, row.tier)
+                   row.polled_at, row.fits_7d, row.target_posted_7d, row.tier, row.poll_error)
+
+    @property
+    def gone_count(self) -> int:
+        """404 / 410s in a row so far, read from ``poll_error``."""
+        e = self.poll_error or ""
+        if not e.startswith(GONE):
+            return 0
+        match = re.search(r"gone x(\d+)", e)
+        return int(match.group(1)) if match else 1
 
     @property
     def priority(self) -> str:
@@ -128,6 +162,8 @@ class BoardResult:
     # absence from it does not mean closed.
     complete: bool = True
     error: str | None = None
+    # Listed nothing although postings were open: held open this once.
+    held_empty: bool = False
 
 
 # --- Fetching ------------------------------------------------------------------------
@@ -228,13 +264,31 @@ def run_lanes(lanes: dict[str, Lane], work: dict[str, list], fn: Callable, budge
     return [pair for name in work for pair in out[name]]
 
 
+def canary_ok(lane: Lane) -> bool:
+    """Ask for a board that cannot exist. Greenhouse, Lever and Ashby answer
+    404; SmartRecruiters answers 200 with nothing found (checked 2026-10-17).
+    Anything else (429, 403, a 200 with jobs, a network error) means the ATS
+    is not answering normally."""
+    status, body = lane.get(ats.list_url(lane.name, CANARY), patient=False)
+    if lane.name == "smartrecruiters":
+        return status == 200 and ats.sr_total(body) == 0 and '"content":[]' in body.replace(" ", "")
+    return status == 404
+
+
 def fetch_lists(boards: list[Board], lanes: dict[str, Lane], *, budget_s: float,
-                sr_max_pages: int = 30, delay: float = 1.0) -> list[BoardResult]:
+                sr_max_pages: int = 30, delay: float = 1.0, stats=None) -> list[BoardResult]:
+    """Each ATS's boards; an ATS whose canary fails is skipped for the run
+    (its boards stay due)."""
     by_ats: dict[str, list] = {}
     for b in boards:
         by_ats.setdefault(b.ats, []).append(b)
-    for name in by_ats:
+    for name in list(by_ats):
         lanes.setdefault(name, Lane(name, delay))
+        if not canary_ok(lanes[name]):
+            log.error("ats_canary_failed", ats=name, boards_left_due=len(by_ats[name]))
+            if stats is not None:
+                stats.atses_skipped.append(name)
+            del by_ats[name]
     pairs = run_lanes(lanes, by_ats, lambda lane, b: fetch_board(lane, b, sr_max_pages=sr_max_pages), budget_s)
     return [res for _b, res in pairs]
 
@@ -268,6 +322,9 @@ class PollStats:
     duplicates: int = 0
     no_description: int = 0
     requests: int = 0
+    gone_stopped: int = 0
+    held_empty: int = 0
+    atses_skipped: list = field(default_factory=list)
 
     def skip(self, reason: str) -> None:
         self.skipped[reason] = self.skipped.get(reason, 0) + 1
@@ -326,6 +383,15 @@ class Ledger:
         baseline); queues what to write."""
         board, now = res.board, self.now
         known = self.known.setdefault((board.ats, board.board_id), {})
+        if (not res.postings and board.poll_error != EMPTY_ONCE
+                and any(k.closed_at is None for k in known.values())):
+            # Could be a glitch or quiet throttling: close nothing until a
+            # second poll also lists nothing.
+            res.held_empty = True
+            stats.held_empty += 1
+            log.warning("ats_board_empty_held", ats=board.ats, board=board.board_id,
+                        open=sum(k.closed_at is None for k in known.values()))
+            return []
         first_poll = board.polled_at is None or not known
         send, kept = [], set()
         for p in res.postings:
@@ -369,18 +435,31 @@ class Ledger:
             return "active"
         return "quiet"
 
-    def schedule(self, res: BoardResult) -> None:
+    def schedule(self, res: BoardResult, stats: PollStats | None = None) -> None:
         """Queue the board's poll stamp and next due time. A failed board
-        keeps its tier and is retried after RETRY_HOURS."""
-        if res.error:
+        keeps its tier and is retried after RETRY_HOURS; a gone one (404 /
+        410) after GONE_HOURS, and stops being polled after GONE_LIMIT."""
+        error, stop = res.error, False
+        if res.error and res.error.startswith(GONE):
+            n = res.board.gone_count + 1
+            stop = n >= GONE_LIMIT
+            error = f"{res.error} (gone x{n}{', polling stopped' if stop else ''})"
+            tier, due = None, self.now + timedelta(hours=GONE_HOURS)
+            if stop:
+                log.warning("ats_board_gone", ats=res.board.ats, board=res.board.board_id, error=res.error)
+                if stats is not None:
+                    stats.gone_stopped += 1
+        elif res.error:
             tier, due = None, self.now + timedelta(hours=RETRY_HOURS)
+        elif res.held_empty:
+            error, tier, due = EMPTY_ONCE, None, self.now + timedelta(hours=RETRY_HOURS)
         else:
             tier = self.tier(res)
             # A few minutes early, so a board due hourly is not pushed past
             # the next run by the minutes this one took.
             due = self.now + timedelta(hours=float(self.hours[tier])) - timedelta(minutes=10)
-        self.boards.append(dict(ats=res.board.ats, board_id=res.board.board_id, error=res.error,
-                                tier=tier, due=due))
+        self.boards.append(dict(ats=res.board.ats, board_id=res.board.board_id, error=error,
+                                tier=tier, due=due, stop=stop))
 
     def flush(self, session) -> int:
         """Write everything queued; returns the number of statements sent."""
@@ -403,7 +482,7 @@ class Ledger:
             session.execute(text(_BOARDS_SQL), {
                 "now": self.now, "a": [r["ats"] for r in chunk], "b": [r["board_id"] for r in chunk],
                 "err": [r["error"] for r in chunk], "tier": [r["tier"] for r in chunk],
-                "due": [r["due"] for r in chunk]})
+                "due": [r["due"] for r in chunk], "stop": [r["stop"] for r in chunk]})
             statements += 1
         self.inserts, self.seen, self.closed, self.boards = [], [], [], []
         return statements
@@ -415,9 +494,9 @@ _SEEN_SQL = f"UPDATE ats_postings AS p SET last_seen_at = :now, closed_at = NULL
 _CLOSED_SQL = f"UPDATE ats_postings AS p SET closed_at = :now {_KEYS}"
 _BOARDS_SQL = (
     "UPDATE ats_boards AS x SET polled_at = :now, poll_error = u.err, "
-    "tier = COALESCE(u.tier, x.tier), next_poll_at = u.due "
+    "tier = COALESCE(u.tier, x.tier), next_poll_at = u.due, poll = x.poll AND NOT u.stop "
     "FROM unnest(CAST(:a AS text[]), CAST(:b AS text[]), CAST(:err AS text[]), CAST(:tier AS text[]), "
-    "CAST(:due AS timestamptz[])) AS u(ats, board_id, err, tier, due) "
+    "CAST(:due AS timestamptz[]), CAST(:stop AS boolean[])) AS u(ats, board_id, err, tier, due, stop) "
     "WHERE x.ats = u.ats AND x.board_id = u.board_id")
 
 
