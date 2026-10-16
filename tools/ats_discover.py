@@ -49,6 +49,8 @@ from urllib.parse import quote
 
 import requests
 
+from src.scraper.ats import SUFFIXES, core_words, key, words  # noqa: F401
+
 OUT = Path("data/ats_probe")
 PROBES = OUT / "probes.jsonl"
 # Common Crawl ids are probed into their own file, so a guessing run and a
@@ -57,15 +59,6 @@ PROBE_FILES = (PROBES, OUT / "probes_commoncrawl.jsonl")
 UA = "Mozilla/5.0 (job-application-bot; personal use)"
 MAX_BODY = 300_000
 
-# Trailing words that are not part of a board id.
-SUFFIXES = {
-    "pvt", "private", "ltd", "limited", "llp", "llc", "inc", "incorporated",
-    "corp", "corporation", "co", "company", "plc", "gmbh", "ag", "sa", "bv",
-    "technologies", "technology", "solutions", "services", "systems",
-    "software", "labs", "lab", "india", "global", "group", "consulting",
-    "international", "in", "of", "the", "and", "center", "centre",
-    "acceleration", "north", "america", "research", "development", "com", "io",
-}
 # Legal-form words only: stripped from the full-name variant.
 LEGAL = {"pvt", "private", "ltd", "limited", "llp", "llc", "inc", "incorporated",
          "corp", "corporation", "co", "plc", "gmbh", "ag", "sa", "bv"}
@@ -76,26 +69,6 @@ GENERIC = {
     "open", "next", "blue", "red", "green", "bank", "capital", "india",
     "indian", "go", "my", "one", "pay", "jack", "zoho",
 }
-
-
-def words(name: str) -> list[str]:
-    s = name.lower().replace("&", " and ").replace("+", " plus ")
-    s = re.sub(r"\(.*?\)", " ", s)
-    s = re.sub(r"[^a-z0-9 ]+", " ", s)
-    return s.split()
-
-
-def core_words(name: str) -> list[str]:
-    w = [x for x in words(name)]
-    while len(w) > 1 and w[-1] in SUFFIXES:
-        w.pop()
-    while len(w) > 1 and w[0] == "the":
-        w.pop(0)
-    return w
-
-
-def key(name: str) -> str:
-    return "".join(core_words(name))
 
 
 def squashed(name: str) -> str:
