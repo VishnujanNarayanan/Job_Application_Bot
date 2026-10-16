@@ -27,4 +27,6 @@ class LLMParser:
         """Delegate to ``src.parser.parse``. Raises ``LLMError`` /
         ``LLMBudgetError`` as it does today; the pipeline decides what a
         failure means."""
-        raise NotImplementedError("#71: delegate to src.parser.parse")
+        from src.parser import parse
+
+        return parse(job, complete=self.complete)

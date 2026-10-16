@@ -23,7 +23,7 @@ import re
 from collections import defaultdict
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -81,9 +81,13 @@ def rebuild(session: Session, *, min_jobs: int | None = None) -> int:
     # within one ad is one ad's worth of evidence, not four.
     # The two skill columns only: whole rows would pull every job's text and
     # embedding, and this now runs at the end of every run.
+    # LLM-parsed jobs only (#71): a dictionary-parsed job's skills came from
+    # this vocabulary, so counting them would only re-confirm it. Null is a
+    # row parsed before routing existed, which was always the LLM.
     jobs = session.execute(
         select(AllJobs.required_skills, AllJobs.nice_to_have)
         .where(AllJobs.required_skills.isnot(None))
+        .where(or_(AllJobs.parse_mode.is_(None), AllJobs.parse_mode == "llm"))
     ).all()
 
     spellings: dict[str, defaultdict[str, int]] = {}

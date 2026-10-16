@@ -426,6 +426,21 @@ scoring:
   # (2026-10-16) it cut skills the dictionary misses from 28% to 24%.
   vocabulary_min_jobs: 3
 
+  # Which parser decides a job, from its free dictionary-parse score
+  # (src/parsing/router.py). Below `floor` the job is LOW_SCORE with no LLM
+  # call (#100): on a replay of 1,323 parsed jobs (2026-10-16), 279 scored
+  # under 0.40 and the LLM applied to none of them. 0 turns the floor off.
+  # `enabled` turns on the rest of #71: dictionary decides below `skip_below`
+  # and at/above `trust_above`, the LLM in between (42% fewer LLM calls, 7 of
+  # 232 applies lost on the replay). Bump `version` when a cut-off moves.
+  parse_routing:
+    floor: 0.40
+    enabled: false
+    skip_below: 0.44
+    trust_above: 0.75
+    daily_llm_budget: null
+    version: "2026-10-16"
+
   # Jobs below this are not applied to (LOW_SCORE). The one number to turn if
   # match volume is wrong: lower for more, raise for fewer. At 0.60 a
   # first-25 posting needs fit 0.40 and one at 100 applicants needs 0.60.

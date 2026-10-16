@@ -1,6 +1,7 @@
 """Layer 3 parse modes: LLM or dictionary-only, routed per job (#71).
 
-Scaffold only -- the interfaces are fixed, the bodies raise NotImplementedError.
+#100 (the parse floor) is live; the rest of #71 is wired but off
+(``scoring.parse_routing.enabled: false``) and ``shadow`` is still a stub.
 
 One entry point for callers (``main``, ``cli.backfill``, a replay tool)::
 

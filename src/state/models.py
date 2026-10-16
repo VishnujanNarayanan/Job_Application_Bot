@@ -85,6 +85,20 @@ class AllJobs(Base):
     job_level: Mapped[str | None] = mapped_column(Text)
     # The portal's experience band ("3-6 Yrs"). Naukri only.
     experience_range: Mapped[str | None] = mapped_column(Text)
+    # Which parser decided this job and why (#100, #71): src.parsing.router
+    # Route / Reason values. The dictionary parse is scored for EVERY routed
+    # job, LLM-parsed ones included, so the two can always be compared and
+    # the cut-offs re-derived. routing_version is the cut-off set in force.
+    # Null on rows parsed before routing existed.
+    parse_mode: Mapped[str | None] = mapped_column(Text)
+    parse_route_reason: Mapped[str | None] = mapped_column(Text)
+    dict_score: Mapped[float | None] = mapped_column(Float)
+    dict_fit: Mapped[float | None] = mapped_column(Float)
+    dict_years: Mapped[int | None] = mapped_column(Integer)
+    dict_job_type: Mapped[str | None] = mapped_column(Text)
+    llm_called: Mapped[bool | None] = mapped_column(Boolean)
+    routing_version: Mapped[str | None] = mapped_column(Text)
+    routed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     outcome: Mapped[str | None] = mapped_column(Text)
     # The original this JD duplicates (>0.95 cosine). Self-referential FK:
     # the DB guarantees the target row exists, so the scraper must insert +
