@@ -46,11 +46,12 @@ _ROOT = Path(__file__).resolve().parents[1]
 TECH = re.compile(
     r"machine learning|\bml\b|\bai\b|deep learning|\bnlp\b|computer vision|data scien|applied scien|"
     r"\bllm\b|gen ?ai|data engineer|analytics engineer|\betl\b|data platform|big data|data analyst|"
-    r"bi engineer|business intelligence|data warehouse|quant|trading|algorithmic|devops|\bsre\b|"
+    r"bi engineer|business intelligence|data warehouse|\bquant\w*|algorithmic trading|devops|\bsre\b|"
     r"site reliability|platform engineer|infrastructure|cloud engineer|build engineer|release engineer|"
     r"kubernetes|\bqa\b|quality assurance|\btest\b|testing|\bsdet\b|automation engineer|front[- ]?end|"
-    r"\bui\b engineer|react|angular|\bandroid\b|\bios\b|mobile|flutter|full[- ]?stack|back[- ]?end|"
-    r"\bapi\b|java\b|python|golang|\bgo\b developer|node|\.net|c\+\+|rust|scala|software|developer|"
+    r"\bui\b engineer|\breact\b|\bangular\b|\bandroid\b|\bios\b|\bmobile\b|flutter|full[- ]?stack|back[- ]?end|"
+    r"\bapi\b|\bjava\b|python|golang|\bgo\b developer|\bnode(\.?js)?\b|\.net\b|c\+\+|\brust\b|\bscala\b|"
+    r"software|developer|"
     r"\bsde\b|programmer|engineer i\b|engineer ii\b|member of technical staff|\bmts\b|"
     r"application engineer|graduate engineer|solutions engineer|forward deployed",
     re.I)
@@ -61,7 +62,8 @@ NONTECH = re.compile(
     r"front office|housekeep\w*|waiter|bartender|receptionist|civil|construction|mechanical|"
     r"electrical engineer|driver|warehouse|logistics|supply chain|procurement|call center|telecaller|"
     r"content writer|copywriter|graphic designer|teacher|tutor|laboratory|chemist|biolog\w*|"
-    r"store manager|retail|cashier|security guard|facility)\b", re.I)
+    r"store manager|retail|cashier|security guard|facility|customer (support|service|success)|trainer)\b",
+    re.I)
 EXEC = re.compile(r"\b(director|vice president|vp|head of|chief|cto|ceo|cfo|coo)\b", re.I)
 
 
@@ -121,7 +123,7 @@ def rules_from(cfg) -> dict:
         "title_patterns": list(cfg.filters.get("title_blocklist") or []),
         "level_blocklist": list(cfg.filters.get("job_level_blocklist") or []),
         "disallowed_regions": list(cfg.filters.get("disallowed_regions") or []),
-        "min_pool_skills": int(a.get("min_pool_skills", 2)),
+        "min_pool_skills": int(a.get("min_pool_skills", 3)),
     }
 
 
@@ -136,6 +138,9 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     lanes = lanes if lanes is not None else {}
     delay = float(a.get("delay_seconds", 1.0))
     rules = rules_from(cfg)
+    # The config section is a wrapper, not a dict: read the keys it has.
+    tiers = a.get("tier_hours") or {}
+    tier_hours = {k: float(tiers.get(k)) for k in ats_poller.TIER_HOURS if tiers.get(k) is not None}
 
     boards = ats_poller.due_boards(session, now, atses or a.get("atses") or ats.ATSES)
     # No transaction open while fetching: Neon ends a session left idle in
@@ -156,7 +161,7 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
             sent = ats_poller.record(session, res, now, lambda p: classify(p, rules),
                                      baseline_hours=float(a.get("baseline_hours", 24)), stats=stats)
             candidates += [(p, res.board) for p in sent]
-        ats_poller.schedule(session, res, now, dict(a.get("tier_hours") or {}))
+        ats_poller.schedule(session, res, now, tier_hours)
     session.commit()
 
     # E: already on LinkedIn/Naukri -> keep that job, give it the ATS link.
