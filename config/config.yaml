@@ -230,6 +230,50 @@ scraper:
   rescore_notified: false
 
 # ---------------------------------------------------------------------------
+# ATS poll — companies' own job boards, read directly (#97)
+# `python -m src.ats_pipeline`. Boards come from ats_boards.poll
+# (tools/ats_discover.py --upload). Separate from the JobSpy run.
+# ---------------------------------------------------------------------------
+ats_poll:
+  atses: [greenhouse, lever, ashby, smartrecruiters]
+  # One request per ATS this far apart; ATSes run in parallel. 0.5 s = two
+  # a second (#111: no 429 in 50,000+ requests at 1 s). A 429 slows that
+  # ATS back to 1 s for the rest of the run.
+  delay_seconds: 0.5
+  # Each ATS stops starting boards after this long; boards not reached stay
+  # due and go first next run. Hot boards are polled first, so they are
+  # always reached (#110).
+  time_budget_minutes: 10
+  # Re-poll interval by board tier: hot = sent a job in the last 7 days,
+  # active = posted anything in 7 days, quiet = nothing.
+  tier_hours: {hot: 1, active: 3, quiet: 12}
+  # Recorded in ats_postings but not processed (remote tied to another
+  # region). Remove to stop recording them.
+  record_places: [remote_locked]
+  # An unclear title goes to the parser only if its description names at
+  # least this many of the operator's skills_pool terms. 2 let a Product
+  # Manager and a Process Trainer through on domain words ("E-commerce",
+  # "fintech") in the first live run (2026-10-16).
+  min_pool_skills: 3
+  # A board's first poll sends only postings this recent; the rest are
+  # recorded as already open.
+  baseline_hours: 24
+  sr_max_pages: 30
+  # An ATS posting matching a LinkedIn/Naukri job (same company, title)
+  # from this many days is not processed again.
+  dedupe_days: 30
+  # Jobs a poll found but did not reach are retried for this long.
+  backlog_days: 2
+  # ATS jobs have no applicant count (x1.0), so they get their own bar:
+  # 0.40 = the fit an early LinkedIn job needs at x1.5 (#120). Other sources
+  # keep scoring.apply_threshold.
+  apply_threshold: 0.40
+  # Minutes for parse/score/build after the poll.
+  process_budget_minutes: 25
+  closed_retention_days: 60
+  recency_window_hours: 24
+
+# ---------------------------------------------------------------------------
 # Selection — Layer 4 (deterministic, no LLM)
 # ---------------------------------------------------------------------------
 selection:

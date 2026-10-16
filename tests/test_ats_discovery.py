@@ -63,3 +63,14 @@ def test_remote_is_open_to_india_only_when_it_says_so_or_names_no_region(loc, op
 ])
 def test_agency_boards_are_flagged(name, agency):
     assert (bool(d.AGENCY.search(name)) and not d.NOT_AGENCY.search(name)) is agency
+
+
+@pytest.mark.parametrize("body,name", [
+    ("<html><title>G2i Inc. Jobs</title>", "G2i Inc."),
+    ("<title>Netomi</title>", "Netomi"),
+    ("<title>Acme &amp; Co - Careers</title>", "Acme & Co"),
+    ("<title>Jobs</title>", None),
+    ("", None),
+])
+def test_company_name_from_a_board_page_title(body, name):
+    assert d.page_name(body) == name

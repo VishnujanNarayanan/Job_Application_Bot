@@ -26,6 +26,7 @@ USAGE
     python -m tools.ats_discover --commoncrawl   # probe ids from tools.ats_commoncrawl
     python -m tools.ats_discover --upload --dry-run [--include-commoncrawl]
     python -m tools.ats_discover --upload [--include-commoncrawl]
+    python -m tools.ats_discover --names [--dry-run]   # Lever/Ashby company names
 
 --upload writes ats_probes and ats_boards to Neon in one batch. Each board
 gets ``poll`` (India jobs or remote jobs), ``jobs_url``, ``company_key``,
@@ -49,6 +50,8 @@ from urllib.parse import quote
 
 import requests
 
+from src.scraper.ats import SUFFIXES, core_words, key, words  # noqa: F401
+
 OUT = Path("data/ats_probe")
 PROBES = OUT / "probes.jsonl"
 # Common Crawl ids are probed into their own file, so a guessing run and a
@@ -57,15 +60,6 @@ PROBE_FILES = (PROBES, OUT / "probes_commoncrawl.jsonl")
 UA = "Mozilla/5.0 (job-application-bot; personal use)"
 MAX_BODY = 300_000
 
-# Trailing words that are not part of a board id.
-SUFFIXES = {
-    "pvt", "private", "ltd", "limited", "llp", "llc", "inc", "incorporated",
-    "corp", "corporation", "co", "company", "plc", "gmbh", "ag", "sa", "bv",
-    "technologies", "technology", "solutions", "services", "systems",
-    "software", "labs", "lab", "india", "global", "group", "consulting",
-    "international", "in", "of", "the", "and", "center", "centre",
-    "acceleration", "north", "america", "research", "development", "com", "io",
-}
 # Legal-form words only: stripped from the full-name variant.
 LEGAL = {"pvt", "private", "ltd", "limited", "llp", "llc", "inc", "incorporated",
          "corp", "corporation", "co", "plc", "gmbh", "ag", "sa", "bv"}
@@ -76,26 +70,6 @@ GENERIC = {
     "open", "next", "blue", "red", "green", "bank", "capital", "india",
     "indian", "go", "my", "one", "pay", "jack", "zoho",
 }
-
-
-def words(name: str) -> list[str]:
-    s = name.lower().replace("&", " and ").replace("+", " plus ")
-    s = re.sub(r"\(.*?\)", " ", s)
-    s = re.sub(r"[^a-z0-9 ]+", " ", s)
-    return s.split()
-
-
-def core_words(name: str) -> list[str]:
-    w = [x for x in words(name)]
-    while len(w) > 1 and w[-1] in SUFFIXES:
-        w.pop()
-    while len(w) > 1 and w[0] == "the":
-        w.pop(0)
-    return w
-
-
-def key(name: str) -> str:
-    return "".join(core_words(name))
 
 
 def squashed(name: str) -> str:
@@ -790,6 +764,71 @@ def upload(dry_run: bool, include_commoncrawl: bool) -> None:
     print("uploaded")
 
 
+# --- Company names for boards whose API gives none (Lever, Ashby) -------------------
+
+NAMES = OUT / "names.jsonl"
+NAME_PAGES = {"lever": "https://jobs.lever.co/{id}", "ashby": "https://jobs.ashbyhq.com/{id}"}
+_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
+_TITLE_SUFFIX = re.compile(r"\s*(?:[-|\u2013:]\s*)?(?:jobs?|careers?|job board|open (?:positions|roles))\s*$", re.I)
+
+
+def page_name(body: str) -> str | None:
+    """The company name from a board page's <title> ("G2i Inc. Jobs" -> "G2i Inc.")."""
+    import html as htmlmod
+
+    m = _TITLE.search(body or "")
+    if not m:
+        return None
+    name = _TITLE_SUFFIX.sub("", htmlmod.unescape(" ".join(m.group(1).split()))).strip()
+    return name if name and name.lower() not in ("jobs", "careers", "lever", "ashby") else None
+
+
+def names(dry_run: bool) -> None:
+    """Read the board page of every polled Lever/Ashby board with no name,
+    one paced lane per ATS (1 request/second), saving to names.jsonl as it
+    goes so a rerun resumes; then write board_name and company_key to Neon in
+    one batch."""
+    from sqlalchemy import select, update
+
+    from src.scraper.ats_poller import Lane, run_lanes
+    from src.state.db import session_scope
+    from src.state.models import AtsBoard
+
+    with session_scope() as s:
+        todo = s.execute(select(AtsBoard.ats, AtsBoard.board_id).where(
+            AtsBoard.poll.is_(True), AtsBoard.board_name.is_(None), AtsBoard.ats.in_(list(NAME_PAGES)))).all()
+    done = {}
+    if NAMES.exists():
+        for line in NAMES.read_text().splitlines():
+            r = json.loads(line)
+            done[(r["ats"], r["id"])] = r["name"]
+    work: dict[str, list] = {}
+    for ats_name, ident in todo:
+        if (ats_name, ident) not in done:
+            work.setdefault(ats_name, []).append(ident)
+    log(f"names: {len(todo)} boards without a name, {sum(map(len, work.values()))} to fetch")
+    lock = threading.Lock()
+
+    def fetch(lane, ident):
+        status, body = lane.get(NAME_PAGES[lane.name].format(id=quote(ident, safe="")))
+        name = page_name(body) if status == 200 else None
+        with lock, NAMES.open("a") as f:
+            f.write(json.dumps({"ats": lane.name, "id": ident, "name": name, "status": status}) + "\n")
+            done[(lane.name, ident)] = name
+        return name
+
+    run_lanes({n: Lane(n, 1.0) for n in work}, work, fetch, None)
+    found = {k: v for k, v in done.items() if v}
+    log(f"names: {len(found)} found, {len(done) - len(found)} without one")
+    if dry_run or not found:
+        return
+    with session_scope() as s:
+        for (ats_name, ident), name in found.items():
+            s.execute(update(AtsBoard).where(AtsBoard.ats == ats_name, AtsBoard.board_id == ident)
+                      .values(board_name=name, company_key=key(name) or ident))
+    log(f"names: {len(found)} written to ats_boards")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ats", nargs="*", default=list(ATS))
@@ -799,6 +838,8 @@ def main() -> None:
                     help="probe ids from commoncrawl_ids.jsonl instead of guessing")
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--upload", action="store_true", help="write everything to Neon in one batch")
+    ap.add_argument("--names", action="store_true",
+                    help="look up company names for polled Lever/Ashby boards that have none")
     ap.add_argument("--dry-run", action="store_true", help="with --upload: print sizes only")
     ap.add_argument("--include-commoncrawl", action="store_true",
                     help="with --upload: include Common Crawl rows (check the size first)")
@@ -806,6 +847,9 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     if a.report:
         report()
+        return
+    if a.names:
+        names(a.dry_run)
         return
     if a.upload:
         upload(a.dry_run, a.include_commoncrawl)

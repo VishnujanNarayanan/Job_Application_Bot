@@ -20,7 +20,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.config import settings
 from src.llm.schemas import JDParsed
-from src.scorer.apply_decision import SelectionResult
+from src.scorer.apply_decision import SelectionResult, threshold_for
 from src.state.models import AllJobs
 
 log = structlog.get_logger(__name__)
@@ -147,7 +147,7 @@ def send_match_notification(
     loc_str = fields["loc_str"]
 
     salary_display = salary_str if salary_str else "CTC not listed"
-    threshold = settings.scoring.apply_threshold
+    threshold = threshold_for(job.site)
 
     text_lines = [
         f"*Match Score: {score}* (threshold: {threshold})",
@@ -276,6 +276,19 @@ def scrape_done_text(term: str, *, found: int, remote: int, new: int) -> str:
     if new != found:
         parts.append(f"{found - new} already found by an earlier term")
     return f"Found for \"{term}\": " + ", ".join(parts)
+
+
+def ats_poll_done_text(stats) -> str:
+    """One line per ATS poll (#97), sent only when it found something or a
+    board failed."""
+    parts = [f"{stats.new} new jobs from {stats.boards} boards"]
+    if stats.duplicates:
+        parts.append(f"{stats.duplicates} already found on LinkedIn/Naukri")
+    if stats.closed:
+        parts.append(f"{stats.closed} closed")
+    if stats.failed:
+        parts.append(f"{stats.failed} boards failed")
+    return "ATS poll: " + ", ".join(parts)
 
 
 def prechecks_done_text(
