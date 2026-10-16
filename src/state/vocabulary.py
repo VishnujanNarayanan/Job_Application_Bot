@@ -79,15 +79,18 @@ def rebuild(session: Session, *, min_jobs: int | None = None) -> int:
 
     # job_count is DISTINCT jobs, not occurrences: a term repeated four times
     # within one ad is one ad's worth of evidence, not four.
-    jobs = session.scalars(
-        select(AllJobs).where(AllJobs.required_skills.isnot(None))
+    # The two skill columns only: whole rows would pull every job's text and
+    # embedding, and this now runs at the end of every run.
+    jobs = session.execute(
+        select(AllJobs.required_skills, AllJobs.nice_to_have)
+        .where(AllJobs.required_skills.isnot(None))
     ).all()
 
     spellings: dict[str, defaultdict[str, int]] = {}
     job_counts: defaultdict[str, int] = defaultdict(int)
-    for job in jobs:
+    for required, nice in jobs:
         seen: set[str] = set()
-        for raw in (job.required_skills or []) + (job.nice_to_have or []):
+        for raw in (required or []) + (nice or []):
             term = str(raw).strip()
             if not _is_candidate(term):
                 continue
@@ -103,16 +106,21 @@ def rebuild(session: Session, *, min_jobs: int | None = None) -> int:
         log.warning("vocabulary_empty", jobs=len(jobs), min_jobs=floor)
         return 0
 
-    for key, count in kept.items():
-        term = max(spellings[key].items(), key=lambda kv: (kv[1], kv[0]))[0]
+    # Batched, not one statement per term: ~1,300 round trips to Neon took
+    # minutes. 5,000 rows x 3 columns stays under Postgres's 65,535 parameters.
+    rows = [
+        {"term_key": key, "term": max(spellings[key].items(), key=lambda kv: (kv[1], kv[0]))[0],
+         "job_count": count}
+        for key, count in kept.items()
+    ]
+    for start in range(0, len(rows), 5000):
+        stmt = pg_insert(SkillVocabulary).values(rows[start:start + 5000])
         session.execute(
-            pg_insert(SkillVocabulary)
-            .values(term_key=key, term=term, job_count=count)
             # is_active is deliberately absent from the update: a term retired
             # by hand must not come back on the next rebuild.
-            .on_conflict_do_update(
+            stmt.on_conflict_do_update(
                 index_elements=["term_key"],
-                set_={"term": term, "job_count": count},
+                set_={"term": stmt.excluded.term, "job_count": stmt.excluded.job_count},
             )
         )
 
