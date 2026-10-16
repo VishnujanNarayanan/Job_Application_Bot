@@ -399,7 +399,22 @@ def location_disallowed(p: Posting, regions) -> bool:
         return False
     parts = location_parts(p.location)
     regions = [r.casefold() for r in regions]
-    return bool(parts) and all(any(r in part.casefold() for r in regions) for part in parts)
+
+    def excluded(part: str) -> bool:
+        low = part.casefold()
+        if not any(r in low for r in regions):
+            return False
+        # A comma list can name another city too: "Bengaluru, Karnataka,
+        # India, Delhi, India" is not Delhi-only.
+        others = {m.group(0).casefold() for m in INDIA.finditer(part)} - _NOT_CITIES
+        return not any(not any(r in c for r in regions) for c in others)
+
+    return bool(parts) and all(excluded(part) for part in parts)
+
+
+# Names INDIA matches that are a country or state, not another city.
+_NOT_CITIES = {"india", "ncr", "kerala", "karnataka", "maharashtra", "tamil nadu", "telangana",
+               "andhra pradesh", "gujarat", "haryana", "uttar pradesh", "west bengal", "odisha", "goa"}
 
 
 def clean_location(p: Posting) -> str | None:
