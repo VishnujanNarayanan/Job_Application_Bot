@@ -248,8 +248,10 @@ ats_poll:
   # region). Remove to stop recording them.
   record_places: [remote_locked]
   # An unclear title goes to the parser only if its description names at
-  # least this many of the operator's skills_pool terms.
-  min_pool_skills: 2
+  # least this many of the operator's skills_pool terms. 2 let a Product
+  # Manager and a Process Trainer through on domain words ("E-commerce",
+  # "fintech") in the first live run (2026-10-16).
+  min_pool_skills: 3
   # A board's first poll sends only postings this recent; the rest are
   # recorded as already open.
   baseline_hours: 24

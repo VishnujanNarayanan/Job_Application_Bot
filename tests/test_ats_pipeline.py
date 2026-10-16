@@ -18,7 +18,7 @@ RULES = {
     "title_patterns": [r"\bintern(s|ship)?\b"],
     "level_blocklist": ["director"],
     "disallowed_regions": ["Delhi", "Gurgaon", "Gurugram", "Noida"],
-    "min_pool_skills": 2,
+    "min_pool_skills": 3,
 }
 
 
@@ -35,6 +35,13 @@ def _p(title="Backend Engineer", location="Bengaluru", remote=None, etype=None, 
     ("Director of Engineering", "exec"),
     ("Analyst", "unclear"),
     ("Engineering Manager", "unclear"),
+    ("Social Media Escalations (Support) - Team Lead", "unclear"),  # not "scala"
+    ("Process Trainer - TL - Lending", "nontech"),
+    ("Customer Success Manager", "nontech"),
+    ("Developer Support Engineer", "tech"),
+    ("Scala Developer", "tech"),
+    ("Node.js Engineer", "tech"),
+    ("Quantitative Researcher", "tech"),
 ])
 def test_role_family(title, family):
     assert pipe.role_family(title) == family
@@ -70,8 +77,9 @@ def test_an_unknown_place_needs_india_in_the_description(monkeypatch):
 
 
 def test_an_unclear_title_needs_the_operators_skills_in_the_description(monkeypatch):
-    monkeypatch.setattr("src.parser._pool_terms", lambda: ("Python", "SQL", "Airflow"))
-    assert pipe.decide(_p(title="Analyst", desc="Python and SQL daily."), RULES) is None
+    monkeypatch.setattr("src.parser._pool_terms", lambda: ("Python", "SQL", "Airflow", "fintech"))
+    assert pipe.decide(_p(title="Analyst", desc="Python, SQL and Airflow daily."), RULES) is None
+    assert pipe.decide(_p(title="Analyst", desc="Python and fintech."), RULES) == "relevance:skills=2"
     assert pipe.decide(_p(title="Analyst", desc="Excel and PowerPoint."), RULES) == "relevance:skills=0"
     # A tech title is never held back by the skills check.
     assert pipe.decide(_p(title="Backend Engineer", desc="Excel."), RULES) is None
