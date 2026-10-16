@@ -422,8 +422,9 @@ scoring:
     max_score: 1.0
   # How many distinct job ads a term must appear in to join the technology
   # vocabulary Layer 3 scans each JD for. Filters out one-off and
-  # hallucinated terms.
-  vocabulary_min_jobs: 5
+  # hallucinated terms. 3, not 5: on a hold-out of the 200 newest ads
+  # (2026-10-16) it cut skills the dictionary misses from 28% to 24%.
+  vocabulary_min_jobs: 3
 
   # Jobs below this are not applied to (LOW_SCORE). The one number to turn if
   # match volume is wrong: lower for more, raise for fewer. At 0.60 a

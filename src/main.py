@@ -604,6 +604,20 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
 
         session.commit()
 
+        # --- Layer 3: fold this run's parses into the skill vocabulary ---
+        # Nothing else rebuilds it: run by hand only, it sat unchanged from
+        # 2026-08-19 to 2026-10-16 while ~1,000 parsed jobs went uncounted
+        # (BigQuery, Redshift, Delta Lake all missing). Best-effort -- a
+        # failure leaves last run's vocabulary, which still works.
+        try:
+            from src.state import vocabulary
+
+            vocabulary.rebuild(session)
+            session.commit()
+        except Exception as exc:  # noqa: BLE001 - must not fail the run
+            session.rollback()
+            log.warning("vocabulary_rebuild_failed", error=str(exc)[:200])
+
         # --- Layer 9: regenerate the local CSV index (best-effort) ---
         # Skipped on GitHub Actions: the runner's filesystem is destroyed when
         # the job ends, so there is nowhere durable to write. Nothing is lost —
