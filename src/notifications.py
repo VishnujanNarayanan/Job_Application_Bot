@@ -288,6 +288,10 @@ def ats_poll_done_text(stats) -> str:
         parts.append(f"{stats.closed} closed")
     if stats.failed:
         parts.append(f"{stats.failed} boards failed")
+    if getattr(stats, "gone_stopped", 0):
+        parts.append(f"{stats.gone_stopped} boards gone (polling stopped, check ats_boards.poll_error)")
+    if getattr(stats, "atses_skipped", None):
+        parts.append(f"skipped {', '.join(stats.atses_skipped)} (not answering normally)")
     return "ATS poll: " + ", ".join(parts)
 
 
