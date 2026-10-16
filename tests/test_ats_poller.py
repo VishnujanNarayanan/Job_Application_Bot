@@ -105,35 +105,10 @@ def test_a_portal_job_with_the_same_company_and_title_is_a_duplicate():
     assert poller.portal_duplicate(portal, "acme", "Frontend Engineer") is None
 
 
-# --- recording -----------------------------------------------------------------------
+# --- recording (Ledger, in memory) ---------------------------------------------------------
 
-class FakeSession:
-    def __init__(self, known=(), board_row=None, recent_sent=None):
-        self.known = list(known)
-        self.added = []
-        self.board_row = board_row
-        self.recent_sent = recent_sent
-
-    def scalar(self, _stmt):
-        return self.recent_sent
-
-    def scalars(self, _stmt):
-        return list(self.known)
-
-    def get(self, _model, _key):
-        return self.board_row
-
-    def add(self, row):
-        self.added.append(row)
-
-    def flush(self):
-        pass
-
-
-def _row(pid, closed=None):
-    return AtsPosting(ats="lever", board_id="acme", posting_id=pid, job_id=f"lever-acme-{pid}", title="t",
-                      place="india", first_seen_at=NOW - timedelta(days=3),
-                      last_seen_at=NOW - timedelta(hours=1), closed_at=closed)
+def _known(*pids, closed=None, skipped=None, first=None):
+    return {pid: poller.Known(first or NOW - timedelta(days=3), skipped, closed) for pid in pids}
 
 
 def _classify(p):
@@ -143,16 +118,15 @@ def _classify(p):
     return "title" if "Intern" in p.title else None
 
 
-def _record(session, board, postings, complete=True):
+def _record(board, postings, known=None, complete=True):
+    ledger = poller.Ledger(NOW, {(board.ats, board.board_id): known} if known is not None else {})
     stats = poller.PollStats()
-    res = poller.BoardResult(board, postings, complete)
-    sent = poller.record(session, res, NOW, _classify, baseline_hours=24, stats=stats)
-    return [p.posting_id for p in sent], stats
+    sent = ledger.record(poller.BoardResult(board, postings, complete), _classify, baseline_hours=24, stats=stats)
+    return ledger, [p.posting_id for p in sent], stats
 
 
 def test_first_poll_sends_only_the_last_day_and_records_the_rest():
-    session = FakeSession()
-    sent, stats = _record(session, _board(), [
+    ledger, sent, stats = _record(_board(), [
         _posting("new", posted=NOW - timedelta(hours=3)),
         _posting("old", posted=NOW - timedelta(days=9)),
         _posting("undated"),
@@ -160,58 +134,86 @@ def test_first_poll_sends_only_the_last_day_and_records_the_rest():
     ])
     assert sent == ["new"]
     assert stats.baseline == 2
-    assert {r.posting_id: r.skipped for r in session.added} == {"new": None, "old": "baseline", "undated": "baseline"}
+    assert {r["posting_id"]: r["skipped"] for r in ledger.inserts} == {"new": None, "old": "baseline", "undated": "baseline"}
 
 
 def test_later_polls_send_everything_new_and_close_what_left_the_feed():
-    session = FakeSession(known=[_row("a"), _row("gone")])
-    sent, stats = _record(session, _board(polled_at=NOW - timedelta(hours=1)), [
-        _posting("a"), _posting("b", posted=NOW - timedelta(days=9)), _posting("i", title="Data Intern")])
+    ledger, sent, stats = _record(_board(polled_at=NOW - timedelta(hours=1)), [
+        _posting("a"), _posting("b", posted=NOW - timedelta(days=9)), _posting("i", title="Data Intern")],
+        known=_known("a", "gone"))
     assert sent == ["b"]  # old date, but the board has been polled before: it is new to us
     assert stats.closed == 1 and stats.skipped == {"title": 1}
-    a, gone = session.known
-    assert a.last_seen_at == NOW and a.closed_at is None
-    assert gone.closed_at == NOW
+    assert ledger.seen == [("lever", "acme", "a")]
+    assert ledger.closed == [("lever", "acme", "gone")]
 
 
 def test_a_partial_list_closes_nothing():
-    session = FakeSession(known=[_row("gone")])
-    _sent, stats = _record(session, _board(polled_at=NOW), [_posting("a")], complete=False)
-    assert stats.closed == 0 and session.known[0].closed_at is None
+    ledger, _sent, stats = _record(_board(polled_at=NOW), [_posting("a")], known=_known("gone"), complete=False)
+    assert stats.closed == 0 and ledger.closed == []
 
 
 def test_a_posting_back_in_the_feed_is_reopened():
-    session = FakeSession(known=[_row("a", closed=NOW - timedelta(hours=2))])
-    sent, _stats = _record(session, _board(polled_at=NOW), [_posting("a")])
-    assert sent == [] and session.known[0].closed_at is None
+    ledger, sent, _stats = _record(_board(polled_at=NOW), [_posting("a")],
+                                   known=_known("a", closed=NOW - timedelta(hours=2)))
+    assert sent == [] and ledger.seen == [("lever", "acme", "a")]  # the seen update clears closed_at
 
 
 # --- tiers ---------------------------------------------------------------------------
 
-def _schedule(session, board, postings=(), error=None):
-    row = SimpleNamespace(polled_at=None, poll_error=None, tier=None, next_poll_at=None)
-    session.board_row = row
-    poller.schedule(session, poller.BoardResult(board, list(postings), error=error), NOW)
-    return row
+def _tier(board, postings=(), known=None, error=None):
+    ledger = poller.Ledger(NOW, {(board.ats, board.board_id): known or {}})
+    ledger.schedule(poller.BoardResult(board, list(postings), error=error))
+    return ledger.boards[-1]
 
 
 def test_a_board_that_sent_a_job_this_week_is_hot_and_due_within_the_hour():
-    row = _schedule(FakeSession(recent_sent="p1"), _board(polled_at=NOW))
-    assert row.tier == "hot" and row.next_poll_at == NOW + timedelta(minutes=50)
+    row = _tier(_board(polled_at=NOW), known=_known("p1", first=NOW - timedelta(days=2)))
+    assert row["tier"] == "hot" and row["due"] == NOW + timedelta(minutes=50)
+
+
+def test_a_board_whose_only_recent_postings_were_skipped_is_not_hot():
+    row = _tier(_board(polled_at=NOW), known=_known("p1", skipped="role:nontech", first=NOW - timedelta(days=1)))
+    assert row["tier"] == "quiet"
 
 
 def test_the_measurement_seeds_the_first_tier():
-    board = poller.Board("lever", "acme", fits_7d=3)
-    assert _schedule(FakeSession(), board).tier == "hot"
+    assert _tier(poller.Board("lever", "acme", fits_7d=3))["tier"] == "hot"
 
 
 def test_a_board_posting_other_jobs_is_active_and_a_silent_one_quiet():
-    week_old = [_posting(posted=NOW - timedelta(days=2))]
-    assert _schedule(FakeSession(), _board(polled_at=NOW), week_old).tier == "active"
-    row = _schedule(FakeSession(), _board(polled_at=NOW), [_posting(posted=NOW - timedelta(days=40))])
-    assert row.tier == "quiet" and row.next_poll_at == NOW + timedelta(hours=12, minutes=-10)
+    assert _tier(_board(polled_at=NOW), [_posting(posted=NOW - timedelta(days=2))])["tier"] == "active"
+    row = _tier(_board(polled_at=NOW), [_posting(posted=NOW - timedelta(days=40))])
+    assert row["tier"] == "quiet" and row["due"] == NOW + timedelta(hours=12, minutes=-10)
 
 
-def test_a_failed_board_is_retried_next_run():
-    row = _schedule(FakeSession(), _board(), error="HTTP 503")
-    assert row.poll_error == "HTTP 503" and row.next_poll_at == NOW + timedelta(hours=1)
+def test_a_failed_board_keeps_its_tier_and_is_retried_next_run():
+    row = _tier(_board(), error="HTTP 503")
+    assert row["error"] == "HTTP 503" and row["tier"] is None  # COALESCE keeps the stored tier
+    assert row["due"] == NOW + timedelta(hours=1)
+
+
+# --- writing -------------------------------------------------------------------------
+
+class _Recorder:
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, stmt, params=None):
+        self.calls.append((str(stmt), params))
+
+
+def test_a_whole_poll_is_written_in_a_few_bulk_statements():
+    boards = [poller.Board("lever", f"b{i}", polled_at=NOW - timedelta(hours=1)) for i in range(300)]
+    ledger = poller.Ledger(NOW, {(b.ats, b.board_id): _known("old", "gone") for b in boards})
+    stats = poller.PollStats()
+    for b in boards:
+        res = poller.BoardResult(b, [ats.Posting("lever", b.board_id, "old", "Backend Engineer", "Pune"),
+                                     ats.Posting("lever", b.board_id, "new", "Backend Engineer", "Pune")])
+        ledger.record(res, _classify, baseline_hours=24, stats=stats)
+        ledger.schedule(res)
+    session = _Recorder()
+    statements = ledger.flush(session)
+    # 300 inserts, 300 seen, 300 closed, 300 boards: one statement each kind.
+    assert statements == 4 == len(session.calls)
+    assert len(session.calls[1][1]["a"]) == 300  # the seen update carries every key
+    assert "unnest" in session.calls[3][0] and "COALESCE(u.tier" in session.calls[3][0]

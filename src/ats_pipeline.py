@@ -151,6 +151,7 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
                                      sr_max_pages=int(a.get("sr_max_pages", 30)), delay=delay)
 
     candidates: list[tuple[ats.Posting, ats_poller.Board]] = []
+    ledger = ats_poller.Ledger.load(session, [r.board for r in results], now, tier_hours)
     for res in results:
         stats.boards += 1
         if res.error:
@@ -158,11 +159,13 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
             log.warning("ats_board_failed", ats=res.board.ats, board=res.board.board_id, error=res.error)
         else:
             stats.postings += len(res.postings)
-            sent = ats_poller.record(session, res, now, lambda p: classify(p, rules),
-                                     baseline_hours=float(a.get("baseline_hours", 24)), stats=stats)
+            sent = ledger.record(res, lambda p: classify(p, rules),
+                                 baseline_hours=float(a.get("baseline_hours", 24)), stats=stats)
             candidates += [(p, res.board) for p in sent]
-        ats_poller.schedule(session, res, now, tier_hours)
+        ledger.schedule(res)
+    statements = ledger.flush(session)
     session.commit()
+    log.info("ats_recorded", boards=len(results), statements=statements)
 
     # E: already on LinkedIn/Naukri -> keep that job, give it the ATS link.
     from src.state.models import AllJobs
