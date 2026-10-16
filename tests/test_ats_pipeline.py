@@ -115,9 +115,17 @@ def test_collect_runs_the_stages_in_order(monkeypatch):
     marked, forgotten = {}, []
     monkeypatch.setattr(poller, "due_boards", lambda *_a, **_k: [board])
     monkeypatch.setattr(poller, "fetch_lists", lambda boards, lanes, **_k: [poller.BoardResult(board, postings)])
-    monkeypatch.setattr(poller, "record", lambda session, res, now, classify, **_k:
-                        [p for p in res.postings if classify(p) is None])
-    monkeypatch.setattr(poller, "schedule", lambda *_a, **_k: None)
+    class _Ledger:
+        def record(self, res, classify, **_k):
+            return [p for p in res.postings if classify(p) is None]
+
+        def schedule(self, res):
+            pass
+
+        def flush(self, session):
+            return 0
+
+    monkeypatch.setattr(poller.Ledger, "load", classmethod(lambda cls, *_a, **_k: _Ledger()))
     monkeypatch.setattr(poller, "portal_jobs", lambda *_a: [("linkedin-li-9", "Acme", "Data Engineer")])
     monkeypatch.setattr(poller, "fetch_details", lambda ps, lanes, **_k: {p.job_id: p.description is not None for p in ps})
     monkeypatch.setattr(poller, "mark_skipped", lambda s, p, reason: marked.__setitem__(p.posting_id, reason))
