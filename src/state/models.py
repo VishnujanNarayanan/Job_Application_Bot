@@ -24,6 +24,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Text,
+    false,
     func,
     text as sa_text,
 )
@@ -388,3 +389,83 @@ class SkillVocabulary(Base):
     )
 
     __table_args__ = (Index("ix_skill_vocabulary_active", "is_active", "job_count"),)
+
+
+# ---------------------------------------------------------------------------
+# ATS job boards (#97) — which companies post jobs on which ATS, found by
+# guessing board ids from company names (tools/ats_discover.py) or from
+# Common Crawl. `ats_probes` is every id ever tried, misses included, so no id
+# is probed twice; `ats_boards` is every board that exists, India jobs or not.
+# ---------------------------------------------------------------------------
+
+
+class AtsProbe(Base):
+    __tablename__ = "ats_probes"
+
+    ats: Mapped[str] = mapped_column(Text, primary_key=True)
+    board_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    # "guess" (from a company name) or "commoncrawl".
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    # The company name the id was guessed from; null for Common Crawl ids.
+    company: Mapped[str | None] = mapped_column(Text)
+    # True = board exists, False = no such board, null = not probed yet or no
+    # usable answer (timeout, 5xx); both are retried.
+    hit: Mapped[bool | None] = mapped_column(Boolean)
+    http_status: Mapped[int | None] = mapped_column(Integer)
+    probed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (Index("ix_ats_probes_pending", "ats", "hit"),)
+
+
+class AtsBoard(Base):
+    __tablename__ = "ats_boards"
+
+    ats: Mapped[str] = mapped_column(Text, primary_key=True)
+    board_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    # The company name the board name reports, when the ATS returns one.
+    board_name: Mapped[str | None] = mapped_column(Text)
+    # Our company name it was matched to (guesses only), and how sure:
+    # "strong" = the board names this company, "weak" = only the id matches.
+    company: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[str | None] = mapped_column(Text)
+    # active_india / active_other / empty / no_api / unknown.
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    job_count: Mapped[int | None] = mapped_column(Integer)
+    india_job_count: Mapped[int | None] = mapped_column(Integer)
+    remote_job_count: Mapped[int | None] = mapped_column(Integer)
+    # Open jobs per location string, top 25.
+    locations: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    # Normalised company name (tools.ats_discover.key), for matching portal jobs.
+    company_key: Mapped[str | None] = mapped_column(Text)
+    # The exact endpoint that lists the board's open jobs.
+    jobs_url: Mapped[str | None] = mapped_column(Text)
+    # Polled hourly: the board has India jobs or remote jobs. Region-locked
+    # remote is kept (ranked lower later), so nothing is missed.
+    poll: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    # A recruiting agency's board; flagged, not dropped.
+    agency: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    # From the last measurement (tools.ats_discover --upload reads it):
+    # remote jobs open to India vs locked to another region, postings in the
+    # last 24h / 7d, of those in India or remote-open, and of those the ones
+    # that fit (tech role, <= 6 years or not stated).
+    remote_open_jobs: Mapped[int | None] = mapped_column(Integer)
+    remote_locked_jobs: Mapped[int | None] = mapped_column(Integer)
+    posted_24h: Mapped[int | None] = mapped_column(Integer)
+    posted_7d: Mapped[int | None] = mapped_column(Integer)
+    target_posted_7d: Mapped[int | None] = mapped_column(Integer)
+    fits_7d: Mapped[int | None] = mapped_column(Integer)
+    last_posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_ats_boards_state", "state", "india_job_count"),
+        Index("ix_ats_boards_poll", "poll", "ats"),
+        Index("ix_ats_boards_company_key", "company_key"),
+    )

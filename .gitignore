@@ -58,6 +58,7 @@ data/tailored/*
 !data/tailored/.gitkeep
 # Saved role_category/role_level classifier models (local, regenerable)
 data/models/
+data/ats_probe
 data/pending_writes.jsonl
 data/run.lock
 
