@@ -147,7 +147,7 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     # one for 5 minutes.
     session.commit()
     log.info("ats_poll_started", due=len(boards))
-    results = ats_poller.fetch_lists(boards, lanes, budget_s=60 * float(a.get("time_budget_minutes", 20)),
+    results = ats_poller.fetch_lists(boards, lanes, budget_s=60 * float(a.get("time_budget_minutes", 10)),
                                      sr_max_pages=int(a.get("sr_max_pages", 30)), delay=delay)
 
     candidates: list[tuple[ats.Posting, ats_poller.Board]] = []
@@ -165,7 +165,13 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
         ledger.schedule(res)
     statements = ledger.flush(session)
     session.commit()
-    log.info("ats_recorded", boards=len(results), statements=statements)
+    reached = {(r.board.ats, r.board.board_id) for r in results}
+    by_tier: dict[str, list[int]] = {}
+    for b in boards:
+        counts = by_tier.setdefault(b.priority, [0, 0])
+        counts[0 if (b.ats, b.board_id) in reached else 1] += 1
+    log.info("ats_recorded", boards=len(results), statements=statements,
+             reached_and_left={t: f"{r}/{r + left}" for t, (r, left) in by_tier.items()})
 
     # E: already on LinkedIn/Naukri -> keep that job, give it the ATS link.
     from src.state.models import AllJobs

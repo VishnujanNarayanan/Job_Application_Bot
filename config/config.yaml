@@ -239,8 +239,9 @@ ats_poll:
   # One request per ATS this far apart; ATSes run in parallel.
   delay_seconds: 1.0
   # Each ATS stops starting boards after this long; boards not reached stay
-  # due and go first next run.
-  time_budget_minutes: 20
+  # due and go first next run. Hot boards are polled first, so they are
+  # always reached (#110).
+  time_budget_minutes: 10
   # Re-poll interval by board tier: hot = sent a job in the last 7 days,
   # active = posted anything in 7 days, quiet = nothing.
   tier_hours: {hot: 1, active: 3, quiet: 12}
