@@ -34,7 +34,7 @@ def _p(title="Backend Engineer", location="Bengaluru", remote=None, etype=None, 
     ("Clinical Pharmacist", "nontech"),
     ("Director of Engineering", "exec"),
     ("Analyst", "unclear"),
-    ("Engineering Manager", "unclear"),
+    ("Engineering Manager", "manager"),
     ("Social Media Escalations (Support) - Team Lead", "unclear"),  # not "scala"
     ("Process Trainer - TL - Lending", "nontech"),
     ("Customer Success Manager", "nontech"),
@@ -48,6 +48,16 @@ def _p(title="Backend Engineer", location="Bengaluru", remote=None, etype=None, 
     ("Service Desk Technician", "nontech"),
     ("Finance Data Engineer", "tech"),        # a tech word wins
     ("Cloud Operations Engineer", "unclear"),  # not a business-operations title
+    ("QA/QC Engineer", "nontech"),
+    ("Senior Engineer-Dry Utility(Infrastructure)", "nontech"),
+    ("PLC Automation Engineer-ECF2", "nontech"),
+    ("Hydraulic Modeller - Water Supply", "nontech"),
+    ("Software Engineer - Water Utility Platform", "tech"),  # a software word wins
+    ("Principal Engineer (AI, Office of the CEO)", "tech"),
+    ("Chief Executive Officer", "exec"),
+    ("Senior IT Manager", "manager"),
+    ("Senior Project Manager", "manager"),
+    ("Engineering Manager - Backend", "tech"),
 ])
 def test_role_family(title, family):
     assert pipe.role_family(title) == family
@@ -67,6 +77,7 @@ def test_role_family(title, family):
     (_p(location="Pune / Gurugram"), None),
     (_p(title="Account Executive"), "role:nontech"),
     (_p(title="VP Engineering"), "role:exec"),
+    (_p(title="Senior Project Manager"), "role:manager"),
 ])
 def test_classify(posting, reason):
     assert pipe.classify(posting, RULES) == reason
