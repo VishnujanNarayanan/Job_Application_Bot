@@ -153,6 +153,9 @@ def test_employment_types_are_mapped_to_jobspy_words(raw, expected):
     ("Pune / Gurugram", None, False),   # one allowed location is enough
     ("Gurugram", True, False),          # remote with a Gurugram office
     ("Bengaluru", None, False),
+    ("Bengaluru, Karnataka, India, Delhi, India", None, False),  # a comma list with another city
+    ("Gurugram, Haryana, India", None, True),
+    ("Noida, Uttar Pradesh, India", None, True),
 ])
 def test_excluded_regions_apply_only_when_every_location_is_excluded(location, remote, excluded):
     p = ats.Posting(ats="lever", board_id="acme", posting_id="1", title="x", location=location, remote=remote)

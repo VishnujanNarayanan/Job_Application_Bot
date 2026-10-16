@@ -69,15 +69,29 @@ NONTECH = re.compile(
     r"operations (specialist|manager|executive|associate|coordinator)|service desk|help ?desk)\b",
     re.I)
 EXEC = re.compile(r"\b(director|vice president|vp|head of|chief|cto|ceo|cfo|coo)\b", re.I)
+# "Principal Engineer (AI, Office of the CEO)" is not an executive role.
+_OFFICE_OF = re.compile(r"office of the \w+", re.I)
+# Civil and industrial engineering, which shares words with software
+# ("infrastructure", "automation", "QA"): non-tech unless a software word is
+# also in the title (gate analysis, 2026-10-16).
+CIVIL = re.compile(r"\b(utility|utilities|water|wastewater|hydraulic|mep|hvac|plc|substation|structural|"
+                   r"qa/qc|qa ?& ?qc|geotech\w*|surveyor|piping|instrumentation)\b", re.I)
+SOFTWARE = re.compile(r"software|developer|\bdata\b|cloud|devops|\bml\b|\bai\b|python|java|\bweb\b|\bapp\b", re.I)
+# A manager title with no tech word: not the operator's kind of role.
+MANAGER = re.compile(r"\bmanager\b", re.I)
 
 
 def role_family(title: str) -> str:
-    """tech / nontech / exec / unclear, from the title alone."""
+    """tech / nontech / exec / manager / unclear, from the title alone."""
     tech = bool(TECH.search(title))
     if NONTECH.search(title) and not tech:
         return "nontech"
-    if EXEC.search(title):
+    if CIVIL.search(title) and not SOFTWARE.search(title):
+        return "nontech"
+    if EXEC.search(_OFFICE_OF.sub(" ", title)):
         return "exec"
+    if MANAGER.search(title) and not tech:
+        return "manager"
     return "tech" if tech else "unclear"
 
 
@@ -101,7 +115,7 @@ def classify(p: ats.Posting, rules: dict) -> str | None:
     if ats.location_disallowed(p, rules["disallowed_regions"]):
         return "location"
     family = role_family(p.title)
-    if family in ("nontech", "exec"):
+    if family in ("nontech", "exec", "manager"):
         return f"role:{family}"
     return None
 
