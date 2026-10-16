@@ -1,0 +1,128 @@
+# Layer 1 — the hourly poll of companies' ATS job boards (#97).
+#
+# Reads the boards marked `poll` in ats_boards (Greenhouse, Lever, Ashby,
+# SmartRecruiters) with src.ats_pipeline: ATS-specific filters first, then the
+# same parser, scorer and builder as the JobSpy run; matches go to
+# Telegram. Runs on GitHub's runners, so it works with the laptop shut; the
+# repo is public, so Actions minutes are free.
+#
+# Schedule: on the half hour from 07:00 to 18:00 IST (01:30-12:30 UTC), 12
+# runs a day. Each ATS gets at most one request a second
+# (src/scraper/ats_poller.py). Boards are polled by tier (hot hourly, active every
+# 3 h, quiet every 12 h); the list phase stops after
+# ats_poll.time_budget_minutes and the next run carries on.
+
+name: ats-poll
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Poll, score and build, but send to the test chat only"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "30 1-12 * * *"
+
+# Shares the pipeline's group: an ATS poll and a JobSpy run must not overlap
+# (same LLM quota, same rows).
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 58
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      # The LLM provider is chosen in config/config.yaml (llm.base_url +
+      # llm.api_key_env). Every supported key is passed through so switching
+      # provider stays a config edit and never needs a workflow change. Unset
+      # secrets arrive as empty strings, which is harmless.
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_FREE_API_KEY: ${{ secrets.GEMINI_FREE_API_KEY }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+      AWS_CLOUDWATCH_LOG_GROUP: ${{ secrets.AWS_CLOUDWATCH_LOG_GROUP }}
+      AWS_CLOUDWATCH_NAMESPACE: ${{ secrets.AWS_CLOUDWATCH_NAMESPACE }}
+      TZ: Asia/Kolkata
+      LOG_LEVEL: INFO
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # LibreOffice converts the assembled DOCX to PDF. Needed here (unlike a
+      # scrape-only runner) because this job pre-renders resumes so the
+      # Telegram links work while the laptop is off.
+      # Normally 20-30s. On 2026-10-05 (run 37337756852) apt hung here for
+      # 13+ minutes before the pipeline had done anything. Each attempt is
+      # capped so a stuck mirror costs minutes, not the whole run, and one
+      # retry covers a transient hang.
+      - name: Install LibreOffice
+        timeout-minutes: 8
+        run: |
+          for attempt in 1 2; do
+            if timeout 180 sudo apt-get update -qq -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+              && timeout 240 sudo apt-get install -y --no-install-recommends \
+                   -o Acquire::Retries=3 -o Acquire::http::Timeout=30 libreoffice-writer; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed or timed out; retrying"
+          done
+          exit 1
+
+      # MiniLM is ~90 MB and is fetched on first embed; cache it so only the
+      # first run pays for it.
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-${{ runner.os }}-minilm-v1
+
+      - name: Install dependencies
+        # The run pre-renders resumes to S3, so it needs the AWS packages too.
+        run: pip install -r requirements.txt -r requirements-aws.txt
+
+      # The operator profile and resume template are not in git (personal
+      # data) and are too big for GitHub secrets (48 KB cap vs a ~142 KB
+      # profile), so they come from the S3 bucket that already backs the
+      # render cache. Run `python -m src.cli.assets push` on the laptop after
+      # editing master_profile.yaml.
+      - name: Pull operator assets from S3
+        run: python -m src.cli.assets pull
+
+      - name: Poll ATS boards
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            python -m src.ats_pipeline --dry-run
+          else
+            python -m src.ats_pipeline
+          fi
+
+      # The CSV index is deliberately NOT written here — this filesystem is
+      # destroyed when the job ends. It is a projection of the rows just
+      # committed to Postgres, so the laptop regenerates it (dashboard load,
+      # or `python -m src.cli.export`) with this run's results included.
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ats-poll-logs-${{ github.run_id }}
+          path: data/logs/
+          if-no-files-found: ignore
+          retention-days: 7
