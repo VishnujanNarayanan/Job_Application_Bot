@@ -240,3 +240,13 @@ def test_hot_boards_are_polled_first_then_new_then_active_then_quiet():
             _row("seeded", fits=2), _row("quiet2", "quiet"), _row("hot2", "hot")]
     order = [b.board_id for b in poller.due_boards(_Rows(rows), NOW, ["lever"])]
     assert order == ["hot1", "seeded", "hot2", "new1", "active1", "quiet1", "quiet2"]
+
+
+# --- the JobSpy side of the dedupe --------------------------------------------------------
+
+def test_a_linkedin_listing_of_a_job_the_ats_found_is_a_duplicate():
+    index = {"acme": [("greenhouse-acme-1", "Backend Engineer (Python)"), ("greenhouse-acme-2", "Data Analyst")]}
+    assert poller.ats_copy(index, "Acme Technologies Pvt Ltd", "Backend Engineer") == "greenhouse-acme-1"
+    assert poller.ats_copy(index, "Acme", "Frontend Engineer") is None
+    assert poller.ats_copy(index, "Other Co", "Backend Engineer") is None
+    assert poller.ats_copy({}, "Acme", "Backend Engineer") is None

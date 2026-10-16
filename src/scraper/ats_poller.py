@@ -493,3 +493,29 @@ def portal_jobs(session, now: datetime, days: int) -> list:
         .where(AllJobs.site.in_(["linkedin", "naukri"]))
         .where(AllJobs.scraped_at >= now - timedelta(days=days))
     ).all()
+
+
+def ats_index(session, now: datetime, days: int) -> dict[str, list[tuple[str, str]]]:
+    """ATS jobs from the last ``days`` by company key: {key: [(job_id, title)]}.
+    For the JobSpy run, to spot a LinkedIn/Naukri copy of a job the ATS poll
+    already found."""
+    from sqlalchemy import select
+
+    from src.state.models import AllJobs
+
+    index: dict[str, list[tuple[str, str]]] = {}
+    rows = session.execute(
+        select(AllJobs.job_id, AllJobs.company, AllJobs.role)
+        .where(AllJobs.site.like("ats:%"), AllJobs.scraped_at >= now - timedelta(days=days)))
+    for job_id, company, role in rows:
+        index.setdefault(ats.key(company or ""), []).append((job_id, role))
+    return index
+
+
+def ats_copy(index: dict, company: str | None, title: str | None) -> str | None:
+    """The job_id of the ATS job this portal listing duplicates, if any."""
+    want = _title_key(title or "")
+    for job_id, role in index.get(ats.key(company or ""), []):
+        if difflib.SequenceMatcher(None, _title_key(role), want).ratio() >= 0.9:
+            return job_id
+    return None
