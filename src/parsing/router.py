@@ -44,6 +44,7 @@ class Reason(str, Enum):
     BUDGET_CAP = "budget_cap"
     ROUTING_DISABLED = "routing_disabled"
     LLM_ERROR = "llm_error"                      # set by the pipeline on fallback
+    FORCED = "forced"                            # mode passed explicitly (replays, tests)
 
 
 @dataclass(frozen=True)
@@ -72,16 +73,44 @@ class RouteDecision:
 
 
 def rules_from_config() -> RoutingRules:
-    """``parse_routing`` from config.yaml (``scoring.parse_floor`` for #100);
-    missing keys keep the defaults above. Validates floor <= skip_below <=
-    trust_above."""
-    raise NotImplementedError("#71: read parse_routing config")
+    """``scoring.parse_routing`` from config.yaml; missing keys keep the
+    defaults above. ``floor: 0`` turns the #100 floor off."""
+    from src.config import settings
+
+    raw = settings.scoring.get("parse_routing")
+    get = raw.get if raw is not None else (lambda _k, d=None: d)
+    defaults = RoutingRules()
+    budget = get("daily_llm_budget", None)
+    rules = RoutingRules(
+        enabled=bool(get("enabled", defaults.enabled)),
+        floor=float(get("floor", defaults.floor)),
+        skip_below=float(get("skip_below", defaults.skip_below)),
+        trust_above=float(get("trust_above", defaults.trust_above)),
+        daily_llm_budget=int(budget) if budget is not None else None,
+        version=str(get("version", defaults.version)),
+    )
+    if not rules.floor <= rules.skip_below <= rules.trust_above:
+        raise ValueError(
+            "scoring.parse_routing needs floor <= skip_below <= trust_above, got "
+            f"{rules.floor} / {rules.skip_below} / {rules.trust_above}")
+    return rules
 
 
-def llm_calls_today(session) -> int:
-    """LLM parses made since local midnight, counted from ``all_jobs``
-    (``llm_called`` true, by parse time) so the cap holds across runs."""
-    raise NotImplementedError("#71: count today's LLM parses")
+def llm_calls_today(session, *, now=None) -> int:
+    """LLM parses routed since UTC midnight, counted from ``all_jobs``
+    (``llm_called`` true, by ``routed_at``) so the cap holds across runs."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    from src.state.models import AllJobs
+
+    now = now or datetime.now(timezone.utc)
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(session.scalar(
+        select(func.count()).select_from(AllJobs)
+        .where(AllJobs.llm_called.is_(True), AllJobs.routed_at >= midnight)
+    ) or 0)
 
 
 def route(dict_score: float, *, llm_calls_today: int, rules: RoutingRules) -> RouteDecision:
@@ -94,7 +123,18 @@ def route(dict_score: float, *, llm_calls_today: int, rules: RoutingRules) -> Ro
     5. budget set and ``llm_calls_today >= budget``    -> CARRIED_OVER / BUDGET_CAP
     6. otherwise                                       -> LLM / MIDDLE_BAND
 
-    The dictionary's own hard filters (years ceiling, job type) run before
-    this, in the pipeline: a job they reject is decided without a score.
+    The dictionary's own hard filters (years ceiling, job type) are not
+    applied here: until #71 is enabled every job at or above the floor goes
+    to the LLM, which applies them on its own parse.
     """
-    raise NotImplementedError("#71: route")
+    if dict_score < rules.floor:
+        return RouteDecision(Route.SKIPPED_FLOOR, Reason.BELOW_FLOOR)
+    if not rules.enabled:
+        return RouteDecision(Route.LLM, Reason.ROUTING_DISABLED)
+    if dict_score < rules.skip_below:
+        return RouteDecision(Route.DICTIONARY, Reason.BELOW_SKIP)
+    if dict_score >= rules.trust_above:
+        return RouteDecision(Route.DICTIONARY, Reason.ABOVE_TRUST)
+    if rules.daily_llm_budget is not None and llm_calls_today >= rules.daily_llm_budget:
+        return RouteDecision(Route.CARRIED_OVER, Reason.BUDGET_CAP)
+    return RouteDecision(Route.LLM, Reason.MIDDLE_BAND)

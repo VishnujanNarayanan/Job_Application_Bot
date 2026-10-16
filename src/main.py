@@ -184,7 +184,9 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         send_match_notification,
         send_status,
     )
-    from src.parser import apply_to_row, grounded_skills, parse
+    from src.parser import apply_to_row, grounded_skills
+    from src.parsing import router
+    from src.parsing.pipeline import parse_job, record_route
     from src.reasons import (
         BUILD_FAILURE,
         COMPANY_BLOCKED,
@@ -410,6 +412,13 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         time_budget = 60.0 * float(cfg.scraper.get("time_budget_minutes", 0) or 0)
         not_reached = 0
         parse_failed = 0
+        parse_floored = 0
+        carried_over_budget = 0
+        # Layer 3 routing (#100, #71): which parser decides each job. The
+        # daily count is read once; this run's LLM calls are added as they go.
+        routing_rules = router.rules_from_config()
+        llm_calls_today = (router.llm_calls_today(session)
+                           if routing_rules.daily_llm_budget is not None else 0)
 
         for index, job in enumerate(passing):
             # Stop STARTING jobs once the time budget is spent, so the run ends
@@ -434,8 +443,11 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
                      company=job.company, role=job.role)
 
             # --- Layer 3: parse ---
+            # The dictionary parse is scored first (free); its score picks
+            # the route. Below the floor the LLM is never called (#100).
             try:
-                parsed = parse(job)
+                routed = parse_job(job, profile=profile, llm_calls_today=llm_calls_today,
+                                   rules=routing_rules, scrape_window_hours=hours_old)
             except LLMBudgetError as exc:
                 # The account is out of budget or daily quota, so every
                 # remaining job would fail the same way. Stop the batch and
@@ -466,7 +478,27 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
                 skipped_count += 1
                 continue
 
+            record_route(job, routed, routing_rules, now=now)
+            llm_calls_today += int(routed.llm_called)
+            if routed.decision.route is router.Route.CARRIED_OVER:
+                # Daily LLM budget spent (#71): no verdict, so the job stays in
+                # the backlog for the next run, like a failed parse.
+                carried_over_budget += 1
+                skipped_count += 1
+                continue
+            parsed = routed.parsed
             apply_to_row(job, parsed)
+
+            if routed.decision.route is router.Route.SKIPPED_FLOOR:
+                # LOW_SCORE, scored from the dictionary parse; parse_mode on
+                # the row says it never reached the LLM.
+                not_applied_queue.append(
+                    (job, LOW_SCORE, str(routed.dict_score), routed.dict_result))
+                log.info("job_filtered", job_id=job.job_id, reason=LOW_SCORE,
+                         value=round(routed.dict_score, 3), route="skipped_floor")
+                parse_floored += 1
+                skipped_count += 1
+                continue
 
             # Layer 3 hard filter: employment type on the structured field.
             # Checked here rather than at scrape time because JobSpy leaves the
@@ -642,6 +674,8 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         outcomes["PARSE_FAILED"] = parse_failed
     if not_reached:
         outcomes["NOT_REACHED"] = not_reached
+    if carried_over_budget:
+        outcomes["LLM_BUDGET_CARRIED"] = carried_over_budget
     try:
         send_dry_run_summary(
             scraped=scraped_count,
@@ -662,6 +696,9 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         matched=matched_count,
         skipped=skipped_count,
         outcomes=outcomes,
+        # Of the LOW_SCORE jobs, how many were decided below the parse floor
+        # without an LLM call (#100).
+        parse_floored=parse_floored,
         aborted="llm_budget_exhausted" if budget_exhausted else None,
     )
     # Non-zero so a scheduled run surfaces as failed rather than quietly
