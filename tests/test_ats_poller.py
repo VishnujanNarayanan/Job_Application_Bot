@@ -217,3 +217,26 @@ def test_a_whole_poll_is_written_in_a_few_bulk_statements():
     assert statements == 4 == len(session.calls)
     assert len(session.calls[1][1]["a"]) == 300  # the seen update carries every key
     assert "unnest" in session.calls[3][0] and "COALESCE(u.tier" in session.calls[3][0]
+
+
+# --- order within a run (#110) ----------------------------------------------------------
+
+def _row(board_id, tier=None, fits=None, due=None):
+    return SimpleNamespace(ats="lever", board_id=board_id, board_name=None, company=None, company_key=None,
+                           polled_at=None if tier is None else NOW, fits_7d=fits, target_posted_7d=None,
+                           tier=tier, next_poll_at=due)
+
+
+class _Rows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def scalars(self, _stmt):
+        return self.rows
+
+
+def test_hot_boards_are_polled_first_then_new_then_active_then_quiet():
+    rows = [_row("quiet1", "quiet"), _row("active1", "active"), _row("new1"), _row("hot1", "hot"),
+            _row("seeded", fits=2), _row("quiet2", "quiet"), _row("hot2", "hot")]
+    order = [b.board_id for b in poller.due_boards(_Rows(rows), NOW, ["lever"])]
+    assert order == ["hot1", "seeded", "hot2", "new1", "active1", "quiet1", "quiet2"]

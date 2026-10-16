@@ -101,11 +101,20 @@ class Board:
     # Seeds for the first tier, from the measurement.
     fits_7d: int | None = None
     target_posted_7d: int | None = None
+    tier: str | None = None
 
     @classmethod
     def of(cls, row) -> "Board":
         return cls(row.ats, row.board_id, row.board_name or row.company, row.company_key,
-                   row.polled_at, row.fits_7d, row.target_posted_7d)
+                   row.polled_at, row.fits_7d, row.target_posted_7d, row.tier)
+
+    @property
+    def priority(self) -> str:
+        """The tier it is polled in: a board never polled is hot when the
+        measurement saw fitting jobs on it, else "new"."""
+        if self.tier:
+            return self.tier
+        return "hot" if (self.fits_7d or 0) > 0 or (self.target_posted_7d or 0) > 0 else "new"
 
 
 @dataclass
@@ -120,8 +129,14 @@ class BoardResult:
 
 # --- Fetching ------------------------------------------------------------------------
 
+#: Polling order within a run (#110): hot boards always go first, so a run
+#: that hits its time budget still reaches them; then boards never polled,
+#: then active, then quiet. Within a tier, the longest overdue first.
+PRIORITY = {"hot": 0, "new": 1, "active": 2, "quiet": 3}
+
+
 def due_boards(session, now: datetime, atses) -> list[Board]:
-    """Boards to poll now, least recently due first."""
+    """Boards to poll now, hot first, then by how long they have been due."""
     from sqlalchemy import or_, select
 
     from src.state.models import AtsBoard
@@ -132,7 +147,9 @@ def due_boards(session, now: datetime, atses) -> list[Board]:
         .where(or_(AtsBoard.next_poll_at.is_(None), AtsBoard.next_poll_at <= now))
         .order_by(AtsBoard.next_poll_at.asc().nullsfirst(), AtsBoard.polled_at.asc().nullsfirst())
     )
-    return [Board.of(r) for r in rows]
+    boards = [Board.of(r) for r in rows]
+    # Stable sort: the overdue order from the query is kept within a tier.
+    return sorted(boards, key=lambda b: PRIORITY[b.priority])
 
 
 def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardResult:
