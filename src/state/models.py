@@ -457,6 +457,13 @@ class AtsBoard(Base):
     fits_7d: Mapped[int | None] = mapped_column(Integer)
     last_posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     measured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set by the hourly poller (src.scraper.ats_poller): when the board was
+    # last fetched, and the error if that fetch failed (null when it worked).
+    polled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    poll_error: Mapped[str | None] = mapped_column(Text)
+    # hot / active / quiet, and when the board is next due (null = now).
+    tier: Mapped[str | None] = mapped_column(Text)
+    next_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -468,4 +475,33 @@ class AtsBoard(Base):
         Index("ix_ats_boards_state", "state", "india_job_count"),
         Index("ix_ats_boards_poll", "poll", "ats"),
         Index("ix_ats_boards_company_key", "company_key"),
+        Index("ix_ats_boards_due", "poll", "next_poll_at"),
+    )
+
+
+class AtsPosting(Base):
+    """A posting seen on a polled ATS board (#97). Its presence means it has
+    been handled; ``closed_at`` is set once it drops out of the board's feed."""
+
+    __tablename__ = "ats_postings"
+
+    ats: Mapped[str] = mapped_column(Text, primary_key=True)
+    board_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    posting_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    # all_jobs.job_id it becomes when sent on (``<ats>-<board>-<posting>``).
+    job_id: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    location: Mapped[str | None] = mapped_column(Text)
+    # india / remote_open / remote_locked / elsewhere (src.scraper.ats.place).
+    place: Mapped[str] = mapped_column(Text, nullable=False)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Why it was not sent on to the pipeline, or null when it was.
+    skipped: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        Index("ix_ats_postings_job_id", "job_id"),
+        Index("ix_ats_postings_first_seen", "first_seen_at"),
     )

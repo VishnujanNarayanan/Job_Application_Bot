@@ -1,0 +1,12 @@
+{"apiVersion": "1", "jobs": [
+  {"id": "ash-1", "title": " Security Engineer, Cloud", "employmentType": "FullTime", "location": "New York, NY (HQ)",
+   "secondaryLocations": [{"location": "Remote (US)", "address": {"postalAddress": {"addressCountry": "United States"}}}],
+   "publishedAt": "2026-10-14T17:12:35.753+00:00", "isListed": true, "isRemote": true, "workplaceType": "Hybrid",
+   "address": {"postalAddress": {"addressCountry": "USA"}},
+   "jobUrl": "https://jobs.ashbyhq.com/acme/ash-1", "applyUrl": "https://jobs.ashbyhq.com/acme/ash-1/application",
+   "descriptionHtml": "<p>Secure things.</p>", "descriptionPlain": "Secure things."},
+  {"id": "ash-2", "title": "ML Engineer", "location": "Remote", "secondaryLocations": [{"location": "Bengaluru", "address": {"postalAddress": {"addressCountry": "India"}}}],
+   "publishedAt": "2026-10-15T10:00:00.000+00:00", "isListed": true, "isRemote": true, "workplaceType": "Remote",
+   "jobUrl": "https://jobs.ashbyhq.com/acme/ash-2", "descriptionPlain": "Train models."},
+  {"id": "ash-3", "title": "Hidden", "location": "Remote", "isListed": false, "jobUrl": "https://jobs.ashbyhq.com/acme/ash-3"}
+]}

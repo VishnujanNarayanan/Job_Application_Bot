@@ -1,0 +1,8 @@
+[
+  {"id": "aaaa-1", "text": "Data Engineer", "categories": {"commitment": "Full-time", "location": "Pune", "allLocations": ["Pune", "Remote - India"]},
+   "country": "IN", "workplaceType": "hybrid", "createdAt": 1792022400000,
+   "hostedUrl": "https://jobs.lever.co/acme/aaaa-1", "applyUrl": "https://jobs.lever.co/acme/aaaa-1/apply",
+   "descriptionPlain": "We move data.", "lists": [{"text": "What you need", "content": "<li>SQL</li><li>Airflow</li>"}], "additionalPlain": "Equal opportunity."},
+  {"id": "aaaa-2", "text": "Site Reliability Engineer", "categories": {"location": "Remote"},
+   "workplaceType": "remote", "createdAt": 1792022400000, "hostedUrl": "https://jobs.lever.co/acme/aaaa-2", "descriptionPlain": "Keep it up."}
+]
