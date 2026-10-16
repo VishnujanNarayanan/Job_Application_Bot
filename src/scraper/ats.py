@@ -313,6 +313,23 @@ VAGUE = re.compile(r"^[\s,;/()|-]*(hybrid|on-?site|in-?office|office|headquarter
                    r"locations?|)[\s,;/()|-]*$", re.I)
 
 
+# A region lock written in the title (#114): "(US-Based)", "US only",
+# "Remote - Canada", "Americas". APAC and Asia are not locks: India is in them.
+_LOCK_REGION = r"(?:us|usa|u\.s\.?|united states|uk|united kingdom|canada|eu|europe|emea|latam|americas?|" \
+               r"north america|mexico|brazil|germany|france|spain|poland|australia|japan|singapore|philippines)"
+TITLE_LOCK = re.compile(
+    rf"\(\s*{_LOCK_REGION}(?:[- ]?(?:based|only|remote))?\s*\)"
+    rf"|\b{_LOCK_REGION}[- ](?:based|only)\b"
+    rf"|\bremote\s*[-,(/:]?\s*{_LOCK_REGION}\b"
+    rf"|\b{_LOCK_REGION}\s*[-,(/:]?\s*remote\b"
+    r"|\b(?:must|need to) be (?:based|located) in (?!india)", re.I)
+
+
+def title_locked(title: str | None) -> bool:
+    """The title ties the job to a region outside India."""
+    return bool(title and TITLE_LOCK.search(title) and not in_india(title))
+
+
 def in_india(text: str | None) -> bool:
     text = text or ""
     return bool((INDIA.search(text) or INDIA_CODE.search(text)) and not NOT_INDIA.search(text))
@@ -332,11 +349,13 @@ def place(p: Posting) -> str:
     if p.country == "IN" or in_india(loc):
         return "india"
     if p.remote:
+        if title_locked(p.title):
+            return "remote_locked"
         if OPEN_REGION.search(loc) or NO_REGION.match(loc) or VAGUE.match(loc):
             return "remote_open"
         return "remote_locked"
     if VAGUE.match(loc):
-        return "unknown"
+        return "elsewhere" if title_locked(p.title) else "unknown"
     return "elsewhere"
 
 

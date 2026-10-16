@@ -42,6 +42,12 @@ def _p(title="Backend Engineer", location="Bengaluru", remote=None, etype=None, 
     ("Scala Developer", "tech"),
     ("Node.js Engineer", "tech"),
     ("Quantitative Researcher", "tech"),
+    ("Assistant Manager - Business Finance", "nontech"),
+    ("Senior BizOps Analyst - Product Operations", "nontech"),
+    ("Program Operations Specialist", "nontech"),
+    ("Service Desk Technician", "nontech"),
+    ("Finance Data Engineer", "tech"),        # a tech word wins
+    ("Cloud Operations Engineer", "unclear"),  # not a business-operations title
 ])
 def test_role_family(title, family):
     assert pipe.role_family(title) == family
