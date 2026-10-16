@@ -62,7 +62,11 @@ NONTECH = re.compile(
     r"front office|housekeep\w*|waiter|bartender|receptionist|civil|construction|mechanical|"
     r"electrical engineer|driver|warehouse|logistics|supply chain|procurement|call center|telecaller|"
     r"content writer|copywriter|graphic designer|teacher|tutor|laboratory|chemist|biolog\w*|"
-    r"store manager|retail|cashier|security guard|facility|customer (support|service|success)|trainer)\b",
+    r"store manager|retail|cashier|security guard|facility|customer (support|service|success)|trainer|"
+    # Business roles that scored like tech ones in the dry runs (2026-10-16).
+    r"finance|fp&a|treasury|controller|bizops|business operations|program operations|"
+    r"product operations|revenue operations|sales operations|people operations|"
+    r"operations (specialist|manager|executive|associate|coordinator)|service desk|help ?desk)\b",
     re.I)
 EXEC = re.compile(r"\b(director|vice president|vp|head of|chief|cto|ceo|cfo|coo)\b", re.I)
 
