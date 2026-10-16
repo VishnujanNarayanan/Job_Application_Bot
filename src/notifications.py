@@ -20,7 +20,7 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.config import settings
 from src.llm.schemas import JDParsed
-from src.scorer.apply_decision import SelectionResult
+from src.scorer.apply_decision import SelectionResult, threshold_for
 from src.state.models import AllJobs
 
 log = structlog.get_logger(__name__)
@@ -147,7 +147,7 @@ def send_match_notification(
     loc_str = fields["loc_str"]
 
     salary_display = salary_str if salary_str else "CTC not listed"
-    threshold = settings.scoring.apply_threshold
+    threshold = threshold_for(job.site)
 
     text_lines = [
         f"*Match Score: {score}* (threshold: {threshold})",
