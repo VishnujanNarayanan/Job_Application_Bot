@@ -271,6 +271,9 @@ ats_poll:
   # Minutes for parse/score/build after the poll.
   process_budget_minutes: 25
   closed_retention_days: 60
+  # The ATS run logs the database size; a warning above this (Neon's free
+  # tier is 512 MB, #115).
+  db_size_warn_mb: 300
   recency_window_hours: 24
 
 # ---------------------------------------------------------------------------
