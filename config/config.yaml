@@ -264,10 +264,10 @@ ats_poll:
   dedupe_days: 30
   # Jobs a poll found but did not reach are retried for this long.
   backlog_days: 2
-  # ATS jobs have no applicant count (x1.0), so they get their own bar:
-  # 0.40 = the fit an early LinkedIn job needs at x1.5 (#120). Other sources
-  # keep scoring.apply_threshold.
-  apply_threshold: 0.40
+  # ATS jobs have no applicant count (x1.0), so they get their own bar (#120).
+  # 0.47 under the weighted_count fit (#101): as many matches as 0.40 gave
+  # under the share formula. Other sources keep scoring.apply_threshold.
+  apply_threshold: 0.47
   # Minutes for parse/score/build after the poll.
   process_budget_minutes: 25
   closed_retention_days: 60
@@ -472,23 +472,25 @@ scoring:
 
   # Which parser decides a job, from its free dictionary-parse score
   # (src/parsing/router.py). Below `floor` the job is LOW_SCORE with no LLM
-  # call (#100): on a replay of 1,323 parsed jobs (2026-10-16), 279 scored
-  # under 0.40 and the LLM applied to none of them. 0 turns the floor off.
-  # `enabled` turns on the rest of #71: dictionary decides below `skip_below`
-  # and at/above `trust_above`, the LLM in between (42% fewer LLM calls, 7 of
-  # 232 applies lost on the replay). Bump `version` when a cut-off moves.
+  # call (#100). 0 turns the floor off. `enabled` turns on the rest of #71:
+  # dictionary decides below `skip_below` and at/above `trust_above`, the LLM
+  # in between. Re-derived for the weighted_count fit (#101) on a replay of
+  # 1,433 jobs (2026-10-17): the floor skips as many jobs as 0.40 did under
+  # `share`; 0.51 / 0.88 save as many LLM calls as 0.44 / 0.75 did, losing 9
+  # LLM matches instead of 17. Bump `version` when a cut-off moves.
   parse_routing:
-    floor: 0.40
-    enabled: false
-    skip_below: 0.44
-    trust_above: 0.75
+    floor: 0.437
+    enabled: true
+    skip_below: 0.51
+    trust_above: 0.88
     daily_llm_budget: null
-    version: "2026-10-16"
+    version: "2026-10-17"
 
   # Jobs below this are not applied to (LOW_SCORE). The one number to turn if
-  # match volume is wrong: lower for more, raise for fewer. At 0.60 a
-  # first-25 posting needs fit 0.40 and one at 100 applicants needs 0.60.
-  apply_threshold: 0.60
+  # match volume is wrong: lower for more, raise for fewer. At 0.65 a
+  # first-25 posting needs fit 0.43 and one at 100 applicants needs 0.65.
+  # (0.60 until #101 switched the fit formula.)
+  apply_threshold: 0.65
 
   fit:
     # Weights sum to 1.0.
@@ -502,6 +504,47 @@ scoring:
     keyword_coverage: 0.35
     keyword_repetition: 0.20
     repetition_cap: 3
+    # share: every part of fit is covered / total (until #101).
+    # weighted_count (#101): each skill weighs kind x type x emphasis, and each
+    # part is half the weighted share, half how many skills you have (up to
+    # count_cap), so 12 of 15 beats 3 of 3. The thresholds are set for
+    # weighted_count (2026-10-17); re-derive them before switching back.
+    formula: weighted_count
+    weighted_count:
+      # Kind is selection.keywords: required 1.0, nice-to-have 0.5 (2:1).
+      # Type ratios; only ratios matter (divided by concept in code).
+      type: {generic: 1.0, concept: 2.4, tool: 3.0}
+      # +25% per signal: in the title, on a must-have/strong line, named 3+ times.
+      emphasis: 0.25
+      # Half quality (weighted share), half quantity (skills matched).
+      count_weight: 0.5
+      # 25 matched skills = full marks for quantity; 8% of 1,433 past jobs reach it.
+      count_cap: 25
+      # Short adverts: below `below` skills a tool's weight and match count up to
+      # (1 + tool_boost), a generic skill's down to (1 - generic_cut), fading
+      # to 1 at `below` as (1 - skills/below) ** power. 0 / 0 = off.
+      # A concept's moves up by (1 + concept_boost) the same way.
+      short_ad: {below: 12, power: 1.0, tool_boost: 3.0, concept_boost: 2.333, generic_cut: 0.6}
+      # How a skill is typed is read off its name (keywords.term_type); these
+      # lists override that. Lower or upper case, exact term.
+      terms:
+        # Named tools the rules miss.
+        tool: [Spring, Confluence, Make, Excel, Jira, Teams Foundation Server, dbt]
+        # Fields and practices written like names (acronyms, title case).
+        concept: [AI, ML, AI/ML, NLP, GenAI, Gen AI, Generative AI, Agentic AI, AI agents, AI tools,
+                  agentic, LLM, LLMs, RAG, ETL, ELT, ETL/ELT, ETL/ELT pipelines, DevOps,
+                  DevOps practices, MLOps, Agile, Scrum, SaaS, GDPR, CI/CD, CI/CD pipelines,
+                  microservices, NoSQL, fintech, Version Control, Dashboards, Workflows,
+                  Healthcare, Mathematics, Collaborative Filtering, communication protocols,
+                  Cloud, Testing, monitoring, Optimization, APIs, API, databases, automation,
+                  deployment, documentation, design, backend, frontend, infrastructure,
+                  architecture, modeling, evaluation, research, production, cloud, web,
+                  web applications, BI, Sales]
+        # Soft skills the rules miss.
+        generic: [Teams, English, Hindi, Client, e.g, etc]
+        # A phrase starting with one of these is a product: "Azure Data Factory".
+        brand: [Azure, AWS, Amazon, Google, Apache, Microsoft, Oracle, SAP, Databricks,
+                Snowflake, GCP, IBM, Salesforce, Adobe, Atlassian, Meta, OpenAI]
     # lead_entry = similarity x scaled + coverage x lead coverage.
     lead_entry_weights:
       similarity: 0.50
@@ -517,6 +560,15 @@ scoring:
   # Read from LinkedIn's job page (all_jobs.applicants_count). Linear between
   # `boost_full_at` -> `max`, `neutral_at` -> 1.0 and `penalty_full_at` ->
   # `min`. "Be among the first 25" is stored as 24, "Over 200" as 201.
+  # final x multiplier for a junior role (apply_decision.is_junior_role): no
+  # senior_title word in the title, and 1..max_years years asked, the parser's
+  # "junior" level, or a junior_title word. 1.0 = off.
+  junior_boost:
+    multiplier: 1.10
+    max_years: 3
+    junior_title: [junior, 'jr\.?', associate, entry, graduate, fresher, trainee, 'I', '1', L1]
+    senior_title: [senior, 'sr\.?', lead, principal, staff, manager, head, architect, director, III, IV, L3, L4]
+
   success_prob:
     max: 1.50
     min: 0.50
