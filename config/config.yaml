@@ -480,7 +480,7 @@ scoring:
   # LLM matches instead of 17. Bump `version` when a cut-off moves.
   parse_routing:
     floor: 0.437
-    enabled: false
+    enabled: true
     skip_below: 0.51
     trust_above: 0.88
     daily_llm_budget: null
