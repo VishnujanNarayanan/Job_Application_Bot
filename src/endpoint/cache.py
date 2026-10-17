@@ -93,11 +93,15 @@ def get_or_build(
     job_id: str,
     ext: str,
     db_session: Session,
+    *,
+    use_cache: bool = True,
 ) -> tuple[bytes, str]:
     """Return ``(file_bytes, content_type)`` for the requested resume format.
 
     Checks render_cache → S3 → assemble on miss; falls back to serving
     without caching if S3 operations fail (§7.5 degraded mode).
+    ``use_cache=False`` assembles every time and never touches S3 or
+    ``render_cache``: the Telegram delivery (#99) sends the file itself.
     """
     if ext not in _CONTENT_TYPES:
         raise ValueError(f"Unsupported format: {ext!r}")
@@ -111,7 +115,7 @@ def get_or_build(
     cache_key = cache_key_of(job_id, selection)
 
     # Check render_cache table for a valid hit
-    s3_uri = _check_render_cache(db_session, cache_key, ext)
+    s3_uri = _check_render_cache(db_session, cache_key, ext) if use_cache else None
     if s3_uri:
         data = cache_get_bytes(cache_key, ext)
         if data is not None:
@@ -119,8 +123,39 @@ def get_or_build(
         # Cache table entry exists but S3 object was deleted — fall through
 
     # Cache miss: assemble the DOCX
-    data, s3_uri = _assemble_and_cache(selection, cache_key, ext, db_session)
+    data, s3_uri = _assemble_and_cache(selection, cache_key, ext, db_session, cache=use_cache)
     return data, _CONTENT_TYPES[ext]
+
+
+def delivery() -> str:
+    """How a match's resume reaches the operator (``prerender.delivery``):
+    ``telegram`` attaches the PDF to the message (#99), ``s3`` sends
+    presigned links (needs AWS)."""
+    value = str(settings.prerender.get("delivery") or "telegram").strip().lower()
+    if value not in ("telegram", "s3"):
+        raise ValueError(f"prerender.delivery must be telegram or s3, got {value!r}")
+    return value
+
+
+def for_notification(job_id: str, db_session: Session) -> dict:
+    """The resume arguments for ``send_match_notification``.
+
+    ``telegram``: ``{"resume_pdf": bytes}``, rendered here with no S3 call.
+    ``s3``: ``{"resume_urls": {...}}`` from :func:`prerender`, when
+    ``prerender.enabled``. Best-effort either way: a render failure returns
+    ``{}`` and the message goes out with the endpoint's links instead.
+    """
+    if delivery() == "s3":
+        if not bool(settings.prerender.enabled):
+            return {}
+        return {"resume_urls": prerender(
+            job_id, db_session, expires_seconds=int(settings.prerender.link_expiry_days) * 86400)}
+    try:
+        data, _ = get_or_build(job_id, "pdf", db_session, use_cache=False)
+    except Exception as exc:
+        log.error("resume_attach_failed", job_id=job_id, error=str(exc), exc_info=True)
+        return {}
+    return {"resume_pdf": data}
 
 
 def prerender(
@@ -198,8 +233,11 @@ def _assemble_and_cache(
     cache_key: str,
     ext: str,
     session: Session,
+    *,
+    cache: bool = True,
 ) -> tuple[bytes, str | None]:
-    """Assemble the DOCX (and convert to PDF), upload to S3, record in render_cache."""
+    """Assemble the DOCX (and convert to PDF), upload to S3, record in
+    render_cache. ``cache=False`` skips the upload and the record."""
     profile_json = _ROOT / "master_profile.json"
     template_path = _ROOT / settings.endpoint.template_path
 
@@ -228,6 +266,9 @@ def _assemble_and_cache(
 
         # Upload to S3 (non-fatal on failure)
         s3_uri: str | None = None
+        if not cache:
+            log.info("resume_rendered", job_id=selection.job_id, fmt=ext, cache="off")
+            return data, None
         try:
             s3_uri = cache_put(serve_path, cache_key, ext)
             _record_render_cache(session, cache_key, ext, render_version(selection), s3_uri, selection.job_id)

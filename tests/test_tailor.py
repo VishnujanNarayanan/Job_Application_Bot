@@ -258,7 +258,7 @@ def test_telegram_is_sent_only_with_notify(monkeypatch, tmp_path, stubbed, notif
     monkeypatch.setattr("src.tailor.tailor", lambda session, text, **kw: real(
         session, text, parse_fn=stubbed["parse_fn"], now=NOW, **kw))
     monkeypatch.setattr("src.endpoint.cache.get_or_build",
-                        lambda job_id, ext, session: (b"bytes", "x"))
+                        lambda job_id, ext, session, **_k: (b"bytes", "x"))
     monkeypatch.setattr("src.endpoint.cache.prerender", lambda *a, **k: {})
     monkeypatch.setattr("src.notifications.send_match_notification",
                         lambda **kw: sent.append(kw))
@@ -409,7 +409,7 @@ def test_url_alone_is_the_source_for_a_linkedin_link(monkeypatch, tmp_path, stub
     monkeypatch.setattr("src.state.db.session_scope", scope)
     monkeypatch.setattr("src.state.master_profile.rebuild", lambda session: None)
     monkeypatch.setattr("src.tailor.tailor", fake_tailor)
-    monkeypatch.setattr("src.endpoint.cache.get_or_build", lambda *a: (b"x", "x"))
+    monkeypatch.setattr("src.endpoint.cache.get_or_build", lambda *a, **_k: (b"x", "x"))
     monkeypatch.setattr("src.endpoint.cache.prerender", lambda *a, **k: {})
 
     assert cli.main(["--url", LINK + "?trackingId=abc", "--out", str(tmp_path)]) == 0
