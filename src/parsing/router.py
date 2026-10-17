@@ -1,17 +1,18 @@
 """Which parser decides a job, from its dictionary score (#71).
 
 Every job is parsed and scored in dictionary mode first (free); that score
-picks the route. Cut-offs from the 2026-10-16 replay of 1,323 parsed jobs:
+picks the route. Cut-offs from the 2026-10-17 replay of 1,433 parsed jobs
+under the weighted_count fit (#101):
 
     dictionary score   route             replay
-    < 0.40             SKIPPED_FLOOR     #100: 279 jobs, 0 LLM applies lost
-    0.40 - 0.44        DICTIONARY        #71 lower band: decided LOW_SCORE
-    0.44 - 0.75        LLM               the LLM parse decides
-    >= 0.75            DICTIONARY        #71 top band: 94% agree, 0 applies lost
+    < 0.437            SKIPPED_FLOOR     #100: same number skipped as 0.40 under `share`
+    0.437 - 0.51       DICTIONARY        #71 lower band: decided LOW_SCORE
+    0.51 - 0.88        LLM               the LLM parse decides
+    >= 0.88            DICTIONARY        #71 top band
 
-At 0.44 / 0.75: 42% fewer LLM calls, 7 of 232 LLM applies lost, 6 extra.
-Until #71 is enabled only the #100 floor applies and everything at or above
-it goes to the LLM.
+At 0.51 / 0.88: as many LLM calls saved as 0.44 / 0.75 under `share`, 9 LLM
+matches lost instead of 17. With `enabled: false` only the #100 floor applies
+and everything at or above it goes to the LLM.
 
 The cut-offs depend on the profile and the fit formula (#101). Re-derive
 them from the stored ``dict_score`` / ``parse_mode`` columns when either
@@ -57,13 +58,13 @@ class RoutingRules:
     """
 
     enabled: bool = False
-    floor: float = 0.40
-    skip_below: float = 0.44
-    trust_above: float = 0.75
+    floor: float = 0.437
+    skip_below: float = 0.51
+    trust_above: float = 0.88
     #: LLM parses allowed per day before the budget rule applies; None = no cap.
     daily_llm_budget: int | None = None
     #: Stored with every job as ``routing_version``; bump when a cut-off moves.
-    version: str = "2026-10-16"
+    version: str = "2026-10-17"
 
 
 @dataclass(frozen=True)
