@@ -226,10 +226,24 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
         jobs.append(ats.to_job(p, company=company_name(board, p)))
     pruned = ats_poller.prune(session, now=now, days=int(a.get("closed_retention_days", 60)))
     session.commit()
+    log_db_size(session, log, warn_mb=float(a.get("db_size_warn_mb", 300)))
     stats.new = len(jobs)
     stats.requests = sum(lane.requests for lane in lanes.values())
     log.info("ats_poll_done", pruned=pruned, **vars(stats))
     return jobs
+
+
+def log_db_size(session, log, *, warn_mb: float) -> float:
+    """Log the database's size and ats_postings' share of it (#115); a
+    warning above ``warn_mb``, well before Neon's 512 MB free tier."""
+    from sqlalchemy import text
+
+    total, postings = session.execute(text(
+        "SELECT pg_database_size(current_database()), pg_total_relation_size('ats_postings')")).one()
+    mb = total / 1e6
+    (log.warning if mb > warn_mb else log.info)(
+        "db_size", mb=round(mb, 1), ats_postings_mb=round(postings / 1e6, 1), warn_mb=warn_mb)
+    return mb
 
 
 def company_name(board: ats_poller.Board, p: ats.Posting) -> str:

@@ -131,6 +131,7 @@ def test_collect_runs_the_stages_in_order(monkeypatch):
     ]
     marked, forgotten = {}, []
     monkeypatch.setattr(poller, "due_boards", lambda *_a, **_k: [board])
+    monkeypatch.setattr(pipe, "log_db_size", lambda *_a, **_k: 0.0)
     monkeypatch.setattr(poller, "fetch_lists", lambda boards, lanes, **_k: [poller.BoardResult(board, postings)])
     class _Ledger:
         def record(self, res, classify, **_k):
@@ -169,3 +170,17 @@ def test_ats_jobs_have_their_own_apply_threshold(monkeypatch):
     assert threshold_for("ats:greenhouse") == 0.40
     assert threshold_for("linkedin") == float(settings.scoring.apply_threshold)
     assert threshold_for(None) == float(settings.scoring.apply_threshold)
+
+
+def test_the_database_size_warns_above_the_limit():
+    class _Session:
+        def execute(self, _sql):
+            return SimpleNamespace(one=lambda: (350_000_000, 30_000_000))
+
+    calls = []
+    log = SimpleNamespace(info=lambda e, **kw: calls.append(("info", kw)),
+                          warning=lambda e, **kw: calls.append(("warning", kw)))
+    assert pipe.log_db_size(_Session(), log, warn_mb=300) == 350.0
+    assert calls == [("warning", {"mb": 350.0, "ats_postings_mb": 30.0, "warn_mb": 300})]
+    pipe.log_db_size(_Session(), log, warn_mb=400)
+    assert calls[-1][0] == "info"
