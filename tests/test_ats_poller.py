@@ -16,16 +16,19 @@ NOW = datetime(2026, 10, 16, 6, 0, tzinfo=timezone.utc)
 
 
 class FakeGet:
-    """Answers queued (status, body) pairs and records the URLs asked for."""
+    """Answers queued (status, body[, etag]) and records the URLs and
+    headers asked with."""
 
     def __init__(self, *answers):
         self.answers = list(answers)
         self.urls = []
+        self.headers = []
 
-    def __call__(self, url, timeout=None):
+    def __call__(self, url, timeout=None, headers=None):
         self.urls.append(url)
-        status, body = self.answers.pop(0)
-        return SimpleNamespace(status_code=status, text=body)
+        self.headers.append(headers)
+        status, body, *etag = self.answers.pop(0)
+        return SimpleNamespace(status_code=status, text=body, headers={"ETag": etag[0]} if etag else {})
 
 
 def _lane(*answers, delay=0.0):
@@ -65,8 +68,9 @@ def test_requests_are_spaced_by_the_delay():
 
 # --- one board -----------------------------------------------------------------------
 
-def _board(ats_name="lever", board_id="acme", polled_at=None, poll_error=None):
-    return poller.Board(ats_name, board_id, "Acme", "acme", polled_at, poll_error=poll_error)
+def _board(ats_name="lever", board_id="acme", polled_at=None, poll_error=None, etag=None, tier=None):
+    return poller.Board(ats_name, board_id, "Acme", "acme", polled_at, poll_error=poll_error, etag=etag,
+                        tier=tier)
 
 
 def test_a_failing_board_is_reported_not_raised():
@@ -113,8 +117,8 @@ def test_a_portal_job_with_the_same_company_and_title_is_a_duplicate():
 
 # --- recording (Ledger, in memory) ---------------------------------------------------------
 
-def _known(*pids, closed=None, skipped=None, first=None):
-    return {pid: poller.Known(first or NOW - timedelta(days=3), skipped, closed) for pid in pids}
+def _known(*pids, closed=None, skipped=None, first=None, posted=None):
+    return {pid: poller.Known(first or NOW - timedelta(days=3), skipped, closed, posted) for pid in pids}
 
 
 def _classify(p):
@@ -308,7 +312,7 @@ def test_a_whole_poll_is_written_in_a_few_bulk_statements():
 def _row(board_id, tier=None, fits=None, due=None):
     return SimpleNamespace(ats="lever", board_id=board_id, board_name=None, company=None, company_key=None,
                            polled_at=None if tier is None else NOW, fits_7d=fits, target_posted_7d=None,
-                           tier=tier, next_poll_at=due, poll_error=None)
+                           tier=tier, next_poll_at=due, poll_error=None, etag=None)
 
 
 class _Rows:
@@ -334,3 +338,70 @@ def test_a_linkedin_listing_of_a_job_the_ats_found_is_a_duplicate():
     assert poller.ats_copy(index, "Acme", "Frontend Engineer") is None
     assert poller.ats_copy(index, "Other Co", "Backend Engineer") is None
     assert poller.ats_copy({}, "Acme", "Backend Engineer") is None
+
+
+# --- conditional polls (#112) ----------------------------------------------------------
+
+def test_a_board_with_an_etag_is_asked_if_none_match_and_a_304_is_unchanged():
+    lane, get, _ = _lane((304, ""))
+    res = poller.fetch_board(lane, _board(etag='W/"v1"'))
+    assert get.headers == [{"If-None-Match": 'W/"v1"'}]
+    assert res.not_modified and res.error is None and res.postings == []
+
+
+def test_a_200_keeps_the_new_etag_and_a_first_poll_sends_none():
+    lane, get, _ = _lane((200, "[]", 'W/"v2"'))
+    res = poller.fetch_board(lane, _board())
+    assert get.headers == [None] and res.etag == 'W/"v2"' and not res.not_modified
+
+
+def test_only_a_one_page_smartrecruiters_board_keeps_an_etag():
+    lane, *_ = _lane((200, _sr_page(range(10), 10), 'W/"one"'))
+    assert poller.fetch_board(lane, _board("smartrecruiters")).etag == 'W/"one"'
+    lane, get, _ = _lane((200, _sr_page(range(100), 150), 'W/"p1"'), (200, _sr_page(range(100, 150), 150), 'W/"p2"'))
+    assert poller.fetch_board(lane, _board("smartrecruiters")).etag is None
+
+
+def test_a_304_records_and_closes_nothing_and_keeps_the_etag():
+    board = _board(polled_at=NOW - timedelta(hours=1), etag='W/"v1"')
+    ledger = poller.Ledger(NOW, {("lever", "acme"): _known("a", "b")})
+    stats = poller.PollStats()
+    res = poller.BoardResult(board, [], not_modified=True)
+    assert ledger.record(res, _classify, baseline_hours=24, stats=stats) == []
+    ledger.schedule(res)
+    assert ledger.closed == [] and ledger.inserts == [] and ledger.seen == []
+    assert stats.not_modified == 1 and stats.held_empty == 0
+    assert ledger.boards[-1]["etag"] == 'W/"v1"' and ledger.boards[-1]["error"] is None
+
+
+def test_a_304_board_is_tiered_from_its_open_postings():
+    board = _board(polled_at=NOW - timedelta(hours=3), etag='W/"v1"', tier="active")
+    ledger = poller.Ledger(NOW, {("lever", "acme"): _known("a", skipped="baseline", posted=NOW - timedelta(days=2))})
+    ledger.schedule(poller.BoardResult(board, [], not_modified=True))
+    assert ledger.boards[-1]["tier"] == "active"
+    ledger = poller.Ledger(NOW, {("lever", "acme"): _known("a", skipped="baseline", posted=NOW - timedelta(days=40))})
+    ledger.schedule(poller.BoardResult(board, [], not_modified=True))
+    assert ledger.boards[-1]["tier"] == "quiet"
+
+
+@pytest.mark.parametrize("res", [
+    poller.BoardResult(_board(etag='W/"old"'), error="HTTP 503", etag=None),
+    poller.BoardResult(_board(etag='W/"old"'), held_empty=True, etag='W/"empty"'),
+])
+def test_a_failed_or_held_empty_poll_keeps_the_old_etag(res):
+    ledger = poller.Ledger(NOW, {})
+    ledger.schedule(res)
+    assert ledger.boards[-1]["etag"] == 'W/"old"'
+
+
+def test_a_full_read_stores_the_new_etag():
+    ledger = poller.Ledger(NOW, {})
+    ledger.schedule(poller.BoardResult(_board(etag='W/"old"'), [], etag='W/"new"'))
+    assert ledger.boards[-1]["etag"] == 'W/"new"'
+
+
+def test_the_lane_counts_the_characters_it_reads():
+    lane, *_ = _lane((200, "[]"), (304, ""))
+    lane.get("a")
+    lane.fetch("b", etag="x")
+    assert lane.bytes == 2 and lane.requests == 2
