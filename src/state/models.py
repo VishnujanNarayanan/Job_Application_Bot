@@ -478,6 +478,8 @@ class AtsBoard(Base):
     # hot / active / quiet, and when the board is next due (null = now).
     tier: Mapped[str | None] = mapped_column(Text)
     next_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The list's last ETag, sent as If-None-Match on the next poll (#112).
+    etag: Mapped[str | None] = mapped_column(Text)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

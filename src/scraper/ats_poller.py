@@ -18,7 +18,9 @@ two requests a second. A lane stops starting boards once its time budget is
 spent; the boards not reached stay due and go first next run.
 
 What a response may change: only a 200 with the expected JSON marks postings
-closed. 429 / 403 / 5xx / anything else changes nothing and the board is
+closed. A 304 (the board's ETag sent as If-None-Match, #112) means the list is
+unchanged: nothing is recorded or closed, and the board is scheduled by its
+tier as after a 200. 429 / 403 / 5xx / anything else changes nothing and the board is
 retried in an hour. A 404 / 410 means the board is gone: retried after a day,
 and after three in a row it stops being polled (``poll_error`` says why, for
 a human to check); its postings are not closed. A board that suddenly lists
@@ -79,6 +81,8 @@ class Lane:
         self.delay = delay
         self.sleep = sleep
         self.requests = 0
+        # Characters of response body read, to show what 304s save (#112).
+        self.bytes = 0
         self.throttled = 0
         self._last = 0.0
         if get is None:
@@ -90,6 +94,13 @@ class Lane:
     def get(self, url: str, *, patient: bool = True) -> tuple[int, str]:
         """(status, body); status -1 on a network error. ``patient=False``
         returns a 429 instead of pausing and retrying."""
+        status, body, _etag = self.fetch(url, patient=patient)
+        return status, body
+
+    def fetch(self, url: str, *, patient: bool = True, etag: str | None = None) -> tuple[int, str, str | None]:
+        """:meth:`get`, plus the response's ETag. ``etag`` is sent as
+        If-None-Match: a 304 with an empty body means nothing changed."""
+        extra = {"headers": {"If-None-Match": etag}} if etag else {}
         while True:
             wait = self._last + self.delay - time.monotonic()
             if wait > 0:
@@ -97,16 +108,17 @@ class Lane:
             self._last = time.monotonic()
             self.requests += 1
             try:
-                r = self._get(url, timeout=TIMEOUT)
+                r = self._get(url, timeout=TIMEOUT, **extra)
                 status, body = r.status_code, r.text
             except requests.RequestException:
-                return -1, ""
+                return -1, "", None
+            self.bytes += len(body)
             if status != 429:
-                return status, body
+                return status, body, (getattr(r, "headers", None) or {}).get("ETag")
             self.throttled += 1
             self.delay = max(self.delay, SAFE_DELAY)
             if not patient:
-                return status, body
+                return status, body, None
             if self.throttled > len(PAUSES):
                 raise LaneStopped(self.name)
             log.warning("ats_throttled", ats=self.name, pause_s=PAUSES[self.throttled - 1])
@@ -130,11 +142,14 @@ class Board:
     # The last poll's error: counts 404s in a row, and marks a board held
     # open after an empty list.
     poll_error: str | None = None
+    # The list's ETag from the last poll, sent as If-None-Match (#112).
+    etag: str | None = None
 
     @classmethod
     def of(cls, row) -> "Board":
         return cls(row.ats, row.board_id, row.board_name or row.company, row.company_key,
-                   row.polled_at, row.fits_7d, row.target_posted_7d, row.tier, row.poll_error)
+                   row.polled_at, row.fits_7d, row.target_posted_7d, row.tier, row.poll_error,
+                   row.etag)
 
     @property
     def gone_count(self) -> int:
@@ -164,6 +179,10 @@ class BoardResult:
     error: str | None = None
     # Listed nothing although postings were open: held open this once.
     held_empty: bool = False
+    # 304: the list is as it was at the last poll, so there is nothing to
+    # record or close (#112). ``etag`` is the new list's, to send next time.
+    not_modified: bool = False
+    etag: str | None = None
 
 
 # --- Fetching ------------------------------------------------------------------------
@@ -198,24 +217,35 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
         if board.ats == "smartrecruiters":
             # India through the country filter, all pages. SmartRecruiters
             # boards can hold thousands of jobs, most of them elsewhere.
+            # Only a board that fits on one page keeps an ETag: a change on a
+            # later page would not show in the first page's.
             offset = 0
-            for _page in range(sr_max_pages):
-                status, body = lane.get(ats.list_url(board.ats, board.board_id, country="in", offset=offset))
+            for page in range(sr_max_pages):
+                status, body, etag = lane.fetch(ats.list_url(board.ats, board.board_id, country="in", offset=offset),
+                                                etag=board.etag if page == 0 else None)
+                if status == 304 and page == 0 and board.etag:
+                    res.not_modified = True
+                    return res
                 if status != 200:
                     res.error = f"HTTP {status}"
                     return res
                 res.postings += ats.parse_list(board.ats, board.board_id, body)
                 offset += ats.SR_PAGE
                 if offset >= ats.sr_total(body):
+                    res.etag = etag if page == 0 else None
                     break
             else:
                 res.complete = False
         else:
-            status, body = lane.get(ats.list_url(board.ats, board.board_id))
+            status, body, etag = lane.fetch(ats.list_url(board.ats, board.board_id), etag=board.etag)
+            if status == 304 and board.etag:
+                res.not_modified = True
+                return res
             if status != 200:
                 res.error = f"HTTP {status}"
                 return res
             res.postings = ats.parse_list(board.ats, board.board_id, body)
+            res.etag = etag
     except LaneStopped:
         raise
     except Exception as exc:  # noqa: BLE001 - one board must not stop the run
@@ -324,6 +354,9 @@ class PollStats:
     requests: int = 0
     gone_stopped: int = 0
     held_empty: int = 0
+    # Boards that answered 304 (unchanged), and response characters read.
+    not_modified: int = 0
+    bytes: int = 0
     atses_skipped: list = field(default_factory=list)
 
     def skip(self, reason: str) -> None:
@@ -336,6 +369,7 @@ class Known:
     first_seen_at: datetime
     skipped: str | None
     closed_at: datetime | None
+    posted_at: datetime | None = None
 
 
 class Ledger:
@@ -371,10 +405,10 @@ class Ledger:
         for i in range(0, len(keys), 1000):
             rows = session.execute(
                 select(AtsPosting.ats, AtsPosting.board_id, AtsPosting.posting_id, AtsPosting.first_seen_at,
-                       AtsPosting.skipped, AtsPosting.closed_at)
+                       AtsPosting.skipped, AtsPosting.closed_at, AtsPosting.posted_at)
                 .where(tuple_(AtsPosting.ats, AtsPosting.board_id).in_(keys[i:i + 1000])))
-            for a, b, pid, first, skipped, closed in rows:
-                known[(a, b)][pid] = Known(first, skipped, closed)
+            for a, b, pid, first, skipped, closed, posted in rows:
+                known[(a, b)][pid] = Known(first, skipped, closed, posted)
         return cls(now, known, tier_hours)
 
     def record(self, res: BoardResult, classify: Callable, *, baseline_hours: float,
@@ -383,6 +417,9 @@ class Ledger:
         baseline); queues what to write."""
         board, now = res.board, self.now
         known = self.known.setdefault((board.ats, board.board_id), {})
+        if res.not_modified:
+            stats.not_modified += 1
+            return []
         if (not res.postings and board.poll_error != EMPTY_ONCE
                 and any(k.closed_at is None for k in known.values())):
             # Could be a glitch or quiet throttling: close nothing until a
@@ -411,7 +448,7 @@ class Ledger:
                 ats=p.ats, board_id=p.board_id, posting_id=p.posting_id, job_id=p.job_id,
                 title=p.title[:500], location=(p.location or "")[:500], place=ats.place(p),
                 posted_at=p.posted_at, first_seen_at=now, last_seen_at=now, skipped=reason))
-            known[p.posting_id] = Known(now, reason, None)
+            known[p.posting_id] = Known(now, reason, None, p.posted_at)
             if reason is None:
                 send.append(p)
                 self._sent.add((board.ats, board.board_id))
@@ -431,7 +468,11 @@ class Ledger:
             k.skipped is None and k.first_seen_at >= week for k in known.values())
         if sent or (board.polled_at is None and ((board.fits_7d or 0) > 0 or (board.target_posted_7d or 0) > 0)):
             return "hot"
-        if any(p.posted_at and p.posted_at >= week for p in res.postings):
+        # A 304 has no list: the open postings recorded from the last one
+        # stand in for it (those it dropped, elsewhere, are not recorded).
+        posted = ([k.posted_at for k in known.values() if k.closed_at is None] if res.not_modified
+                  else [p.posted_at for p in res.postings])
+        if any(t and t >= week for t in posted):
             return "active"
         return "quiet"
 
@@ -458,8 +499,12 @@ class Ledger:
             # A few minutes early, so a board due hourly is not pushed past
             # the next run by the minutes this one took.
             due = self.now + timedelta(hours=float(self.hours[tier])) - timedelta(minutes=10)
+        # A new ETag only from a list read in full; otherwise the old one.
+        # An empty list held open keeps the old one, so the next poll reads
+        # the list again rather than getting a 304 for the empty one.
+        etag = res.board.etag if (res.error or res.held_empty or res.not_modified) else res.etag
         self.boards.append(dict(ats=res.board.ats, board_id=res.board.board_id, error=error,
-                                tier=tier, due=due, stop=stop))
+                                tier=tier, due=due, stop=stop, etag=etag))
 
     def flush(self, session) -> int:
         """Write everything queued; returns the number of statements sent."""
@@ -482,7 +527,8 @@ class Ledger:
             session.execute(text(_BOARDS_SQL), {
                 "now": self.now, "a": [r["ats"] for r in chunk], "b": [r["board_id"] for r in chunk],
                 "err": [r["error"] for r in chunk], "tier": [r["tier"] for r in chunk],
-                "due": [r["due"] for r in chunk], "stop": [r["stop"] for r in chunk]})
+                "due": [r["due"] for r in chunk], "stop": [r["stop"] for r in chunk],
+                "etag": [r["etag"] for r in chunk]})
             statements += 1
         self.inserts, self.seen, self.closed, self.boards = [], [], [], []
         return statements
@@ -494,9 +540,10 @@ _SEEN_SQL = f"UPDATE ats_postings AS p SET last_seen_at = :now, closed_at = NULL
 _CLOSED_SQL = f"UPDATE ats_postings AS p SET closed_at = :now {_KEYS}"
 _BOARDS_SQL = (
     "UPDATE ats_boards AS x SET polled_at = :now, poll_error = u.err, "
-    "tier = COALESCE(u.tier, x.tier), next_poll_at = u.due, poll = x.poll AND NOT u.stop "
+    "tier = COALESCE(u.tier, x.tier), next_poll_at = u.due, poll = x.poll AND NOT u.stop, etag = u.etag "
     "FROM unnest(CAST(:a AS text[]), CAST(:b AS text[]), CAST(:err AS text[]), CAST(:tier AS text[]), "
-    "CAST(:due AS timestamptz[]), CAST(:stop AS boolean[])) AS u(ats, board_id, err, tier, due, stop) "
+    "CAST(:due AS timestamptz[]), CAST(:stop AS boolean[]), CAST(:etag AS text[])) "
+    "AS u(ats, board_id, err, tier, due, stop, etag) "
     "WHERE x.ats = u.ats AND x.board_id = u.board_id")
 
 
@@ -511,13 +558,16 @@ def mark_skipped(session, p: ats.Posting, reason: str) -> None:
 
 def forget(session, p: ats.Posting) -> None:
     """Drop a posting's row so the next poll treats it as new (its
-    description could not be fetched)."""
-    from sqlalchemy import delete
+    description could not be fetched). The board's ETag goes too: the next
+    poll must read the list, not get a 304 for it."""
+    from sqlalchemy import delete, update
 
-    from src.state.models import AtsPosting
+    from src.state.models import AtsBoard, AtsPosting
 
     session.execute(delete(AtsPosting).where(AtsPosting.ats == p.ats, AtsPosting.board_id == p.board_id,
                                              AtsPosting.posting_id == p.posting_id))
+    session.execute(update(AtsBoard).where(AtsBoard.ats == p.ats, AtsBoard.board_id == p.board_id)
+                    .values(etag=None))
 
 
 def prune(session, *, now: datetime | None = None, days: int = 60) -> int:
