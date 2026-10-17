@@ -122,6 +122,20 @@ def main(argv: list[str] | None = None) -> int:
         log.info("run_skipped", reason="lock_held")
         return 0
 
+    # Dashboard clicks queued since the last run, written to Postgres
+    # alongside the run rather than ahead of it. Joined before the lock goes.
+    import threading
+
+    from src.state import status_queue
+
+    def _flush_clicks() -> None:
+        written = status_queue.flush()
+        if written:
+            log.info("dashboard_clicks_recorded", count=written)
+
+    flusher = threading.Thread(target=_flush_clicks, name="status-queue", daemon=True)
+    flusher.start()
+
     try:
         manual_terms = args.term or None
         if manual_terms is None and not args.auto and _interactive():
@@ -132,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
         return _run(args.dry_run, log, manual_terms=manual_terms)
     finally:
+        flusher.join()
         import fcntl as _fcntl
         _fcntl.flock(lock_file, _fcntl.LOCK_UN)
         lock_file.close()

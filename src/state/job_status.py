@@ -18,13 +18,16 @@ class UnknownJobError(LookupError):
     """No ``applied`` row exists for the job id."""
 
 
-def set_job_status(session: Session, job_id: str, status: str) -> tuple[str | None, datetime | None]:
+def set_job_status(
+    session: Session, job_id: str, status: str, *, at: datetime | None = None
+) -> tuple[str | None, datetime | None]:
     """Set ``applied.user_status`` for ``job_id`` and commit.
 
     Returns ``(previous_status, recorded_at)``. Returning a job to pending
     clears the action date rather than leaving a stale one behind, so
     ``recorded_at`` is None for pending. Setting the status a job already has
     is harmless: it rewrites the same value (and refreshes the date).
+    ``at`` is when the operator acted, if not now (a queued dashboard click).
     """
     if status not in STATUSES:
         raise ValueError(f"status must be one of {STATUSES}, got {status!r}")
@@ -37,6 +40,6 @@ def set_job_status(session: Session, job_id: str, status: str) -> tuple[str | No
 
     previous = row.user_status
     row.user_status = status
-    row.user_status_at = None if status == "pending" else datetime.now(timezone.utc)
+    row.user_status_at = None if status == "pending" else (at or datetime.now(timezone.utc))
     session.commit()
     return previous, row.user_status_at
