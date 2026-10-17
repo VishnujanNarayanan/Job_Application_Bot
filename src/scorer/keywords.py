@@ -389,13 +389,202 @@ def tokens_of(lines: Iterable[str]) -> list[str]:
 
 @dataclass(frozen=True)
 class Keyword:
-    """One checklist item, and how much of the coverage score it is worth."""
+    """One checklist item, and how much of the coverage score it is worth.
+
+    ``required`` says which list it came from. Left unset it is read off the
+    weight (full weight = required), which is all the share formula needs; the
+    weighted_count formula (#101) sets it, because a required generic skill
+    can weigh less than a nice-to-have tool.
+    """
 
     token: str
     weight: float
+    required: bool | None = None
+    #: What one match counts for in weighted_count's "how many matched" half:
+    #: 1, except in a short advert (:func:`short_ad_scale`).
+    unit: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.required is None:
+            object.__setattr__(self, "required", self.weight >= 1.0)
 
 
-def jd_keywords(parsed) -> tuple[Keyword, ...]:
+# --- The weighted_count formula (#101) ----------------------------------------------
+
+def fit_formula() -> str:
+    """``share`` (covered / total, as before #101) or ``weighted_count``."""
+    value = str(settings.scoring.fit.get("formula") or "share")
+    if value not in ("share", "weighted_count"):
+        raise ValueError(f"scoring.fit.formula must be share or weighted_count, got {value!r}")
+    return value
+
+
+# Single words ending like these are abstract nouns ("Security", "networking",
+# "analytics"), not names of a tool.
+_ABSTRACT = re.compile(r"(ing|tion|sion|ment|ity|ness|ics|ance|ence|ogy|ism)$", re.I)
+# A phrase with one of these is a field of work ("Machine Learning"), even in
+# title case.
+_CONCEPT_NOUNS = frozenset({
+    "learning", "engineering", "development", "analysis", "analytics", "science", "pipelines",
+    "pipeline", "design", "testing", "modeling", "modelling", "architecture", "management",
+    "processing", "integration", "systems", "data", "intelligence", "vision", "language",
+    "programming", "computing", "practices", "optimization", "optimisation", "governance",
+    "control", "services", "models", "applications", "methods", "research",
+})
+# Soft skills, matched anywhere in what is left of the term once the filler
+# words are stripped ("Strong Client Communication Skills").
+_SOFT = (
+    "communication", "teamwork", "team player", "collaborat", "leadership", "stakeholder",
+    "problem solving", "problem-solving", "interpersonal", "attention to detail",
+    "self-motivated", "ownership", "english", "mentor", "adaptab", "time management",
+    "presentation", "analytical", "critical thinking", "fast-paced", "organizational",
+    "organising", "organizing", "multitask", "curiosity", "passion", "prioritiz", "accuracy",
+    "numerical skill", "quantitative skill", "work under pressure", "proactive", "resourceful",
+)
+# Words that are neither a skill nor a field: "skills", "data", "tools". Alone,
+# such a term is generic.
+_VAGUE = frozenset({
+    "skills", "skill", "experience", "knowledge", "data", "software", "tools", "tool",
+    "frameworks", "framework", "platforms", "platform", "services", "systems", "engineering",
+    "development", "abilities", "ability", "etc",
+})
+# Stripped before typing: "Advanced SQL skills" is typed as "SQL".
+_FILLER = re.compile(
+    r"\b(strong|excellent|good|great|advanced|solid|proven|deep|exceptional|robust|basic|"
+    r"working|hands-on|in-depth|demonstrated|skills?|abilit(?:y|ies)|proficiency|proficient|"
+    r"knowledge|experience|expertise|familiarity|understanding|capabilit(?:y|ies)|"
+    r"of|in|with|and|or|the|a|an)\b", re.I)
+_NAMED = re.compile(r"[0-9+#./]")
+
+
+@lru_cache(maxsize=1)
+def _known_names() -> frozenset[str]:
+    """Lower-case names in the operator's skills_pool: lets "pandas" count as a
+    tool while "storage" does not."""
+    from src.parser import _pool_terms
+
+    return frozenset(t.casefold() for t in _pool_terms() if t[:1].islower() and " " not in t)
+
+
+@lru_cache(maxsize=1)
+def _usual_spelling() -> dict[str, str]:
+    """Each vocabulary term's most common spelling across past adverts, by its
+    lower-case key. Tools are written capitalised ("Kafka"); a word adverts
+    usually write in lower case ("analytics", "healthcare") is not a tool."""
+    from src.parser import _vocabulary
+
+    return {k: t for t, k in _vocabulary()}
+
+
+def _terms(kind: str) -> frozenset[str]:
+    """``scoring.fit.weighted_count.terms.<kind>``: overrides, lower case."""
+    terms = settings.scoring.fit.weighted_count.get("terms") or {}
+    return frozenset(str(t).casefold() for t in (terms.get(kind) or []))
+
+
+def _word_is_tool(w: str) -> bool:
+    """A single word that names a tool: AWS, C++, PySpark, Python, Kafka, pandas."""
+    low = w.casefold()
+    if low in _terms("tool"):
+        return True
+    if low in _terms("concept") or low in _terms("generic") or low in _VAGUE:
+        return False
+    if _NAMED.search(w) or sum(c.isupper() for c in w) >= 2:
+        return True
+    if _ABSTRACT.search(w) or _ABSTRACT.search(w.rstrip("sS")):
+        return False
+    usual = _usual_spelling().get(low)
+    if usual is not None and usual.islower() and low not in _known_names():
+        return False
+    return w[:1].isupper() or low in _known_names()
+
+
+def _word_is_named(w: str) -> bool:
+    """Stricter than :func:`_word_is_tool`: a word that is a name wherever it
+    appears -- an acronym, a symbol, a pool name, or a capitalised vocabulary
+    term ("Python"). "Client" in "Client Communication" is not."""
+    low = w.casefold()
+    if low in _terms("concept") or low in _terms("generic") or low in _VAGUE:
+        return False
+    if low in _terms("tool") or low in _known_names() or _NAMED.search(w) or sum(c.isupper() for c in w) >= 2:
+        return True
+    usual = _usual_spelling().get(low)
+    return bool(usual and usual[:1].isupper() and not _ABSTRACT.search(w))
+
+
+def term_type(token: str) -> str:
+    """``tool`` (Python, AWS S3, Apache Spark), ``concept`` (machine learning,
+    data pipelines, Cloud, Testing) or ``generic`` (communication, teamwork),
+    from the term's own shape and how adverts usually spell it. The
+    ``scoring.fit.weighted_count.terms`` lists override it."""
+    t = token.strip()
+    low = t.casefold()
+    for kind in ("tool", "concept", "generic"):
+        if low in _terms(kind):
+            return kind
+    core = " ".join(_FILLER.sub(" ", t).split())
+    if not core or core.casefold() in _VAGUE:
+        return "generic"
+    words = core.split()
+    if any(s in low for s in _SOFT) and not any(_word_is_named(w) for w in words):
+        return "generic"
+    if core.casefold() != low:
+        return term_type(core)  # "Advanced SQL skills" -> "SQL"
+    if len(words) == 1:
+        return "tool" if _word_is_tool(t) else "concept"
+    if words[0].casefold() in _terms("brand"):
+        return "tool"  # "Azure Data Factory", "Apache Spark"
+    if any(_word_is_named(w) for w in words):
+        return "tool"  # "REST APIs", "Node.js", "GitHub Actions", "Python programming"
+    if any(w.casefold() in _CONCEPT_NOUNS or _ABSTRACT.search(w) for w in words):
+        return "concept"
+    return "tool" if all(w[:1].isupper() for w in words) else "concept"
+
+
+_MUST = re.compile(r"\b(must|strong|expert\w*|deep|proficien\w*|mandatory|hands-on|solid|advanced)\b", re.I)
+
+
+def emphasis_signals(token: str, title: str | None, jd_text: str | None) -> int:
+    """How many ways the advert stresses a skill, 0-3: it is in the job title;
+    it is on a "must have / strong / expert" line; it is named 3+ times."""
+    n = 0
+    if title and matches(token, norm(title)):
+        n += 1
+    text = jd_text or ""
+    if any(_MUST.search(line) and matches(token, norm(line)) for line in text.splitlines()):
+        n += 1
+    key = norm(token).strip()
+    if key and len(re.findall(rf"(?<![a-z0-9]){re.escape(key)}(?![a-z0-9])", norm(text))) >= 3:
+        n += 1
+    return n
+
+
+def type_factor(token: str) -> float:
+    """``scoring.fit.weighted_count.type`` for the term, divided by the concept
+    value: only the ratios matter to a share, and this keeps a concept at the
+    weight it has under the share formula."""
+    types = settings.scoring.fit.weighted_count.type
+    return float(types.get(term_type(token))) / float(types.get("concept"))
+
+
+def short_ad_scale(token: str, size: int) -> float:
+    """weighted_count (#101): in a short advert a tool counts for more, a
+    concept for somewhat more and a generic skill for less, fading to 1 at ``short_ad.below`` skills
+    (``power`` > 1 fades it faster, keeping it for the shortest adverts).
+    It scales both the skill's weight and what its match counts for, since a
+    short all-tools list is fully covered by weight alone."""
+    cfg = settings.scoring.fit.weighted_count.get("short_ad") or {}
+    below = float(cfg.get("below", 25))
+    s = max(0.0, 1.0 - size / below) ** float(cfg.get("power", 1.0)) if below > 0 else 0.0
+    kind = term_type(token)
+    if kind == "tool":
+        return 1.0 + float(cfg.get("tool_boost", 0.0)) * s
+    if kind == "generic":
+        return 1.0 - float(cfg.get("generic_cut", 0.0)) * s
+    return 1.0 + float(cfg.get("concept_boost", 0.0)) * s
+
+
+def jd_keywords(parsed, *, title: str | None = None, jd_text: str | None = None) -> tuple[Keyword, ...]:
     """The checklist this JD is graded against.
 
     ``required_skills`` at full weight, ``nice_to_have`` at reduced weight, and
@@ -427,12 +616,12 @@ def jd_keywords(parsed) -> tuple[Keyword, ...]:
                 seen.add(k)
                 yield t
 
-    out = [Keyword(t, float(cfg.weight_required)) for t in _fresh(required)]
+    out = [Keyword(t, float(cfg.weight_required), True) for t in _fresh(required)]
 
     nice_weight = float(cfg.weight_nice_to_have)
     if nice_weight > 0:
         out += [
-            Keyword(t, nice_weight)
+            Keyword(t, nice_weight, False)
             for t in _fresh(tokens_of(list(parsed.nice_to_have or [])))
         ]
 
@@ -440,9 +629,18 @@ def jd_keywords(parsed) -> tuple[Keyword, ...]:
         # Off by default and documented above as the wrong choice; the key exists so
         # the decision is auditable and reversible rather than buried in code.
         out += [
-            Keyword(t, nice_weight)
+            Keyword(t, nice_weight, False)
             for t in _fresh(tokens_of(list(parsed.responsibilities or [])))
         ]
+    if fit_formula() == "weighted_count":
+        # weight = kind x type x emphasis (#101): a tool counts more than a
+        # concept, a concept more than a generic skill, and a skill the advert
+        # stresses more again.
+        emph = float(settings.scoring.fit.weighted_count.emphasis)
+        size = len(out)
+        out = [Keyword(k.token, k.weight * type_factor(k.token) * scale
+                       * (1 + emph * emphasis_signals(k.token, title, jd_text)), k.required, scale)
+               for k in out for scale in (short_ad_scale(k.token, size),)]
     return tuple(out)
 
 

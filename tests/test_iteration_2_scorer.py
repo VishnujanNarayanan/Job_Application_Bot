@@ -34,6 +34,12 @@ NOW = datetime(2026, 6, 4, 12, 0, tzinfo=timezone.utc)
 V = [1.0, 0.0, 0.0]
 W = [0.0, 1.0, 0.0]
 
+@pytest.fixture(autouse=True)
+def _share_formula(monkeypatch):
+    """These tests pin the share fit formula; weighted_count (#101) has its own."""
+    monkeypatch.setitem(settings.scoring.fit.as_dict(), "formula", "share")
+
+
 
 def _kw(*tokens: str) -> tuple[Keyword, ...]:
     return tuple(Keyword(t, 1.0) for t in tokens)

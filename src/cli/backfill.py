@@ -146,8 +146,9 @@ def backfill(limit: int | None = None, dry_run: bool = False) -> dict[str, int]:
                     scraped_at=job.scraped_at,
                     applicants_count=job.applicants_count,
                     jd_text=job.jd_text,
+                    title=job.role,
                 ),
-                keywords=jd_keywords(parsed),
+                keywords=jd_keywords(parsed, title=job.role, jd_text=job.jd_text),
             )
             counts["scored"] += 1
 

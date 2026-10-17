@@ -12,8 +12,14 @@ Formulas (docs/PIVOT_V3.md D6 + config.scoring):
     similarity_s = clamp((lead similarity - 0.22) / (0.40 - 0.22), 0, 1)
     lead_entry   = similarity_s*0.50 + lead_coverage*0.50
     fit          = lead_entry*0.45 + keyword_coverage*0.35 + keyword_repetition*0.20
+
+    scoring.fit.formula: weighted_count (#101) changes the three shares:
+    each skill weighs kind x type x emphasis (keywords.jd_keywords), and each
+    share becomes  (1-c)*weighted share + c*min(skills matched, cap)/cap, so
+    12 of 15 beats 3 of 3. ``share`` (the default) is the formula above.
     success_prob = applicant multiplier, 1.5 (<=24) -> 1.0 (100) -> 0.5 (>=200)
-    final        = min(1.0, fit * success_prob)
+    final        = min(1.0, fit * success_prob * junior)
+    junior       = scoring.junior_boost.multiplier for a junior role, else 1
     apply        = final >= scoring.apply_threshold
 
 Similarity is calibrated to its measured range and applicants multiply fit
@@ -44,13 +50,15 @@ means anything (docs/PIVOT_V3.md Stage 6).
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from src.config import settings
 from src.reasons import LOW_SCORE
 from src.scorer.common import place_common_bullets
-from src.scorer.keywords import Keyword, coverage_of
+from src.scorer.keywords import Keyword, coverage_of, fit_formula
 from src.scorer.ordering import order_entries
 from src.scorer.selector import (
     JDContext,
@@ -103,6 +111,8 @@ class SelectionResult:
     #: The lead entry's fit part and the calibrated similarity inside it.
     lead_entry: float = 0.0
     similarity_scaled: float = 0.0
+    #: The junior boost applied to final (1.0 when the role is not junior).
+    junior_boost: float = 1.0
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -192,6 +202,33 @@ def recency_score(
     return float(cfg.default)
 
 
+def _title_words(words) -> re.Pattern | None:
+    words = [w for w in (words or []) if w]
+    return re.compile(r"\b(" + "|".join(words) + r")\b", re.I) if words else None
+
+
+def is_junior_role(title: str | None, years: int | None, level: str | None) -> bool:
+    """A role open to someone early in their career: no senior word in the
+    title, and either 1 to ``max_years`` years asked, the parser's ``junior``
+    level, or a junior word in the title. A role stating no years (0) is not
+    junior on that alone: many senior adverts state none."""
+    cfg = settings.scoring.junior_boost
+    senior, junior = _title_words(cfg.get("senior_title")), _title_words(cfg.get("junior_title"))
+    if senior and senior.search(title or ""):
+        return False
+    return (1 <= int(years or 0) <= int(cfg.max_years)
+            or (level or "").lower() == "junior"
+            or bool(junior and junior.search(title or "")))
+
+
+def junior_multiplier(jd: JDContext) -> float:
+    """``scoring.junior_boost.multiplier`` for a junior role, else 1. Applied to
+    final like the applicant multiplier, so it changes no resume."""
+    if is_junior_role(jd.title, jd.years_required, jd.role_level):
+        return float(settings.scoring.junior_boost.multiplier)
+    return 1.0
+
+
 def applicant_multiplier(count: int | None) -> float:
     """Boost an early posting, penalise a crowded one: ``max`` -> 1.0 -> ``min``.
 
@@ -216,15 +253,48 @@ def applicant_multiplier(count: int | None) -> float:
     return 1.0 - (1.0 - lo) * (count - mid) / (end - mid)
 
 
-def lead_entry_score(lead: SelectedEntry | None) -> tuple[float, float]:
+def lead_entry_score(lead: SelectedEntry | None, keywords: tuple[Keyword, ...] = ()) -> tuple[float, float]:
     """``(lead_entry, similarity_scaled)`` for the entry heading the page.
 
     The same ``entry_score`` that ranked it (#31), so the entry chosen to lead is
-    the one fit grades best."""
+    the one fit grades best. Under weighted_count its coverage also counts how
+    many skills it shows (:func:`count_blend`); the ranking is left as it was."""
     if lead is None:
         return 0.0, 0.0
     sim = scale_similarity(float(lead.similarity))
-    return entry_score(float(lead.similarity), float(lead.coverage)), sim
+    coverage = float(lead.coverage)
+    if fit_formula() == "weighted_count":
+        coverage = count_blend(coverage, matched_units(lead.covered, keywords))
+    return entry_score(float(lead.similarity), coverage), sim
+
+
+def matched_units(covered: set[str], keywords: tuple[Keyword, ...]) -> float:
+    """How many skills ``covered`` matches, each counted at its ``unit``."""
+    return sum(k.unit for k in keywords if k.token in covered)
+
+
+def count_blend(share: float, matched: float) -> float:
+    """weighted_count (#101): half how much of what the advert asks you have,
+    half how many of its skills you have, counted up to ``count_cap`` (25: 8%
+    of 1,433 past jobs reach it). Every matched skill counts 1 here, whatever
+    its kind or type, so nothing is marked down; the weights act in ``share``."""
+    wc = settings.scoring.fit.weighted_count
+    c, cap = float(wc.count_weight), float(wc.count_cap)
+    return (1 - c) * share + c * min(float(matched), cap) / cap
+
+
+def weighted_repetition(entries: list[SelectedEntry], keywords: tuple[Keyword, ...]) -> tuple[float, float]:
+    """``(share, count)`` of :func:`repetition_score` with each required skill
+    weighted: the share is the weighted average depth, the count the sum of
+    depths (a skill shown in ``repetition_cap`` entries counts 1)."""
+    cap = max(1, int(settings.scoring.fit.repetition_cap))
+    required = [k for k in keywords if k.required] or list(keywords)
+    total = sum(k.weight for k in required)
+    if total <= 0:
+        return 0.0, 0.0
+    depth = {k.token: min(sum(1 for e in entries if k.token in e.covered), cap) / cap for k in required}
+    return (sum(k.weight * depth[k.token] for k in required) / total,
+            sum(k.unit * depth[k.token] for k in required))
 
 
 def repetition_score(entries: list[SelectedEntry], keywords: tuple[Keyword, ...]) -> float:
@@ -247,7 +317,7 @@ def repetition_score(entries: list[SelectedEntry], keywords: tuple[Keyword, ...]
     where it stops counting for coverage.
     """
     cap = max(1, int(settings.scoring.fit.repetition_cap))
-    required = {k.token for k in keywords if k.weight >= 1.0} or {
+    required = {k.token for k in keywords if k.required} or {
         k.token for k in keywords
     }
     if not required:
@@ -332,11 +402,18 @@ def evaluate(
     lead_entry_coverage = entries[0].coverage if entries else 0.0
 
     fit_cfg = settings.scoring.fit
-    keyword_repetition = repetition_score(entries, keywords)
-    lead_entry, similarity_scaled = lead_entry_score(entries[0] if entries else None)
+    lead_entry, similarity_scaled = lead_entry_score(entries[0] if entries else None, keywords)
+    if fit_formula() == "weighted_count":
+        # keyword_coverage stays the plain weighted share, for display; the
+        # count half enters fit only.
+        coverage_term = count_blend(keyword_coverage, matched_units(union, keywords))
+        keyword_repetition = count_blend(*weighted_repetition(entries, keywords))
+    else:
+        coverage_term = keyword_coverage
+        keyword_repetition = repetition_score(entries, keywords)
     fit = (
         fit_cfg.lead_entry * lead_entry
-        + fit_cfg.keyword_coverage * keyword_coverage
+        + fit_cfg.keyword_coverage * coverage_term
         + fit_cfg.keyword_repetition * keyword_repetition
     )
 
@@ -349,7 +426,8 @@ def evaluate(
     )
     success_prob = applicant_multiplier(jd.applicants_count)
 
-    final_score = min(float(settings.scoring.final.max_score), fit * success_prob)
+    junior = junior_multiplier(jd)
+    final_score = min(float(settings.scoring.final.max_score), fit * success_prob * junior)
 
     bar = float(settings.scoring.apply_threshold) if threshold is None else threshold
     apply = final_score >= bar
@@ -358,6 +436,7 @@ def evaluate(
         final_score=final_score,
         fit=fit,
         success_prob=success_prob,
+        junior_boost=junior,
         recency=recency,
         project_score=best_project,
         entries=entries,
