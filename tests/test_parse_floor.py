@@ -163,11 +163,11 @@ def test_a_zero_floor_never_skips():
     assert route(0.0, llm_calls_today=0, rules=RoutingRules(floor=0.0)).route is Route.LLM
 
 
-def test_config_loads_and_keeps_the_rest_of_71_off():
+def test_config_loads_with_71_routing_on():
     from src.parsing.router import rules_from_config
 
     rules = rules_from_config()
-    assert rules.floor == 0.437 and rules.enabled is False
+    assert rules.floor == 0.437 and rules.enabled is True
     assert rules.floor <= rules.skip_below <= rules.trust_above
 
 

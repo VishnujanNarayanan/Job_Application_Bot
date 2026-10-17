@@ -11,7 +11,7 @@ under the weighted_count fit (#101):
     >= 0.88            DICTIONARY        #71 top band
 
 At 0.51 / 0.88: as many LLM calls saved as 0.44 / 0.75 under `share`, 9 LLM
-matches lost instead of 17. Until #71 is enabled only the #100 floor applies
+matches lost instead of 17. With `enabled: false` only the #100 floor applies
 and everything at or above it goes to the LLM.
 
 The cut-offs depend on the profile and the fit formula (#101). Re-derive
