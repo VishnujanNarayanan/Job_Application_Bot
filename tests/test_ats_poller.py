@@ -405,3 +405,19 @@ def test_the_lane_counts_the_characters_it_reads():
     lane.get("a")
     lane.fetch("b", etag="x")
     assert lane.bytes == 2 and lane.requests == 2
+
+
+def test_forgetting_a_posting_clears_its_boards_etag():
+    class _Session:
+        def __init__(self):
+            self.statements = []
+
+        def execute(self, stmt):
+            self.statements.append(stmt)
+
+    session = _Session()
+    poller.forget(session, _posting("7"))
+    delete, update = session.statements
+    assert delete.table.name == "ats_postings"
+    assert update.table.name == "ats_boards"
+    assert update.compile().params == {"etag": None, "ats_1": "lever", "board_id_1": "acme"}
