@@ -189,7 +189,7 @@ def _record_taps(log, when: str) -> None:
 def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
     from src import analytics
     from src.config import settings, resolve_endpoint_base_url
-    from src.endpoint.cache import prerender
+    from src.endpoint.cache import for_notification
     from src.llm.client import LLMBudgetError, LLMError
     from src.notifications import (
         prechecks_done_text,
@@ -598,19 +598,15 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
             if not dry_run:
                 endpoint_url = resolve_endpoint_base_url(str(cfg.endpoint.base_url))
 
-                # --- Layer 6: pre-render so links survive a sleeping laptop ---
+                # --- Layer 6: the resume, ready before the message goes ---
                 # Amends hard rule #8 by explicit operator decision: without
                 # this, a run triggered from the phone produces links that
                 # 404 until the laptop is opened, because the endpoint that
-                # renders on demand lives there. Best-effort — a render
-                # failure must not cost us the notification.
-                resume_urls: dict[str, str] = {}
-                if bool(cfg.prerender.enabled):
-                    resume_urls = prerender(
-                        job.job_id,
-                        session,
-                        expires_seconds=int(cfg.prerender.link_expiry_days) * 86400,
-                    )
+                # renders on demand lives there. The PDF is attached to the
+                # message (prerender.delivery: telegram, #99) or linked on S3.
+                # Best-effort — a render failure must not cost us the
+                # notification.
+                resume = for_notification(job.job_id, session)
 
                 try:
                     send_match_notification(
@@ -620,7 +616,7 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
                         gap_skills=gap_skills,
                         endpoint_base_url=endpoint_url,
                         title_alias=title_alias,
-                        resume_urls=resume_urls,
+                        **resume,
                     )
                 except Exception as exc:
                     log.error("notification_error", job_id=job.job_id, error=str(exc))
