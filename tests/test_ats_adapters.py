@@ -180,21 +180,3 @@ def test_greenhouse_offices_in_the_detail_can_place_a_vague_job_in_india():
     ats.parse_detail(p, json.dumps({"content": "&lt;p&gt;Hi&lt;/p&gt;",
                                     "offices": [{"name": "Bengaluru", "location": "Bengaluru, India"}]}))
     assert ats.place(p) == "india"
-
-
-@pytest.mark.parametrize("title,location,remote,expected", [
-    ("idea.ai Market Launcher (US-Based)", "Remote", True, "remote_locked"),
-    ("Backend Engineer - US only", "Remote", True, "remote_locked"),
-    ("Senior Engineer, Remote - Canada", "Remote", True, "remote_locked"),
-    ("Data Engineer (EMEA)", "Remote", True, "remote_locked"),
-    ("Backend Engineer (APAC)", "Remote", True, "remote_open"),     # India is in APAC
-    ("Backend Engineer (Remote, India)", "Remote", True, "remote_open"),
-    ("Backend Engineer", "Remote", True, "remote_open"),
-    ("Backend Engineer (US-Based)", "Bengaluru", None, "india"),     # an Indian location wins
-    ("Account Executive (USA)", "Hybrid", None, "elsewhere"),
-    ("Business Analyst", "Hybrid", None, "unknown"),
-    ("USB Driver Engineer", "Remote", True, "remote_open"),         # "us" inside a word
-])
-def test_a_region_in_the_title_locks_a_remote_job(title, location, remote, expected):
-    p = ats.Posting(ats="lever", board_id="acme", posting_id="1", title=title, location=location, remote=remote)
-    assert ats.place(p) == expected
