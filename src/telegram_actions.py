@@ -17,6 +17,10 @@ same update both write the same status, and the second edit is a no-op.
 
 The last processed ``update_id`` lives in ``search_rotation_state`` so taps
 are never re-applied. Taps from any chat but ``TELEGRAM_CHAT_ID`` are ignored.
+
+"Resume DOCX" (``rd:<job_id>``, #99) works the same way: the tap is picked up
+by whichever of the above runs next, which renders the DOCX and sends it as a
+reply to the match. It changes no status.
 """
 
 from __future__ import annotations
@@ -41,6 +45,9 @@ _MAX_CALLBACK_BYTES = 64
 _OFFSET_KEY = "telegram_update_offset"
 
 _LABELS = {"applied": "✅ Applied", "dismissed": "🚫 Dismissed"}
+
+# "Resume DOCX": send the DOCX of a match whose PDF was attached (#99).
+_DOCX_PREFIX = "rd"
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +82,21 @@ def decision_row(job_id: str) -> list[InlineKeyboardButton]:
         InlineKeyboardButton("Mark applied", callback_data=applied),
         InlineKeyboardButton("Dismiss", callback_data=dismissed),
     ]
+
+
+def docx_button(job_id: str) -> InlineKeyboardButton | None:
+    """The "Resume DOCX" button, or None when the id is too long for it."""
+    data = f"{_DOCX_PREFIX}:{job_id}"
+    if len(data.encode()) > _MAX_CALLBACK_BYTES:
+        log.warning("docx_button_skipped", job_id=job_id, reason="callback_data_too_long")
+        return None
+    return InlineKeyboardButton("Resume DOCX", callback_data=data)
+
+
+def parse_docx_callback(data: str | None) -> str | None:
+    """The job_id of a "Resume DOCX" tap, else None."""
+    prefix, _, job_id = (data or "").partition(":")
+    return job_id if prefix == _DOCX_PREFIX and job_id else None
 
 
 def recorded_row(job_id: str, status: str, when: datetime | None) -> list[InlineKeyboardButton]:
@@ -161,6 +183,11 @@ async def _handle(bot: Bot, update, chat_id: str) -> bool:
                     chat=getattr(getattr(message, "chat", None), "id", None))
         return False
 
+    docx_job = parse_docx_callback(query.data)
+    if docx_job:
+        await _send_docx(bot, query.id, docx_job, message.message_id)
+        return False
+
     parsed = parse_callback(query.data)
     if parsed is None:
         await _answer(bot, query.id, "Unknown button")
@@ -190,6 +217,23 @@ async def _handle(bot: Bot, update, chat_id: str) -> bool:
     await _answer(bot, query.id, "Back to pending" if status == "pending"
                   else f"Marked {status}")
     return True
+
+
+async def _send_docx(bot: Bot, query_id: str, job_id: str, reply_to: int) -> None:
+    """Render the match's DOCX (no S3) and send it as a reply to the match."""
+    from src.endpoint.cache import get_or_build
+    from src.notifications import send_resume_file
+
+    try:
+        with _session_scope() as session:
+            data, _ = get_or_build(job_id, "docx", session, use_cache=False)
+        await send_resume_file(data, "docx", reply_to=reply_to, bot=bot)
+    except Exception as exc:
+        log.error("resume_docx_send_failed", job_id=job_id, error=str(exc))
+        await _answer(bot, query_id, "Could not build the DOCX")
+        return
+    log.info("resume_docx_sent", job_id=job_id)
+    await _answer(bot, query_id, "DOCX sent")
 
 
 async def _answer(bot: Bot, query_id: str, text: str) -> None:

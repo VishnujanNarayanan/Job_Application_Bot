@@ -192,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     from src.config import resolve_endpoint_base_url, settings
-    from src.endpoint.cache import get_or_build, prerender
+    from src.endpoint.cache import delivery, get_or_build, prerender
     from src.llm.client import LLMError
     from src.scraper.jobspy_wrapper import LinkedInFetchError
     from src.state import master_profile
@@ -229,21 +229,24 @@ def main(argv: list[str] | None = None) -> int:
 
         out_dir.mkdir(parents=True, exist_ok=True)
         stem = file_stem(t.job.company, t.job.role)
+        # Telegram delivery (#99) keeps resumes off S3 altogether.
+        s3 = delivery() == "s3"
         for ext in ("pdf", "docx"):
             say(f"Rendering the {ext.upper()}...")
             try:
-                data, _ = get_or_build(t.job.job_id, ext, session)
+                data, _ = get_or_build(t.job.job_id, ext, session, use_cache=s3)
             except Exception as exc:
                 print(f"error: {ext} render failed: {exc}", file=sys.stderr)
                 continue
             path = out_dir / f"{stem}.{ext}"
             path.write_bytes(data)
             t.files[ext] = path
-        say("Making download links...")
-        t.links = prerender(
-            t.job.job_id, session,
-            expires_seconds=int(settings.prerender.link_expiry_days) * 86400,
-        )
+        if s3:
+            say("Making download links...")
+            t.links = prerender(
+                t.job.job_id, session,
+                expires_seconds=int(settings.prerender.link_expiry_days) * 86400,
+            )
         session.commit()
 
         if args.notify:
@@ -255,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
                 gap_skills=t.built.gap_skills,
                 endpoint_base_url=resolve_endpoint_base_url(str(settings.endpoint.base_url)),
                 title_alias=t.built.title_alias, resume_urls=t.links,
+                resume_pdf=None if s3 or "pdf" not in t.files else t.files["pdf"].read_bytes(),
             )
 
     say("Done")
