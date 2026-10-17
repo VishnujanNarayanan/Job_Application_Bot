@@ -104,3 +104,6 @@ Thumbs.db
 # The one tracked document: the example resume template, placeholders only
 # (no personal data). Must come after *.docx -- the last matching rule wins.
 !resumes/templates/example_template.docx
+
+# ATS form answers (personal; questions live in docs/ats_questions.yaml)
+data/ats_answers.yaml

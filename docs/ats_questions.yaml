@@ -1,0 +1,163 @@
+# Application-form questions seen on company ATS boards, collected so filling
+# them can be automated later.
+#
+# QUESTIONS AND OPTIONS ONLY -- never answers. This repo is public. Answers
+# (name, email, work authorisation, survey responses) belong in a gitignored
+# file such as data/ats_answers.yaml when automation is built.
+#
+# One entry per distinct question. When a question reappears on another
+# company's form, add the company to `seen_at` instead of a new entry. Wording
+# is kept verbatim from the form, because matching on it is how a filler will
+# recognise the question.
+#
+# type:  file | text | textarea | url | single_choice | multi_choice | checkbox
+# kind:  profile        facts from the resume/profile
+#        right_to_work  authorisation and sponsorship
+#        eeo            voluntary diversity survey
+#        consent        data/contact consent
+#        custom         company-specific
+#
+# Required/optional isn't recorded: the pasted form didn't show it.
+
+ats:
+  ashby:
+    domains: ["jobs.ashbyhq.com"]
+    notes: >-
+      Each company configures its own questions. Offers "Autofill from
+      resume": upload a PDF and it pre-fills the profile fields, which still
+      need reviewing.
+    forms:
+      - company: Kong
+        seen: 2026-10-13
+        posting: "Bangalore, India · Full time · On-site · R&D ENG"
+
+questions:
+  # --- profile -------------------------------------------------------------
+  - id: resume
+    text: "Resume"
+    type: file
+    kind: profile
+    seen_at: [ashby/Kong]
+  - id: full_name
+    text: "Full Name"
+    type: text
+    kind: profile
+    seen_at: [ashby/Kong]
+  - id: email
+    text: "Email"
+    type: text
+    kind: profile
+    seen_at: [ashby/Kong]
+  - id: location
+    text: "Location"
+    type: text
+    kind: profile
+    seen_at: [ashby/Kong]
+  - id: current_company
+    text: "Current Company"
+    type: text
+    kind: profile
+    seen_at: [ashby/Kong]
+  - id: github_url
+    text: "GitHub URL"
+    type: url
+    kind: profile
+    seen_at: [ashby/Kong]
+  - id: linkedin_url
+    text: "LinkedIn URL"
+    type: url
+    kind: profile
+    seen_at: [ashby/Kong]
+  - id: other_links
+    text: "Other website / links"
+    type: url
+    kind: profile
+    seen_at: [ashby/Kong]
+  - id: additional_information
+    text: "Additional Information"
+    hint: "Add anything else you would like to share."
+    type: textarea
+    kind: profile
+    seen_at: [ashby/Kong]
+
+  # --- right to work -------------------------------------------------------
+  - id: work_authorized
+    text: "Are you legally authorized to work in the country where this position will be worked?"
+    type: single_choice
+    options: ["Yes", "No"]
+    kind: right_to_work
+    seen_at: [ashby/Kong]
+  - id: needs_sponsorship
+    text: "Do you now, or will you in the future, require sponsorship?"
+    type: single_choice
+    options: ["Yes", "No"]
+    kind: right_to_work
+    seen_at: [ashby/Kong]
+  - id: visa_type_and_expiry
+    text: "If so, what type of visa are you currently on and when does it expire?"
+    type: text
+    kind: right_to_work
+    depends_on: {needs_sponsorship: "Yes"}
+    seen_at: [ashby/Kong]
+
+  # --- voluntary diversity survey -------------------------------------------
+  - id: eeo_age
+    text: "What is your current age?"
+    type: single_choice
+    options: ["Under 30", "30-39", "40-49", "50-59", "60 or older", "I prefer not to answer"]
+    kind: eeo
+    seen_at: [ashby/Kong]
+  - id: eeo_gender
+    text: "What is your gender identity?"
+    type: single_choice
+    options: ["Man", "Woman", "Non-Binary", "Another Gender Identity", "I prefer not to answer"]
+    kind: eeo
+    seen_at: [ashby/Kong]
+  - id: eeo_transgender
+    text: "Do you identify as transgender?"
+    type: single_choice
+    options: ["Yes", "No", "I prefer not to answer"]
+    kind: eeo
+    seen_at: [ashby/Kong]
+  - id: eeo_sexual_orientation
+    text: "How do you identify your sexual orientation? Please select all that apply."
+    type: multi_choice
+    options: ["Bisexual", "Lesbian", "Gay", "Queer", "Heterosexual / straight", "Other", "I prefer not to answer"]
+    kind: eeo
+    seen_at: [ashby/Kong]
+  - id: eeo_ethnicity
+    text: "Which ethnicity(ies) do you identify with? Please select all that apply."
+    type: multi_choice
+    options:
+      - "Asian or Asian American"
+      - "Black or African American"
+      - "Hispanic or Latine"
+      - "Indigenous or Native American"
+      - "Native Hawaiian or Other Pacific Islander"
+      - "White"
+      - "Other"
+      - "I prefer not to answer"
+    kind: eeo
+    seen_at: [ashby/Kong]
+  - id: eeo_communities
+    text: "Which of the following communities do you belong to? Please select all that apply."
+    type: multi_choice
+    options:
+      - "Person with disability"
+      - "Neurodiverse"
+      - "Veteran"
+      - "Parent"
+      - "Refugee or immigrant"
+      - "None of the above"
+      - "I prefer not to answer"
+    kind: eeo
+    seen_at: [ashby/Kong]
+
+  # --- consent ---------------------------------------------------------------
+  - id: future_contact_consent
+    text: "Yes, Kong can contact me about future job opportunities for up to 3 years."
+    pattern: "Yes, {company} can contact me about future job opportunities for up to {n} years."
+    type: checkbox
+    options: ["I agree"]
+    kind: consent
+    seen_at: [ashby/Kong]
