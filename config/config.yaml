@@ -799,6 +799,14 @@ aws:
 # anything expired or never pre-rendered.
 # ---------------------------------------------------------------------------
 prerender:
+  # How a match's resume reaches you (#99):
+  #   telegram  the PDF is attached to the Telegram message, and a "Resume
+  #             DOCX" button sends the DOCX. No AWS involved; the files stay
+  #             in the chat.
+  #   s3        "Resume PDF" / "Resume DOCX" buttons open presigned S3 links
+  #             (the settings below), which expire after link_expiry_days.
+  delivery: telegram
+  # s3 delivery only: render at build time so the links work with the laptop off.
   enabled: true
   # Presigned-URL lifetime; AWS caps it at 7 days.
   link_expiry_days: 7

@@ -268,7 +268,7 @@ def _backlog(session, now, days: int, exclude: set[str]) -> list:
 
 def run(dry_run: bool, log, *, atses=None) -> int:
     from src.config import resolve_endpoint_base_url, settings
-    from src.endpoint.cache import prerender
+    from src.endpoint.cache import for_notification
     from src.llm.client import LLMBudgetError, LLMError
     from src.main import _upsert_scraped, _write_not_applied
     from src.notifications import ats_poll_done_text, send_match_notification, send_status
@@ -381,15 +381,12 @@ def run(dry_run: bool, log, *, atses=None) -> int:
             job.outcome, job.outcome_at = "matched", now
             session.flush()
             if not dry_run:
-                urls = {}
-                if bool(cfg.prerender.enabled):
-                    urls = prerender(job.job_id, session,
-                                     expires_seconds=int(cfg.prerender.link_expiry_days) * 86400)
+                resume = for_notification(job.job_id, session)
                 try:
                     send_match_notification(
                         job=job, parsed=parsed, result=result, gap_skills=built.gap_skills,
                         endpoint_base_url=resolve_endpoint_base_url(str(cfg.endpoint.base_url)),
-                        title_alias=built.title_alias, resume_urls=urls)
+                        title_alias=built.title_alias, **resume)
                 except Exception as exc:
                     log.error("notification_error", job_id=job.job_id, error=str(exc))
             else:

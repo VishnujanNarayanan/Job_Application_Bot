@@ -121,6 +121,7 @@ def send_match_notification(
     *,
     title_alias: str | None = None,
     resume_urls: dict[str, str] | None = None,
+    resume_pdf: bytes | None = None,
 ) -> None:
     """Send a per-match Telegram message with apply + resume links.
 
@@ -139,6 +140,11 @@ def send_match_notification(
     win, because they point at S3 and keep working with the operator's laptop
     switched off. Any format missing from the dict falls back to the endpoint
     URL, which only resolves while the laptop is on.
+
+    ``resume_pdf`` (``prerender.delivery: telegram``, #99) is sent as a file
+    right after the message, as a reply to it, so it never expires and needs
+    no AWS. The link buttons then give way to a "Resume DOCX" button that
+    sends the DOCX on request (:mod:`src.telegram_actions`).
     """
     score = f"{result.final_score:.2f}"
     fields = match_display_fields(job, parsed, title_alias=title_alias)
@@ -177,11 +183,10 @@ def send_match_notification(
         # cost a real match its notification on 2026-08-08. A message with two
         # buttons beats no message at all.
         row = []
-        for label, url in (
-            ("Apply", apply_url),
-            ("Resume PDF", pdf_url),
-            ("Resume DOCX", docx_url),
-        ):
+        links = [("Apply", apply_url)]
+        if resume_pdf is None:
+            links += [("Resume PDF", pdf_url), ("Resume DOCX", docx_url)]
+        for label, url in links:
             if _is_public_url(url):
                 row.append(InlineKeyboardButton(label, url=url))
             elif url:
@@ -191,7 +196,12 @@ def send_match_notification(
                 )
         # Second row: record the decision from the phone (#15). Taps are
         # picked up by src.telegram_actions, not by anything listening here.
-        from src.telegram_actions import decision_row
+        from src.telegram_actions import decision_row, docx_button
+
+        if resume_pdf is not None:
+            button = docx_button(job.job_id)
+            if button:
+                row.append(button)
 
         rows = [r for r in (row, decision_row(job.job_id)) if r]
         keyboard = InlineKeyboardMarkup(rows) if rows else None
@@ -200,7 +210,7 @@ def send_match_notification(
         keyboard = None
 
     try:
-        asyncio.run(_send_match(text, keyboard))
+        message = asyncio.run(_send_match(text, keyboard))
     except Exception as exc:
         # Last resort: the buttons are a convenience, the match is the point.
         # Anything Telegram dislikes about the markup must not swallow the
@@ -211,12 +221,24 @@ def send_match_notification(
             "notification_buttons_rejected",
             job_id=job.job_id, error=str(exc),
         )
-        asyncio.run(_send_match(text, None))
+        message = asyncio.run(_send_match(text, None))
 
-    log.info("notification_sent", job_id=job.job_id, score=result.final_score)
+    if resume_pdf is not None:
+        # After the message, so a failed upload never costs the match itself.
+        try:
+            asyncio.run(send_resume_file(
+                resume_pdf, "pdf", caption=f"{display_title} at {job.company}",
+                reply_to=getattr(message, "message_id", None)))
+        except Exception as exc:
+            log.error("resume_file_send_failed", job_id=job.job_id, fmt="pdf", error=str(exc))
+
+    log.info("notification_sent", job_id=job.job_id, score=result.final_score,
+             resume="file" if resume_pdf is not None else "links")
 
 
-async def _send_match(text: str, keyboard=None) -> None:
+async def _send_match(text: str, keyboard=None):
+    """Send the match message; returns it (its ``message_id`` is what the
+    resume file replies to)."""
     token = _env_or_die("TELEGRAM_BOT_TOKEN")
     chat_id = _env_or_die("TELEGRAM_CHAT_ID")
     bot = Bot(token=token)
@@ -228,7 +250,31 @@ async def _send_match(text: str, keyboard=None) -> None:
         )
         if keyboard:
             kwargs["reply_markup"] = keyboard
-        await bot.send_message(**kwargs)
+        return await bot.send_message(**kwargs)
+
+
+# Telegram's limit on a document caption.
+_CAPTION_LIMIT = 1024
+
+
+async def send_resume_file(data: bytes, ext: str, *, caption: str = "", reply_to: int | None = None,
+                           bot: Bot | None = None) -> None:
+    """Upload a resume into the chat as ``Vishnujan_Narayanan_Resume.<ext>``
+    (``resume_download.download_stem``). ``bot`` is an open Bot to reuse."""
+    from telegram import InputFile
+
+    from src.resume_download import download_stem
+
+    chat_id = _env_or_die("TELEGRAM_CHAT_ID")
+    kwargs = dict(chat_id=chat_id, document=InputFile(data, filename=f"{download_stem()}.{ext}"),
+                  caption=caption[:_CAPTION_LIMIT] or None)
+    if reply_to:
+        kwargs["reply_to_message_id"] = reply_to
+    if bot is not None:
+        await bot.send_document(**kwargs)
+        return
+    async with Bot(token=_env_or_die("TELEGRAM_BOT_TOKEN")) as own:
+        await own.send_document(**kwargs)
 
 
 # Run-summary wording for each outcome, in the order a job meets them.
