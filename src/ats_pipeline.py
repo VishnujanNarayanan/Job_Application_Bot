@@ -228,6 +228,7 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     session.commit()
     stats.new = len(jobs)
     stats.requests = sum(lane.requests for lane in lanes.values())
+    stats.bytes = sum(lane.bytes for lane in lanes.values())
     log.info("ats_poll_done", pruned=pruned, **vars(stats))
     return jobs
 
