@@ -148,7 +148,7 @@ def main() -> int:
             nice_to_have=list(r.nice_to_have or []),
             responsibilities=list(r.responsibilities or []),
         )
-        jd = build_jd_context(parsed, posted_at=r.posted_at, scraped_at=r.scraped_at)
+        jd = build_jd_context(parsed, posted_at=r.posted_at, scraped_at=r.scraped_at, title=r.role)
         kws = jd_keywords(parsed)
 
         E += [score_entry(e, jd, kws, now=now).score for e in employment]
