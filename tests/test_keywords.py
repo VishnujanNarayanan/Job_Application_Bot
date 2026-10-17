@@ -16,9 +16,16 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.config import settings
 from src.scorer import keywords as kw
 
 GRADER = Path(os.environ.get("RESUME_GUIDE", Path.home() / "projects" / "resume guide")) / "score_coverage.py"
+
+@pytest.fixture(autouse=True)
+def _share_formula(monkeypatch):
+    """These tests pin the share fit formula; weighted_count (#101) has its own."""
+    monkeypatch.setitem(settings.scoring.fit.as_dict(), "formula", "share")
+
 
 
 # --------------------------------------------------------------------------
