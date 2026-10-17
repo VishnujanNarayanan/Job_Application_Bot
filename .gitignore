@@ -61,6 +61,9 @@ data/models/
 data/ats_probe
 data/pending_writes.jsonl
 data/run.lock
+# Dashboard status clicks waiting for the next run (src/state/status_queue.py)
+data/status_queue.jsonl
+data/status_queue.flush.lock
 
 # --- Python -----------------------------------------------------------------
 __pycache__/

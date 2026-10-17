@@ -2,7 +2,8 @@
    drift apart; `settled` mutes the score furniture for an already-actioned
    job, where the decision matters more than the number. #}
 {% macro job_card(m, threshold, settled=False) %}
-<li class="job {% if settled %}job--settled{% endif %}" data-job-id="{{ m.job_id }}">
+<li class="job {% if settled %}job--settled{% endif %}" data-job-id="{{ m.job_id }}"
+    data-status="{{ m.status }}">
 
   {# The signature: the score against its gate, drawn to scale. A bar that
      clears the amber gate matched; one that stops short did not. #}

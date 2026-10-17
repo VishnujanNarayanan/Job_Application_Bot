@@ -376,99 +376,144 @@ def test_base_url_strips_a_trailing_slash():
 # Applied tracking
 #
 # The system deliberately never submits an application, so the operator's own
-# confirmation is the only evidence one happened. That makes this endpoint the
-# sole writer of applied state — worth pinning down.
+# confirmation is the only evidence one happened. A click is queued locally
+# (instant) and written to Postgres by the next run -- worth pinning down.
 # ---------------------------------------------------------------------------
 
-def _patch_status_row(row):
-    """Patch the session used by POST /api/jobs/{id}/status."""
-    session = MagicMock()
-    session.get.return_value = row
-    session.scalar.return_value = 0
-    session.execute.return_value.all.return_value = []
-    scope = MagicMock()
-    scope.__enter__ = MagicMock(return_value=session)
-    scope.__exit__ = MagicMock(return_value=False)
-    return patch.object(dashboard, "session_scope", return_value=scope), session
+from types import SimpleNamespace
+
+from src.state import status_queue
+
+
+def _no_db():
+    """Fail the test if the status endpoint touches Postgres."""
+    return patch.object(dashboard, "session_scope",
+                        side_effect=AssertionError("status click must not hit the DB"))
 
 
 @pytest.mark.parametrize("status", ["pending", "applied", "dismissed"])
-def test_status_endpoint_records_each_transition(client, status):
-    row = MagicMock(user_status="pending", user_status_at=None)
-    patcher, session = _patch_status_row(row)
-    with patcher:
+def test_status_endpoint_queues_each_transition_without_the_db(client, status):
+    with _no_db():
         response = client.post("/api/jobs/linkedin-123/status", json={"status": status})
 
     assert response.status_code == 200
     assert response.json()["status"] == status
-    assert row.user_status == status
-    session.commit.assert_called_once()
+    queued_status, at = status_queue.pending()["linkedin-123"]
+    assert queued_status == status
+    assert at.tzinfo is not None, "must be timezone-aware"
 
 
-def test_acting_on_a_job_stamps_the_action_time(client):
-    """Applied sorts by this, and the card prints it."""
+def test_status_endpoint_rejects_an_unknown_status(client):
+    with _no_db():
+        response = client.post("/api/jobs/linkedin-123/status", json={"status": "hired"})
+
+    assert response.status_code == 400
+    assert status_queue.pending() == {}
+
+
+def test_last_click_on_a_job_wins():
+    status_queue.enqueue("j1", "applied", _NOW)
+    status_queue.enqueue("j1", "pending", _NOW)
+
+    assert status_queue.pending()["j1"][0] == "pending"
+
+
+def _patch_flush_rows(rows: dict):
+    """Patch the session status_queue.flush writes through."""
+    session = MagicMock()
+    session.get.side_effect = lambda _model, job_id: rows.get(job_id)
+    scope = MagicMock()
+    scope.__enter__ = MagicMock(return_value=session)
+    scope.__exit__ = MagicMock(return_value=False)
+    return patch("src.state.db.session_scope", return_value=scope), session
+
+
+def test_flush_writes_the_click_with_its_click_time():
+    """Applied sorts by this, so it must be when the operator acted, not when
+    the run got round to writing it."""
     row = MagicMock(user_status="pending", user_status_at=None)
-    patcher, _ = _patch_status_row(row)
+    status_queue.enqueue("j1", "applied", _NOW)
+    patcher, session = _patch_flush_rows({"j1": row})
     with patcher:
-        client.post("/api/jobs/linkedin-123/status", json={"status": "applied"})
+        assert status_queue.flush() == 1
 
-    assert isinstance(row.user_status_at, datetime)
-    assert row.user_status_at.tzinfo is not None, "must be timezone-aware"
+    assert row.user_status == "applied"
+    assert row.user_status_at == _NOW
+    session.commit.assert_called_once()
+    assert status_queue.pending() == {}, "a written click leaves the queue"
 
 
-def test_undo_clears_the_action_time(client):
-    """Returning a job to pending must not leave a stale applied date behind,
-    or it would sort into Applied with a date and no status."""
-    row = MagicMock(user_status="applied", user_status_at=_NOW)
-    patcher, _ = _patch_status_row(row)
+def test_flush_undo_clears_the_action_time():
+    row = MagicMock(user_status="applied", user_status_at=_NOW.replace(hour=9))
+    status_queue.enqueue("j1", "pending", _NOW)
+    patcher, _ = _patch_flush_rows({"j1": row})
     with patcher:
-        client.post("/api/jobs/linkedin-123/status", json={"status": "pending"})
+        status_queue.flush()
 
     assert row.user_status == "pending"
     assert row.user_status_at is None
 
 
-def test_status_endpoint_returns_fresh_counts_for_the_nav(client):
-    """The page updates its badges from this rather than reloading."""
+def test_flush_does_not_overwrite_a_later_decision():
+    """A Telegram tap after the click is the operator's newer word."""
+    row = MagicMock(user_status="dismissed", user_status_at=_NOW.replace(hour=11))
+    status_queue.enqueue("j1", "applied", _NOW)
+    patcher, _ = _patch_flush_rows({"j1": row})
+    with patcher:
+        assert status_queue.flush() == 0
+
+    assert row.user_status == "dismissed"
+    assert status_queue.pending() == {}
+
+
+def test_flush_drops_a_click_on_an_unknown_job():
+    status_queue.enqueue("gone", "applied", _NOW)
+    patcher, _ = _patch_flush_rows({})
+    with patcher:
+        assert status_queue.flush() == 0
+
+    assert status_queue.pending() == {}
+
+
+def test_flush_keeps_a_click_that_failed_to_write():
     row = MagicMock(user_status="pending", user_status_at=None)
-    patcher, _ = _patch_status_row(row)
+    status_queue.enqueue("j1", "applied", _NOW)
+    patcher, session = _patch_flush_rows({"j1": row})
+    session.commit.side_effect = RuntimeError("neon unreachable")
     with patcher:
-        body = client.post(
-            "/api/jobs/linkedin-123/status", json={"status": "applied"}
-        ).json()
+        assert status_queue.flush() == 0
 
-    assert set(body["counts"]) == {"pending", "applied", "dismissed", "skipped"}
+    assert status_queue.pending()["j1"] == ("applied", _NOW)
 
 
-def test_status_endpoint_rejects_an_unknown_status(client):
+def test_flush_keeps_clicks_made_while_it_was_writing():
     row = MagicMock(user_status="pending", user_status_at=None)
-    patcher, session = _patch_status_row(row)
+    status_queue.enqueue("j1", "applied", _NOW)
+    patcher, session = _patch_flush_rows({"j1": row})
+    session.commit.side_effect = lambda: status_queue.enqueue("j2", "dismissed", _NOW)
     with patcher:
-        response = client.post("/api/jobs/linkedin-123/status", json={"status": "hired"})
+        status_queue.flush()
 
-    assert response.status_code == 400
-    session.commit.assert_not_called()
-
-
-def test_status_endpoint_404s_an_unknown_job(client):
-    patcher, _ = _patch_status_row(None)
-    with patcher:
-        response = client.post("/api/jobs/nope/status", json={"status": "applied"})
-
-    assert response.status_code == 404
+    assert status_queue.pending() == {"j2": ("dismissed", _NOW)}
 
 
-# ---------------------------------------------------------------------------
-# View ordering — the two views answer different questions
-# ---------------------------------------------------------------------------
+def test_flush_never_raises_and_reports_nothing_written_on_an_empty_queue():
+    assert status_queue.flush() == 0
 
-def _order_by_sql(status: str) -> str:
-    """Compile the ORDER BY that _match_views builds for a status."""
+
+def _applied_row(job_id, status, *, built, acted=None, score=0.7):
+    applied = SimpleNamespace(job_id=job_id, user_status=status, user_status_at=acted,
+                              built_at=built, final_score=score)
+    return applied, SimpleNamespace(job_id=job_id)
+
+
+def _views(rows, status):
     session = MagicMock()
-    session.execute.return_value = []
-    dashboard._match_views(session, status)
-    stmt = session.execute.call_args[0][0]
-    return str(stmt).lower()
+    session.execute.return_value = rows
+    with patch.object(dashboard, "_view",
+                      side_effect=lambda a, j, q=None: {"job_id": a.job_id,
+                                                        "status": q[0] if q else a.user_status}):
+        return [v["job_id"] for v in dashboard._match_views(session, status)]
 
 
 def test_matches_sort_newest_first():
@@ -478,21 +523,47 @@ def test_matches_sort_newest_first():
     closed weeks ago is not a better use of attention than a fresh opening.
     Score still breaks ties, and every card draws it to scale anyway.
     """
-    sql = _order_by_sql("pending")
-    order = sql.split("order by", 1)[1]
-    assert order.index("built_at") < order.index("final_score"), (
-        "recency must outrank score"
-    )
-    assert "user_status_at" not in order
+    rows = [
+        _applied_row("old-best", "pending", built=_NOW.replace(day=1), score=0.9),
+        _applied_row("new-low", "pending", built=_NOW, score=0.6),
+        _applied_row("new-high", "pending", built=_NOW, score=0.8),
+    ]
+    assert _views(rows, "pending") == ["new-high", "new-low", "old-best"]
 
 
 def test_applied_sorts_by_when_the_operator_acted():
     """Applied is a record, read newest first — score no longer decides
     anything once the application is out."""
-    sql = _order_by_sql("applied")
-    order = sql.split("order by", 1)[1]
-    assert "user_status_at desc" in order
-    assert order.index("user_status_at") < order.index("built_at")
+    rows = [
+        _applied_row("acted-early", "applied", built=_NOW, acted=_NOW.replace(hour=8)),
+        _applied_row("acted-late", "applied", built=_NOW.replace(day=1), acted=_NOW),
+    ]
+    assert _views(rows, "applied") == ["acted-late", "acted-early"]
+
+
+def test_a_queued_click_moves_the_job_between_views_before_the_flush():
+    """Reloading must not bring back a card the operator just cleared."""
+    status_queue.enqueue("j1", "applied", _NOW)
+    rows = [_applied_row("j1", "pending", built=_NOW),
+            _applied_row("j2", "pending", built=_NOW)]
+
+    assert _views(rows, "pending") == ["j2"]
+    assert _views(rows, "applied") == ["j1"]
+
+
+def test_counts_include_queued_clicks():
+    status_queue.enqueue("j1", "applied", _NOW)
+    session = MagicMock()
+    session.execute.return_value.all.side_effect = [
+        [("pending", 5), ("applied", 2)],   # stored counts by status
+        [("j1", "pending")],                # stored status of queued jobs
+    ]
+    session.scalar.return_value = 0
+
+    counts = dashboard._counts(session)
+
+    assert counts["pending"] == 4
+    assert counts["applied"] == 3
 
 
 def test_applied_page_offers_undo_not_apply(client):
