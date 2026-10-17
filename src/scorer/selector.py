@@ -220,6 +220,10 @@ class JDContext:
     #: ``ai_tooling_asked``). Opens the AI-tooling gate alongside a literal tool
     #: name in the checklist.
     ai_tooling_asked: bool = False
+    #: The advert's title and stated years (0 = none stated), for the junior
+    #: boost (apply_decision.junior_multiplier).
+    title: str | None = None
+    years_required: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +377,7 @@ def block_coverage(
     hits: set[str] = set()
     for b in _render_set(block):
         hits |= covered_by(b.norm_text, keywords)
-    required = {k.token for k in keywords if k.weight >= 1.0}
+    required = {k.token for k in keywords if k.required}
     return weight_of(hits, keywords), weight_of(hits & required, keywords), hits
 
 
@@ -417,7 +421,7 @@ def lead_block(
     w_sim = float(getattr(cfg, "lead_weight_similarity", 0.25))
     total_w = weight_of({k.token for k in keywords}, keywords)
     required_w = weight_of(
-        {k.token for k in keywords if k.weight >= 1.0}, keywords
+        {k.token for k in keywords if k.required}, keywords
     )
 
     def key(rb: RoleBlockCand) -> tuple[float, bool]:
@@ -1132,6 +1136,7 @@ def build_jd_context(
     scrape_window_hours: float | None = None,
     applicants_count: int | None = None,
     jd_text: str | None = None,
+    title: str | None = None,
     embed_batch_fn=None,
 ) -> JDContext:
     """Embed a parsed JD into the query facets Layer 4 scores against.
@@ -1163,6 +1168,8 @@ def build_jd_context(
         scraped_at=scraped_at,
         scrape_window_hours=scrape_window_hours,
         applicants_count=applicants_count,
+        title=title,
+        years_required=getattr(parsed, "years_required", None),
         ai_tooling_asked=ai_tooling_asked(
             jd_text,
             " ".join(parsed.required_skills or []),

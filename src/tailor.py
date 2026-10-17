@@ -77,8 +77,10 @@ def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None)
         scrape_window_hours=scrape_window_hours,
         applicants_count=job.applicants_count,
         jd_text=job.jd_text,
+        title=job.role,
     )
-    return evaluate(profile, jd_context, keywords=jd_keywords(parsed), threshold=threshold_for(job.site))
+    return evaluate(profile, jd_context, keywords=jd_keywords(parsed, title=job.role, jd_text=job.jd_text),
+                    threshold=threshold_for(job.site))
 
 
 @dataclass
@@ -481,8 +483,8 @@ def breakdown(t: TailorResult) -> dict:
     r = t.result
     kws = r.jd_keywords
     shown: set[str] = set().union(*(e.covered for e in r.entries)) if r.entries else set()
-    required = [k.token for k in kws if k.weight >= 1.0]
-    nice = [k.token for k in kws if k.weight < 1.0]
+    required = [k.token for k in kws if k.required]
+    nice = [k.token for k in kws if not k.required]
 
     entries, seen = [], set()
     for e in r.entries:

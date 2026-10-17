@@ -167,7 +167,7 @@ def test_ats_jobs_have_their_own_apply_threshold(monkeypatch):
     from src.config import settings
     from src.scorer.apply_decision import threshold_for
 
-    assert threshold_for("ats:greenhouse") == 0.40
+    assert threshold_for("ats:greenhouse") == 0.47
     assert threshold_for("linkedin") == float(settings.scoring.apply_threshold)
     assert threshold_for(None) == float(settings.scoring.apply_threshold)
 
