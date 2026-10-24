@@ -53,7 +53,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 # so an existing exported sheet and a new CSV line up column-for-column.
 _MATCH_HEADER = [
     "Date", "Company", "Role", "Match", "Salary", "Source",
-    "Apply Link", "PDF Link", "DOCX Link", "Status", "Gap Skills",
+    "Apply Link", "PDF Link", "DOCX Link", "Status", "Gap Skills", "Resume Header",
 ]
 _SKIPPED_HEADER = [
     "Date", "Company", "Role", "Reason", "Detail", "Score", "Source", "JD Snippet",
@@ -114,6 +114,7 @@ def _match_rows(session, endpoint_base_url: str) -> list[list[str]]:
     """Every matched job, oldest first."""
     from sqlalchemy import select
 
+    from src.endpoint.relocation import printed_location
     from src.state.models import AllJobs, Applied
 
     stmt = (
@@ -137,6 +138,7 @@ def _match_rows(session, endpoint_base_url: str) -> list[list[str]]:
             f"{endpoint_base_url}/resume/{job.job_id}.docx",
             applied.user_status or "pending",
             ", ".join(str(s) for s in (applied.gap_skills or [])),
+            printed_location(job.location, job.jd_text) or "",
         ])
     return rows
 
