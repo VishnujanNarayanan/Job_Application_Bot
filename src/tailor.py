@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 import structlog
 
 from src.config import settings
+from src.endpoint.relocation import printed_location
 
 log = structlog.get_logger(__name__)
 
@@ -500,6 +501,7 @@ def breakdown(t: TailorResult) -> dict:
     return {
         "job_id": t.job.job_id,
         "company": t.job.company,
+        "header_location": printed_location(t.job.location, t.job.jd_text),
         "role": t.job.role,
         "reused_parse": t.reused_parse,
         "role_level": t.parsed.role_level,

@@ -103,6 +103,8 @@ def report(t) -> str:
         "",
         f"FINAL SCORE  {b['final_score']:.3f}   (apply threshold {b['threshold']:.3f})",
     ]
+    if b.get("header_location"):
+        lines.insert(3, f"resume header: {b['header_location']}")
     if b["below_threshold"]:
         lines.append("  BELOW THRESHOLD: the scraper run would not have sent this job."
                      " Built anyway.")

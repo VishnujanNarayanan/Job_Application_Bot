@@ -35,6 +35,7 @@
         <dd>{{ [m.location_type, m.location]|select|unique|join(' · ') }}</dd>
       </div>
       {% endif %}
+      {% if m.header %}<div class="fact"><dt>Header</dt><dd>{{ m.header }}</dd></div>{% endif %}
       {% if m.salary %}<div class="fact"><dt>CTC</dt><dd>{{ m.salary }}</dd></div>{% endif %}
       <div class="fact"><dt>Source</dt><dd>{{ m.source }}</dd></div>
       {% if m.scraped_at %}
