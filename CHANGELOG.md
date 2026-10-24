@@ -7,6 +7,23 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Changed
+
+- **Fewer, denser bullets per entry (#137).**
+  - `selection.bullets.max_extras` (2): an entry shows at most two extra
+    bullets, the strongest by coverage. A further extra renders only when it
+    adds a keyword `term_type()` calls a tool (Docker, Kafka); methods,
+    concepts and soft skills count toward the limit. The minimum fill and
+    phase 2 obey it.
+  - `selection.bullets.main_exchange`: after selection, a skipped main bullet
+    replaces the extras whose keywords it carries, when no keyword or
+    canonical token is lost, at most one keyword repeats within the entry, and
+    the entry is no longer. A denser extra is never exchanged for a thinner
+    main; the summary and gated bullets are never exchanged.
+  - Measured on 300 stored jobs: extras per entry 1.91 to 1.59, entries with
+    3+ extras 324 to 137, coverage 44.6% to 44.4%, fit 0.410 to 0.413, final
+    score 0.470 to 0.473, apply decisions 73 to 72.
+
 ### Added
 
 - **The job's city in the resume header (#134), behind `relocation.enabled`
