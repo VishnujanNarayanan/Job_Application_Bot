@@ -93,7 +93,11 @@ def header_for(job_id: str, db_session: Session) -> str | None:
     job = db_session.get(AllJobs, job_id)
     if job is None:
         return None
-    return header_location_for(job.location, job.jd_text)
+    def text(name: str) -> str | None:
+        value = getattr(job, name, None)
+        return value if isinstance(value, str) else None
+
+    return header_location_for(text("location"), text("jd_text"))
 
 
 def _load_selection(selection_json, job_id: str) -> StoredSelection:
