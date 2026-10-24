@@ -883,6 +883,15 @@ tailor:
 # Setup:   tailscale serve --bg 8000
 # Name:    tailscale status --json | grep DNSName
 # ---------------------------------------------------------------------------
+# Resume header location (#134). When on, a job in another city gets
+# "Relocating to <city> by <today + days>, can relocate sooner if required."
+# The city comes from the job's location, else from the advert text (remote
+# roles included); the profile location stays when neither names a city, or
+# when the job lists the operator's own city.
+relocation:
+  enabled: false
+  days: 30
+
 endpoint:
   # Must be a real host: Telegram rejects a localhost URL and drops the whole
   # notification.

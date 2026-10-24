@@ -151,6 +151,7 @@ In `config/config.yaml`, change:
 | `prerender.enabled` | `false` if you are not using AWS |
 | `aws.s3_bucket` | Your bucket name, if you use AWS |
 | `endpoint.base_url` | Your Tailscale URL, if you use Tailscale; otherwise leave it |
+| `relocation.enabled` | `true` to put "Relocating to <the job's city> by <date>" in the resume header for jobs in another city (`relocation.days` sets the lead time) |
 
 **8. Check your LLM key and run**
 
