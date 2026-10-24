@@ -9,6 +9,25 @@ and this project loosely tracks iterations rather than semver.
 
 ### Added
 
+- **The job's city in the resume header (#134), behind `relocation.enabled`
+  (default off).**
+  - When on, a job in another city gets the header line `Relocating to <city>
+    by <today + relocation.days>, can relocate sooner if required.`
+  - The city comes from the job's location field. When that field names no
+    city (remote, blank, "India", a state code like "KA, IN", "Multiple
+    locations"), it comes from the advert text, so a remote role that names an
+    office is treated like an onsite one.
+  - The profile location stays when no city is found, when the job lists the
+    operator's own city, or when the location names a city outside the
+    accepted Indian list ("New York, NY").
+  - Spellings are normalised (Bangalore/Bengaluru, Gurgaon/Gurugram,
+    Trivandrum/Thiruvananthapuram).
+  - The location line is the one sanctioned edit to the frozen header. It is
+    made before the prefix snapshot, so the before/after check still guards
+    everything else.
+  - The relocation line is part of the render-cache key, so a cached resume
+    never shows a stale city or date.
+
 - **Naukri is scraped alongside LinkedIn** (`scraper.sites`).
   - Each Naukri listing's experience band ("3-6 Yrs") is checked against
     `filters.years_ceiling` before the parse (`EXPERIENCE_TOO_HIGH`). Naukri's
