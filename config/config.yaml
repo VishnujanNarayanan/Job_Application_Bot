@@ -884,7 +884,7 @@ tailor:
 # Name:    tailscale status --json | grep DNSName
 # ---------------------------------------------------------------------------
 # Resume header location (#134). When on, a job in another city gets
-# "Relocating to <city> by <today + days>, can relocate sooner if required."
+# "Relocating to <city> by <today + days>, willing to relocate sooner if required."
 # The city comes from the job's location, else from the advert text (remote
 # roles included); the profile location stays when neither names a city, or
 # when the job lists the operator's own city.
