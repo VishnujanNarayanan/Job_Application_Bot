@@ -18,7 +18,8 @@ HOME = "Kochi, Kerala, India"
     ("Bengaluru East, Karnataka, India", "Bengaluru"),
     ("Pune Division, Maharashtra, India", "Pune"),
     ("Gurgaon, Haryana, India", "Gurugram"),
-    ("Trivandrum, Kerala, India", "Thiruvananthapuram"),
+    ("Trivandrum, Kerala, India", "Trivandrum"),
+    ("Thiruvananthapuram, Kerala, India", "Trivandrum"),
     ("Navi Mumbai, MH", "Navi Mumbai"),
     ("New Delhi, Delhi, India", "New Delhi"),
 ])
@@ -62,7 +63,7 @@ def test_a_city_inside_a_longer_word_does_not_match():
 
 def test_the_header_line_reads_the_date_unambiguously():
     line = r.header_line("Bengaluru", date(2026, 10, 21), 30)
-    assert line == "Relocating to Bengaluru by 20 Nov 2026, can relocate sooner if required."
+    assert line == "Relocating to Bengaluru by 20 Nov 2026, willing to relocate sooner if required."
     assert r.header_line("Pune", date(2026, 12, 25), 30).startswith("Relocating to Pune by 24 Jan 2027")
 
 
@@ -75,7 +76,7 @@ def test_switched_on_a_job_in_another_city_gets_the_line(monkeypatch):
     monkeypatch.setitem(settings._data, "relocation", {"enabled": True, "days": 10})
     monkeypatch.setattr(r, "_home_location", lambda: HOME)
     line = r.header_location_for("Pune, MH, India", None, today=date(2026, 10, 21))
-    assert line == "Relocating to Pune by 31 Oct 2026, can relocate sooner if required."
+    assert line == "Relocating to Pune by 31 Oct 2026, willing to relocate sooner if required."
     assert r.header_location_for("Kochi, Kerala, India", None) is None
 
 
@@ -86,8 +87,8 @@ def test_the_relocation_line_is_part_of_the_render_cache_key():
     sel = StoredSelection(job_id="j", template_version="abc12345", built_at="2026-10-24T00:00:00Z",
                           jd_keywords=[], keyword_coverage=0.0, lead_entry_coverage=0.0, entries=[])
     plain = render_version(sel)
-    pune = render_version(sel, "Relocating to Pune by 31 Oct 2026, can relocate sooner if required.")
-    chennai = render_version(sel, "Relocating to Chennai by 31 Oct 2026, can relocate sooner if required.")
+    pune = render_version(sel, "Relocating to Pune by 31 Oct 2026, willing to relocate sooner if required.")
+    chennai = render_version(sel, "Relocating to Chennai by 31 Oct 2026, willing to relocate sooner if required.")
     assert len({plain, pune, chennai}) == 3
     assert "_" not in pune, "the cache reads the version back as the key's last _ part"
 
@@ -120,7 +121,7 @@ def test_the_assembler_swaps_only_the_location_line(tmp_path):
         entries=[SelectedEntryOut(kind="work", entry_id="e", block_id="e::data", title_alias="Engineer",
                                   header_left="Engineer", header_right="2025", bullet_ids=["b"], cap=3)],
     )
-    line = "Relocating to Pune by 31 Oct 2026, can relocate sooner if required."
+    line = "Relocating to Pune by 31 Oct 2026, willing to relocate sooner if required."
     plain, moved = tmp_path / "plain.docx", tmp_path / "moved.docx"
     assemble_docx(sel, profile, _template(), plain)
     assemble_docx(sel, profile, _template(), moved, header_location=line)

@@ -2,7 +2,7 @@
 
 When ``relocation.enabled`` is on and the job names a city other than the
 operator's own, the header location line becomes
-``Relocating to <city> by <D Mon YYYY>, can relocate sooner if required.`` so a
+``Relocating to <city> by <D Mon YYYY>, willing to relocate sooner if required.`` so a
 recruiter or an ATS location filter does not read the candidate as non-local.
 The city comes from the job's location field, else from the advert text; only
 when neither names a recognised city does the profile location stay.
@@ -37,7 +37,8 @@ CITIES: dict[str, tuple[str, ...]] = {
     "Kolkata": ("kolkata", "calcutta"),
     "Ahmedabad": ("ahmedabad",),
     "Kochi": ("kochi", "cochin", "ernakulam"),
-    "Thiruvananthapuram": ("thiruvananthapuram", "trivandrum"),
+    # Shown as "Trivandrum": the full name pushes the header line past one line.
+    "Trivandrum": ("thiruvananthapuram", "trivandrum"),
     "Coimbatore": ("coimbatore",),
     "Mysuru": ("mysuru", "mysore"),
     "Jaipur": ("jaipur",),
@@ -120,7 +121,7 @@ def job_city(location: str | None, jd_text: str | None, home: str | None) -> str
 
 def header_line(city: str, today: date, days: int) -> str:
     by = today + timedelta(days=days)
-    return f"Relocating to {city} by {by.day} {by:%b %Y}, can relocate sooner if required."
+    return f"Relocating to {city} by {by.day} {by:%b %Y}, willing to relocate sooner if required."
 
 
 def enabled() -> bool:
