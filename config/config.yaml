@@ -892,7 +892,7 @@ tailor:
 # city, or the field names only places abroad. Telegram, the dashboard, the CSV
 # export and the tailor report show the line the resume prints.
 relocation:
-  enabled: false
+  enabled: true
   months: 1     # calendar months; 31 Jan + 1 is the last day of February
 
 endpoint:
