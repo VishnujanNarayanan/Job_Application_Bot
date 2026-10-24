@@ -883,6 +883,18 @@ tailor:
 # Setup:   tailscale serve --bg 8000
 # Name:    tailscale status --json | grep DNSName
 # ---------------------------------------------------------------------------
+# Resume header location (#134). When on, a job in another Indian city gets
+# "Relocating to <city> by <today + months>, willing to relocate sooner if required."
+# The city comes from the job's location field (a known city, or any place in a
+# segment marked India); when the field names no place (remote, a country, a
+# state, blank), from the advert's "Location:" line or any known city in it. The
+# profile location stays when no city is found, the job lists the operator's own
+# city, or the field names only places abroad. Telegram, the dashboard, the CSV
+# export and the tailor report show the line the resume prints.
+relocation:
+  enabled: true
+  months: 1     # calendar months; 31 Jan + 1 is the last day of February
+
 endpoint:
   # Must be a real host: Telegram rejects a localhost URL and drops the whole
   # notification.

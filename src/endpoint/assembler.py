@@ -262,6 +262,22 @@ def _tailored_start(body) -> int:
     )
 
 
+def _set_header_location(body, text: str) -> None:
+    """Replace the header's location line, the third paragraph of the template (#134).
+
+    The one sanctioned edit to the frozen prefix. It runs before the prefix is
+    snapshotted, so the before/after check still guards everything else.
+    """
+    paras = [c for c in body if c.tag == qn("w:p")]
+    first_heading = next((i for i, p in enumerate(paras) if _is_section_heading(p)), None)
+    if first_heading is None or first_heading <= 2 or not _direct_runs(paras[2]):
+        raise AssemblerError(
+            "Template has no location line above Education & Certificates; "
+            "the header relocation line has nowhere to go."
+        )
+    _set_text(paras[2], text)
+
+
 def _frozen_canonical(body, start: int) -> bytes:
     """Canonical XML of the frozen prefix (hard rules #9 + #10)."""
     return b"".join(etree.tostring(c, method="c14n") for c in list(body)[:start])
@@ -618,12 +634,18 @@ def assemble_docx(
     profile_json_path: Path,
     template_path: Path,
     output_path: Path,
+    header_location: str | None = None,
 ) -> Path:
-    """Render ``selection`` into a DOCX at ``output_path``."""
+    """Render ``selection`` into a DOCX at ``output_path``.
+
+    ``header_location`` replaces the header's location line (#134); None keeps it.
+    """
     bullet_text = _index_profile(profile_json_path)
 
     doc = Document(str(template_path))
     body = doc.element.body
+    if header_location:
+        _set_header_location(body, header_location)
 
     right_tab = _usable_width_twips(doc)
     start = _tailored_start(body)

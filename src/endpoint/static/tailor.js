@@ -43,7 +43,8 @@
     $("to-title").textContent = b.role + " at " + b.company;
     $("to-sub").textContent = b.job_id + " · " +
       (b.reused_parse ? "reused the stored parse" : "new parse") + " · " +
-      b.role_level + ", " + b.years_required + " years asked";
+      b.role_level + ", " + b.years_required + " years asked" +
+      (b.header_location ? " · Header: " + b.header_location : "");
     $("to-pdf").href = b.pdf_url;
     $("to-docx").href = b.docx_url;
 

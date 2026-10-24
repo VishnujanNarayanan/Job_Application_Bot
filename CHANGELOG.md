@@ -9,6 +9,28 @@ and this project loosely tracks iterations rather than semver.
 
 ### Added
 
+- **The job's city in the resume header (#134), behind `relocation.enabled`
+  (default off).**
+  - When on, a job in another Indian city gets the header line `Relocating to
+    <city> by <today + relocation.months>, willing to relocate sooner if
+    required.` The date is a calendar month from the build date, clamped to the
+    month's last day (31 Jan gives 28/29 Feb).
+  - The city comes from the job's location field: a known city anywhere in it
+    (multi-country lists included), else any place in a segment marked India
+    ("Faridkot, PB, India"). Neighbourhoods map to their city (Kharadi to Pune,
+    Banjara Hills to Hyderabad) and misspellings are normalised.
+  - When the field names no place (remote, work from home, a country, a state,
+    "Multiple locations", blank), the advert's "Location:" line, then any known
+    city in it, is used, preferring a city in the state the field names.
+  - The profile location stays when no city is found, when the job lists the
+    operator's own city, or when the field names only places abroad. Work modes
+    are never shown as a place. Checked against all 8,204 location strings and
+    1,947 adverts stored.
+  - The Telegram message, the dashboard card, the CSV export and the tailor
+    report show the line the resume prints.
+  - The location line is the one sanctioned edit to the frozen header, made
+    before the prefix snapshot; the line is part of the render-cache key.
+
 - **Naukri is scraped alongside LinkedIn** (`scraper.sites`).
   - Each Naukri listing's experience band ("3-6 Yrs") is checked against
     `filters.years_ceiling` before the parse (`EXPERIENCE_TOO_HIGH`). Naukri's

@@ -31,6 +31,7 @@ operator's private Tailscale network (see README).
 
 from __future__ import annotations
 
+from src.endpoint.relocation import printed_location
 from src.state.selection_compat import title_alias_of
 
 from pathlib import Path
@@ -90,6 +91,7 @@ def _view(applied, job, queued: tuple | None = None) -> dict:
         "success_prob": applied.success_prob,
         "location": job.location or "",
         "location_type": job.location_type or "",
+        "header": printed_location(job.location, job.jd_text) or "",
         "salary": f"{job.salary_max_lpa:.0f} LPA" if job.salary_max_lpa else "",
         "source": job.site or "",
         "status": status,
