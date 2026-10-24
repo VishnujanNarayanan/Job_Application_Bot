@@ -1428,25 +1428,40 @@ def test_build_jd_context_makes_three_embeds_not_three_plus_skills() -> None:
     assert ctx.vec_role == [1.0, 1.0]
 
 
-def test_a_clean_extra_is_preferred_to_a_repeating_audited_bullet() -> None:
+def test_without_the_exchange_a_clean_extra_beats_a_repeating_main() -> None:
     """"Regression" is reachable two ways: from an audited bullet that also restates
-    SQL, and from an extra that repeats nothing. v3.2 required the extra to be the
-    ONLY source, which blocked the clean route and forced the repeat. With
-    repetition barred outright, the clean extra is simply the only legal route.
-    """
+    SQL, and from an extra that repeats nothing. Phase 1 alone takes the clean extra,
+    because a bullet repeating a covered keyword cannot extend a beam."""
     bullets = [
         _bullet("b0", "Summary with Python and SQL.", summary=True),
         _bullet("b1", "Ran SQL checks and Regression tests on the warehouse."),
         _bullet("x1", "Kept a Regression suite on every branch.", extra=True),
     ]
-    with _cfg(min_per_entry=1):
+    with _cfg(min_per_entry=1, main_exchange=False):
         out = select_entry_bullets(
             _entry(blocks=[_block(bullets=bullets)]), _jd(),
             _kw("Python", "SQL", "Regression"), now=NOW,
         )
     ids = [b.id for b in out.bullets]
-    assert "x1" in ids, "the clean extra supplies Regression without repeating SQL"
-    assert "b1" not in ids, "the repeating audited bullet is no longer needed"
+    assert "x1" in ids and "b1" not in ids
+
+
+def test_the_exchange_puts_the_main_in_place_of_the_thin_extra() -> None:
+    """#137: b1 carries everything x1 contributes (Regression) and repeats one shown
+    keyword (SQL), so the main replaces the extra and the entry keeps its length."""
+    bullets = [
+        _bullet("b0", "Summary with Python and SQL.", summary=True),
+        _bullet("b1", "Ran SQL checks and Regression tests on the warehouse."),
+        _bullet("x1", "Kept a Regression suite on every branch.", extra=True),
+    ]
+    with _cfg(min_per_entry=1, main_exchange=True):
+        out = select_entry_bullets(
+            _entry(blocks=[_block(bullets=bullets)]), _jd(),
+            _kw("Python", "SQL", "Regression"), now=NOW,
+        )
+    ids = [b.id for b in out.bullets]
+    assert ids == ["b0", "b1"]
+    assert "Regression" in out.covered
 
 
 def test_a_repeating_extra_is_barred_like_any_other_bullet() -> None:

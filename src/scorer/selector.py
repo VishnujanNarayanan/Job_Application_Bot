@@ -53,7 +53,7 @@ from src.config import settings
 from src.llm.schemas import JDParsed
 from src.scorer.embeddings import Vector, add, cosine, embed_batch
 from src.scorer.keywords import (
-    Keyword, covered_by, coverage_of, hit, literal_hit, norm, weight_of,
+    Keyword, covered_by, coverage_of, hit, literal_hit, norm, term_type, weight_of,
 )
 from src.scorer.qualifications import canonical_covered, canonical_overlap
 
@@ -279,6 +279,18 @@ def bullet_cap(entry: EntryCand, now: datetime) -> int:
     if entry.kind == "project":
         return int(cfg.project_cap)
     return int(cfg.max_cap)
+
+
+def max_extras() -> int:
+    """``selection.bullets.max_extras``: extras an entry may show beyond which only
+    a new tool earns another (#137). 0 means no limit."""
+    return int(getattr(settings.selection.bullets, "max_extras", 0) or 0)
+
+
+def adds_tool(tokens) -> bool:
+    """True when any keyword in ``tokens`` names a tool (Docker, PySpark, AWS S3),
+    not a method, concept or soft skill (#137)."""
+    return any(term_type(t) == "tool" for t in tokens)
 
 
 def gated_terms() -> tuple[str, ...]:
@@ -759,6 +771,11 @@ def select_entry_bullets(
     finished: list[_Beam] = []
     width = max(1, int(getattr(cfg, "beam_width", 20)))
     slots = cap - len(chosen)
+    x_cap = max_extras()
+    extra_ids = {b.id for b in pool if b.is_extra}
+
+    def _extras_shown() -> int:
+        return sum(1 for c in chosen if c.id in extra_ids)
 
     for _ in range(max(0, slots)):
         nxt: list[_Beam] = []
@@ -774,6 +791,9 @@ def select_entry_bullets(
                     continue
                 gained = _spent(hits)
                 if not gained:
+                    continue
+                # Past the extras limit an extra must bring a tool (#137).
+                if b.is_extra and x_cap and st.extras >= x_cap and not adds_tool(gained):
                     continue
                 grew = True
                 nxt.append(_Beam(
@@ -852,9 +872,11 @@ def select_entry_bullets(
     # bullet covering nothing repeats nothing, so those are taken first and a
     # restatement only reaches the page when the entry would otherwise be invalid.
     while len(chosen) < floor and remaining:
+        over = bool(x_cap) and _extras_shown() >= x_cap
         b = max(
             [x for x in remaining if not _gate_blocks(x)],
-            key=lambda x: (not (hits_of[x.id] & covered), sim_of[x.id]),
+            # Past the extras limit a main fills the floor before an extra (#137).
+            key=lambda x: (not (over and x.is_extra), not (hits_of[x.id] & covered), sim_of[x.id]),
             default=None,
         )
         if b is None:
@@ -897,6 +919,11 @@ def select_entry_bullets(
             # restating CI/CD from the entry's own DevOps bullet.
             if repeated_c or jd_repeat > 0.0:
                 continue
+            # The extras limit holds here too: phase 2 mostly brings method and
+            # soft-skill tokens, which never earn an extra past the limit (#137).
+            if (b.is_extra and x_cap and _extras_shown() >= x_cap
+                    and not adds_tool(gained_c | (covered_by(b.norm_text, keywords) - covered))):
+                continue
             gain_c = len(gained_c) * _relevance(
                 block_scores, block.block_id, b.block_id
             )
@@ -931,6 +958,14 @@ def select_entry_bullets(
             kw_seen[tok] = kw_seen.get(tok, 0) + 1
         remaining.remove(cand)
 
+    if getattr(cfg, "main_exchange", False):
+        chosen, covered, covered_canon = _exchange_mains(
+            chosen, pool, block, keywords, covered, covered_canon, extra_ids,
+            sim_of={**sim_of, **{c.id: c.score for c in chosen}},
+            blocked=lambda b: _gated(b) or _gate_blocks(b),
+            spent=_spent, kw_seen=kw_seen,
+        )
+
     right_text, right_link = _header_right(entry, block)
     return SelectedEntry(
         id=entry.id,
@@ -950,6 +985,87 @@ def select_entry_bullets(
         end_date=entry.end_date,
         employment_type=entry.employment_type,
     )
+
+
+def _exchange_mains(chosen, pool, block, keywords, covered, covered_canon, extra_ids,
+                    *, sim_of, blocked, spent, kw_seen):
+    """Replace selected extras with a skipped main that carries their keywords (#137).
+
+    Within one entry, with ``S`` the selected bullets, ``K(b)`` the advert keywords
+    ``b`` matches and ``U(b)`` the keywords only ``b`` contributes in ``S``: an
+    unselected main ``m`` of the lead block replaces ``X``, the selected extras
+    with a non-empty ``U(x)`` inside ``K(m)``, when the result loses no advert
+    keyword and no canonical token, repeats at most one keyword already shown by
+    the bullets that stay, and is no longer than before. Density decides: an extra
+    contributing a keyword the main does not carry is never in ``X``. The summary
+    and gated bullets are never exchanged. Exchanges repeat, best first.
+    """
+    summary_id = next((c.id for c in chosen if c.is_summary), None)
+    kw_of = {b.id: covered_by(b.norm_text, keywords) for b in pool}
+    canon_of = {b.id: canonical_covered(b.norm_text, block.checklist) for b in pool}
+    by_id = {b.id: b for b in pool}
+
+    def union(ids, table):
+        out: set = set()
+        for i in ids:
+            out |= table.get(i, set())
+        return out
+
+    while True:
+        ids = [c.id for c in chosen]
+        best = None
+        for m in pool:
+            if m.is_extra or m.id in ids or m.block_id != block.block_id or blocked(m):
+                continue
+            km = kw_of[m.id]
+            group = []
+            for x in ids:
+                if x not in extra_ids or x == summary_id or blocked(by_id[x]):
+                    continue
+                u = kw_of[x] - union([i for i in ids if i != x], kw_of)
+                if u and u <= km:
+                    group.append(x)
+            if not group:
+                continue
+            stay = [i for i in ids if i not in group]
+            k_stay = union(stay, kw_of)
+            if union(ids, kw_of) - (k_stay | km):
+                continue                                    # a keyword would be lost
+            if union(ids, canon_of) - (union(stay, canon_of) | canon_of[m.id]):
+                continue                                    # a canonical token would be lost
+            repeats = km & k_stay
+            if len(repeats) > 1:
+                continue                                    # more than one repeat
+            fresh = spent(km - k_stay)
+            if km - k_stay - fresh:
+                continue                                    # a capped keyword already spent
+            key = (len(group), len(km - k_stay), -len(repeats), sim_of.get(m.id, 0.0))
+            if best is None or key > best[0]:
+                best = (key, m, group)
+        if best is None:
+            return chosen, covered, covered_canon
+        _, m, group = best
+        for x in group:
+            for tok in kw_of[x]:
+                kw_seen[tok] = max(0, kw_seen.get(tok, 0) - 1)
+        for tok in kw_of[m.id]:
+            kw_seen[tok] = kw_seen.get(tok, 0) + 1
+        kept = [c for c in chosen if c.id not in group]
+        # Mains read before extras: the new main sits after the last main.
+        at = max((i for i, c in enumerate(kept) if c.id not in extra_ids), default=0) + 1
+        kept.insert(at, SelectedBullet(m.id, m.text, sim_of.get(m.id, 0.0), False, [], via="jd"))
+        # Replay attribution in page order, so new_keywords says what each line adds.
+        seen: set = set()
+        chosen = []
+        for c in kept:
+            gained = kw_of.get(c.id, set()) - seen if not c.is_summary else set(c.new_keywords)
+            chosen.append(SelectedBullet(c.id, c.text, c.score, c.is_summary,
+                                         sorted(gained) if not c.is_summary else c.new_keywords,
+                                         via=c.via, new_canonical=c.new_canonical))
+            seen |= kw_of.get(c.id, set()) | set(c.new_keywords)
+        covered = covered | (kw_of[m.id] - covered)
+        covered_canon = covered_canon | canon_of[m.id]
+        log.debug("main_exchanged", main=m.id, replaced=group)
 
 
 # ---------------------------------------------------------------------------

@@ -309,6 +309,16 @@ selection:
     # Phase 2: fill remaining slots from the title's qualification checklist.
     # Stops at zero gain, never pads to the cap.
     qualification_fill: true
+    # Extra bullets per entry (#137). An extra usually carries one keyword, so
+    # several of them make an entry long and thin. At most `max_extras` render,
+    # the best by coverage; a further extra renders only when it adds a keyword
+    # term_type() calls a tool (Docker, PySpark) that the entry has not shown.
+    # Methods, concepts and soft skills count toward the limit. 0 = no limit.
+    max_extras: 2
+    # After selection, a skipped main bullet replaces the extras whose keywords
+    # it carries: no keyword lost, at most one keyword repeated within the
+    # entry, the entry never longer, the pinned summary never touched (#137).
+    main_exchange: true
 
     # --- Repetition ------------------------------------------------------------
     # Within one entry, a bullet that only restates covered keywords is never
