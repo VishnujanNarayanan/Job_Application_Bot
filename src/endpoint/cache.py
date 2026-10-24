@@ -11,6 +11,7 @@ without caching (degraded-but-functional per §7.5).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -24,10 +25,12 @@ from src.aws.s3 import cache_get_bytes, cache_put
 from src.config import settings
 from src.endpoint.assembler import BOLD_JD_KEYWORDS, assemble_docx
 from src.endpoint.pdf_convert import to_pdf
+from src.endpoint.relocation import enabled as relocation_enabled
+from src.endpoint.relocation import header_location_for
 from src.llm.schemas import StoredSelection
 from src.state.selection_compat import version_of
 from src.resume_download import CONTENT_TYPES
-from src.state.models import Applied, RenderCache
+from src.state.models import AllJobs, Applied, RenderCache
 
 log = structlog.get_logger(__name__)
 
@@ -61,7 +64,7 @@ class StaleSelectionError(RuntimeError):
     """
 
 
-def render_version(selection: StoredSelection) -> str:
+def render_version(selection: StoredSelection, header: str | None = None) -> str:
     """The render-cache version: template version plus any render-format revision.
 
     A change to how the assembler renders (not just which template it renders
@@ -72,11 +75,29 @@ def render_version(selection: StoredSelection) -> str:
     rv = selection.template_version
     if BOLD_JD_KEYWORDS:
         rv += "-kb1"
+    if header:
+        # The relocation line carries a city and a date (#134): a different line
+        # is a different render, so a cached resume never shows a stale one.
+        rv += "-rl" + hashlib.sha1(header.encode()).hexdigest()[:8]
     return rv
 
 
-def cache_key_of(job_id: str, selection: StoredSelection) -> str:
-    return f"{job_id}_{render_version(selection)}"
+def cache_key_of(job_id: str, selection: StoredSelection, header: str | None = None) -> str:
+    return f"{job_id}_{render_version(selection, header)}"
+
+
+def header_for(job_id: str, db_session: Session) -> str | None:
+    """The header relocation line for this job, or None to keep the profile location."""
+    if not relocation_enabled():
+        return None
+    job = db_session.get(AllJobs, job_id)
+    if job is None:
+        return None
+    def text(name: str) -> str | None:
+        value = getattr(job, name, None)
+        return value if isinstance(value, str) else None
+
+    return header_location_for(text("location"), text("jd_text"))
 
 
 def _load_selection(selection_json, job_id: str) -> StoredSelection:
@@ -112,7 +133,8 @@ def get_or_build(
         raise KeyError(f"No selection found for job_id={job_id!r}")
 
     selection = _load_selection(applied_row.selection_json, job_id)
-    cache_key = cache_key_of(job_id, selection)
+    header = header_for(job_id, db_session)
+    cache_key = cache_key_of(job_id, selection, header)
 
     # Check render_cache table for a valid hit
     s3_uri = _check_render_cache(db_session, cache_key, ext) if use_cache else None
@@ -123,7 +145,8 @@ def get_or_build(
         # Cache table entry exists but S3 object was deleted — fall through
 
     # Cache miss: assemble the DOCX
-    data, s3_uri = _assemble_and_cache(selection, cache_key, ext, db_session, cache=use_cache)
+    data, s3_uri = _assemble_and_cache(selection, cache_key, ext, db_session, cache=use_cache,
+                                       header=header)
     return data, _CONTENT_TYPES[ext]
 
 
@@ -199,7 +222,7 @@ def prerender(
 
             selection = _load_selection(applied_row.selection_json, job_id)
             url = cache_presigned_url(
-                cache_key_of(job_id, selection), ext, expires_seconds
+                cache_key_of(job_id, selection, header_for(job_id, db_session)), ext, expires_seconds
             )
             if url:
                 urls[ext] = url
@@ -235,6 +258,7 @@ def _assemble_and_cache(
     session: Session,
     *,
     cache: bool = True,
+    header: str | None = None,
 ) -> tuple[bytes, str | None]:
     """Assemble the DOCX (and convert to PDF), upload to S3, record in
     render_cache. ``cache=False`` skips the upload and the record."""
@@ -250,6 +274,7 @@ def _assemble_and_cache(
             profile_json_path=profile_json,
             template_path=template_path,
             output_path=docx_path,
+            header_location=header,
         )
 
         if ext == "pdf":
@@ -271,7 +296,7 @@ def _assemble_and_cache(
             return data, None
         try:
             s3_uri = cache_put(serve_path, cache_key, ext)
-            _record_render_cache(session, cache_key, ext, render_version(selection), s3_uri, selection.job_id)
+            _record_render_cache(session, cache_key, ext, render_version(selection, header), s3_uri, selection.job_id)
             session.commit()
         except Exception as exc:
             # s3.py:cache_put already logs s3_cache_failed with the raw error.

@@ -200,3 +200,46 @@ def test_send_match_notification_renders_threshold():
 
     assert captured, "no message was sent"
     assert str(settings.scoring.apply_threshold) in captured[0]
+
+
+def _message_for(job) -> str:
+    captured: list[str] = []
+
+    async def fake_send(text, keyboard=None):
+        captured.append(text)
+
+    with patch("src.notifications._send_match", new=fake_send), \
+         patch("src.notifications.asyncio") as mock_asyncio:
+        import asyncio
+
+        def run_coro(coro):
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(coro)
+            loop.close()
+
+        mock_asyncio.run.side_effect = run_coro
+        from src.notifications import send_match_notification
+        send_match_notification(job=job, parsed=_make_parsed(), result=_make_result(),
+                                gap_skills=[], endpoint_base_url="http://localhost:8000")
+    return captured[0]
+
+
+def test_the_message_shows_the_resume_header_line_when_relocation_is_on(monkeypatch):
+    from src.config import settings
+    from src.endpoint import relocation
+
+    monkeypatch.setitem(settings._data, "relocation", {"enabled": True, "months": 1})
+    monkeypatch.setattr(relocation, "_home_location", lambda: "Kochi, Kerala, India")
+    text = _message_for(_make_job())
+    assert "Resume header: Relocating to Bengaluru by " in text
+
+    remote = _make_job()
+    remote.location, remote.jd_text = "Remote", "Work from anywhere."
+    assert "Resume header: Kochi, Kerala, India" in _message_for(remote)
+
+
+def test_the_message_has_no_header_line_when_relocation_is_off(monkeypatch):
+    from src.config import settings
+
+    monkeypatch.setitem(settings._data, "relocation", {"enabled": False, "months": 1})
+    assert "Resume header" not in _message_for(_make_job())

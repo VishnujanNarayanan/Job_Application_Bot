@@ -153,6 +153,9 @@ def send_match_notification(
     loc_str = fields["loc_str"]
 
     salary_display = salary_str if salary_str else "CTC not listed"
+    from src.endpoint.relocation import printed_location
+
+    header = printed_location(job.location, job.jd_text)
     threshold = threshold_for(job.site)
 
     text_lines = [
@@ -162,6 +165,7 @@ def send_match_notification(
         f"Location: {loc_str}" if loc_str else "",
         f"Salary: {salary_display}",
         f"Source: {job.site}",
+        f"Resume header: {header}" if header else "",
     ]
     if gap_skills:
         text_lines += ["", f"Gap skills: {', '.join(gap_skills)}"]
