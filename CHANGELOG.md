@@ -9,6 +9,21 @@ and this project loosely tracks iterations rather than semver.
 
 ### Changed
 
+- **The ATS run parses like the main run, on free LLM tiers only.**
+  - It now goes through the same parse routing as the LinkedIn/Naukri run
+    (`parse_job`, #71/#100): the free dictionary parse is scored first, below
+    the floor there is no LLM call, low and very high scores use the
+    dictionary parse, and only the middle band reaches the LLM. The route is
+    recorded on each job. Thresholds are unchanged.
+  - Its LLM calls may use only `ats_poll.llm_providers`
+    (`["groq", "gemini-free"]`), via a new `only_providers()` restriction in
+    the LLM client. The paid `gemini` key is never reachable from it.
+  - When those free providers are out of quota, the rest of the run parses
+    with the dictionary parser (`dictionary_fallback` / `llm_unavailable`)
+    instead of stopping the run.
+- **ATS Telegram messages arrive at the end of the run, and dry runs send
+  nothing** (#146).
+
 - **Resume entry headers (#140, #141).**
   - Salaried dates are short: `Jun 2025 – Present`, built from the entry's
     `start_date`/`end_date` (`entry_dates` is the fallback).

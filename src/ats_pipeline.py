@@ -312,10 +312,13 @@ def _report_end_of_run(stats, *, new: int, backlog: int, matched: int, skipped: 
 def run(dry_run: bool, log, *, atses=None) -> int:
     from src.config import resolve_endpoint_base_url, settings
     from src.endpoint.cache import for_notification
-    from src.llm.client import LLMBudgetError, LLMError
+    from src.llm.client import LLMBudgetError, LLMError, only_providers
     from src.main import _upsert_scraped, _write_not_applied
     from src.notifications import send_match_notification
-    from src.parser import apply_to_row, parse
+    from src.parser import apply_to_row
+    from src.parsing import router
+    from src.parsing.pipeline import parse_job, record_route
+    from src.parsing.router import Route
     from src.scorer.apply_decision import threshold_for
     from src.reasons import (
         BUILD_FAILURE,
@@ -375,6 +378,11 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         budget = 60.0 * float(a.get("process_budget_minutes", 25))
         matched = skipped = not_reached = parse_failed = 0
         aborted = False
+        routing_rules = router.rules_from_config()
+        # Free tiers only, whatever the config says is missing: the paid key
+        # must never be reachable from this run.
+        allowed_providers = list(a.get("llm_providers") or ["groq", "gemini-free"])
+        llm_available = True
         for index, job in enumerate(passing):
             if time.monotonic() - started > budget:
                 not_reached = len(passing) - index  # no verdict: back next run
@@ -383,18 +391,36 @@ def run(dry_run: bool, log, *, atses=None) -> int:
             session.commit()  # no transaction open across the slow calls
             log.info("job_started", n=index + 1, of=len(passing), job_id=job.job_id,
                      company=job.company, role=job.role, source=job.site)
+            # Layer 3, routed exactly as in the main run (#71, #100): the free
+            # dictionary parse is scored first and picks the route. The LLM may
+            # only use the free providers in ats_poll.llm_providers; once they
+            # are out of quota, the rest of this run uses the dictionary parse.
             try:
-                parsed = parse(job)
+                with only_providers(allowed_providers):
+                    routed = parse_job(job, profile=profile, rules=routing_rules,
+                                       scrape_window_hours=hours, llm_available=llm_available)
             except LLMBudgetError as exc:
-                log.error("run_aborted", reason="llm_budget_exhausted", error=str(exc))
-                aborted = True
-                not_reached = len(passing) - index
-                break
+                log.warning("ats_free_llm_exhausted", job_id=job.job_id, error=str(exc)[:200],
+                            allowed=sorted(allowed_providers))
+                llm_available = False
+                routed = parse_job(job, profile=profile, rules=routing_rules,
+                                   scrape_window_hours=hours, llm_available=False)
             except LLMError as exc:
                 log.error("parse_failed_carried_over", job_id=job.job_id, error=str(exc))
                 parse_failed += 1
                 skipped += 1
                 continue
+            record_route(job, routed, routing_rules, now=now)
+            if routed.decision.route is Route.CARRIED_OVER:
+                not_reached += 1  # no verdict: back next run
+                skipped += 1
+                continue
+            if routed.decision.route is Route.SKIPPED_FLOOR:
+                apply_to_row(job, routed.parsed)
+                queue.append((job, LOW_SCORE, str(routed.dict_score), routed.dict_result))
+                skipped += 1
+                continue
+            parsed = routed.parsed
             apply_to_row(job, parsed)
             if filters.job_type_disallowed(parsed.job_type, cfg.filters.get("job_type")):
                 queue.append((job, JOB_TYPE_DISALLOWED, str(parsed.job_type), None))

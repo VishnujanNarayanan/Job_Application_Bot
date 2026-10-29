@@ -610,3 +610,43 @@ def test_openrouter_only_ever_uses_the_free_router():
     can be withdrawn, and a paid id here would bill the account."""
     cfg = llm_client.provider_config("openrouter")
     assert str(cfg.model) == "openrouter/free"
+
+
+# ---------------------------------------------------------------------------
+# Provider restriction (the ATS run: free tiers only)
+# ---------------------------------------------------------------------------
+
+def _record_providers(raises):
+    """Patch get_client to note which provider each call reached."""
+    reached = []
+
+    def factory(which="primary"):
+        reached.append(str(llm_client.provider_config(which).provider))
+        return _client(raises=raises)
+
+    return reached, patch.object(llm_client, "get_client", side_effect=factory)
+
+
+def test_only_providers_never_reaches_the_paid_gemini_key():
+    reached, patcher = _record_providers(LLMError("down"))
+    with patcher, patch("time.sleep"), llm_client.only_providers(["groq", "gemini-free"]):
+        for _ in range(6):  # every rotation turn, including the one the paid key leads
+            with pytest.raises(LLMError):
+                llm_client.complete(Dummy, "p")
+    assert reached, "the allowed providers were tried"
+    assert set(reached) <= {"groq", "gemini-free"}
+    assert "gemini" not in reached
+
+
+def test_no_allowed_provider_means_no_call_and_a_budget_error():
+    reached, patcher = _record_providers(LLMError("down"))
+    with patcher, patch("time.sleep"), llm_client.only_providers(["no-such-provider"]):
+        with pytest.raises(LLMBudgetError):
+            llm_client.complete(Dummy, "p")
+    assert reached == []
+
+
+def test_the_restriction_ends_with_the_block():
+    with llm_client.only_providers(["groq"]):
+        assert llm_client._allowed.get() == frozenset({"groq"})
+    assert llm_client._allowed.get() is None
