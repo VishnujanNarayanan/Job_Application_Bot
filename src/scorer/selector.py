@@ -44,6 +44,7 @@ the filler words in ``capped_keywords`` only.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -503,6 +504,31 @@ def _text_key(norm_text: str) -> str:
     return " ".join(norm_text.split())
 
 
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _short_month(value: str) -> str:
+    """``"2025-06"`` -> ``"Jun 2025"``; ``"present"`` -> ``"Present"``; else ``""``."""
+    value = str(value or "").strip()
+    if value.lower() in ("present", "current"):
+        return "Present"
+    m = re.fullmatch(r"(\d{4})-(\d{1,2})(?:-\d{1,2})?", value)
+    if not m or not 1 <= int(m.group(2)) <= 12:
+        return ""
+    return f"{_MONTHS[int(m.group(2)) - 1]} {m.group(1)}"
+
+
+def short_period(start: str, end: str) -> str:
+    """A date range as a recruiter scans it: ``"Jun 2025 – Present"`` (#141).
+
+    Returns ``""`` when either end can't be read, so the caller can fall back to
+    the block's hand-written ``entry_dates``.
+    """
+    a, b = _short_month(start), _short_month(end)
+    return f"{a} – {b}" if a and b else ""
+
+
 def _header_right(entry: EntryCand, block: RoleBlockCand) -> tuple[str, str]:
     """What sits right of the tab, as ``(text, link)``.
 
@@ -511,7 +537,8 @@ def _header_right(entry: EntryCand, block: RoleBlockCand) -> tuple[str, str]:
 
     * **Salaried employment** — dates, and nothing else. There is no public
       artifact to show: the work belongs to the employer. Dates are the thing a
-      recruiter checks.
+      recruiter checks, so they come short (``Jun 2025 – Present``, #141), built
+      from the entry's own dates; ``entry_dates`` is the fallback.
     * **Freelance** — the ``Freelance`` label and a link to the delivered site.
       No dates. A short engagement's value is that the result is live and can be
       clicked; its two-month span invites the wrong question.
@@ -525,7 +552,7 @@ def _header_right(entry: EntryCand, block: RoleBlockCand) -> tuple[str, str]:
         return "", entry.link
     if entry.employment_type == "freelance":
         return settings.selection.freelance.label, entry.link
-    return block.entry_dates, ""
+    return short_period(entry.start_date, entry.end_date) or block.entry_dates, ""
 
 
 def _relevance(block_scores: dict[str, float], lead_id: str, block_id: str) -> float:
