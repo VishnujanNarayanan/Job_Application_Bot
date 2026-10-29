@@ -987,8 +987,26 @@ def test_salaried_work_shows_dates_and_no_link() -> None:
                bullets=[_bullet("b0", "S.", summary=True)]),
     ])
     out = select_entry_bullets(entry, _jd(), _kw(), now=NOW)
-    assert out.header_right == "Jan 2024 to current"
+    assert out.header_right == "Jan 2024 – Present"
     assert out.header_link == ""
+
+
+def test_salaried_dates_fall_back_to_entry_dates_when_unreadable() -> None:
+    entry = _entry("e1", "work", start="", blocks=[
+        _block(dates="Jan 2024 to current",
+               bullets=[_bullet("b0", "S.", summary=True)]),
+    ])
+    out = select_entry_bullets(entry, _jd(), _kw(), now=NOW)
+    assert out.header_right == "Jan 2024 to current"
+
+
+def test_short_period_formats_months_and_present() -> None:
+    from src.scorer.selector import short_period
+
+    assert short_period("2025-06", "present") == "Jun 2025 – Present"
+    assert short_period("2024-11", "2025-06") == "Nov 2024 – Jun 2025"
+    assert short_period("", "2025-06") == ""
+    assert short_period("2025-13", "present") == ""
 
 
 def test_freelance_shows_its_label_and_link_but_no_dates() -> None:
