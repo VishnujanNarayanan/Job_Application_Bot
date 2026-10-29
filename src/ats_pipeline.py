@@ -2,7 +2,7 @@
 
 Usage:
     python -m src.ats_pipeline              # poll due boards, notify matches
-    python -m src.ats_pipeline --dry-run    # notify to the test chat only
+    python -m src.ats_pipeline --dry-run    # no notifications; results in the log only
     python -m src.ats_pipeline --ats lever  # only these ATSes (testing)
 
 A separate pipeline from the JobSpy run (``src.main``), because what an ATS
@@ -280,12 +280,41 @@ def _backlog(session, now, days: int, exclude: set[str]) -> list:
     return [r for r in rows if r.job_id not in exclude]
 
 
+def _report_end_of_run(stats, *, new: int, backlog: int, matched: int, skipped: int,
+                       aborted: bool, outcomes: dict[str, int], dry_run: bool, log) -> None:
+    """The run's Telegram messages, all sent once the run is over.
+
+    * the poll line ("ATS poll: N new jobs ...") when the poll found something or a
+      board failed; it used to go out mid-run, before any job was scored;
+    * the run summary when a job matched or the run aborted. An hourly poll that
+      matched nothing stays quiet.
+
+    A dry run sends nothing: it is a test, and it used to post to the real chat.
+    Both lines go to the log instead.
+    """
+    from src.notifications import ats_poll_done_text, send_dry_run_summary, send_status
+
+    poll_line = ats_poll_done_text(stats) if (new or stats.failed or stats.atses_skipped) else None
+    if dry_run:
+        log.info("dry_run_telegram_suppressed", poll_line=poll_line,
+                 summary=bool(matched or aborted), matched=matched)
+        return
+    if poll_line:
+        send_status(poll_line)
+    if matched or aborted:
+        try:
+            send_dry_run_summary(scraped=new, skipped=skipped, applied=matched,
+                                 backlog=backlog, outcomes=outcomes, dry_run=dry_run)
+        except Exception as exc:
+            log.error("telegram_summary_error", error=str(exc))
+
+
 def run(dry_run: bool, log, *, atses=None) -> int:
     from src.config import resolve_endpoint_base_url, settings
     from src.endpoint.cache import for_notification
     from src.llm.client import LLMBudgetError, LLMError
     from src.main import _upsert_scraped, _write_not_applied
-    from src.notifications import ats_poll_done_text, send_match_notification, send_status
+    from src.notifications import send_match_notification
     from src.parser import apply_to_row, parse
     from src.scorer.apply_decision import threshold_for
     from src.reasons import (
@@ -319,8 +348,6 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         jobs = collect(session, cfg, atses=atses, now=now, stats=stats, log=log)
         backlog = _backlog(session, now, int(a.get("backlog_days", 2)), {j.job_id for j in jobs})
         closed = ats_poller.closed_job_ids(session, [j.job_id for j in backlog])
-        if jobs or stats.failed or stats.atses_skipped:
-            send_status(ats_poll_done_text(stats))
         raw = backlog + jobs
         started = time.monotonic()  # the processing budget starts after the poll
 
@@ -418,15 +445,9 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         outcomes["PARSE_FAILED"] = parse_failed
     if not_reached:
         outcomes["NOT_REACHED"] = not_reached
-    # An hourly poll that matched nothing stays quiet on Telegram.
-    if matched or aborted:
-        from src.notifications import send_dry_run_summary
-
-        try:
-            send_dry_run_summary(scraped=len(jobs), skipped=skipped, applied=matched,
-                                 backlog=len(backlog), outcomes=outcomes, dry_run=dry_run)
-        except Exception as exc:
-            log.error("telegram_summary_error", error=str(exc))
+    _report_end_of_run(stats, new=len(jobs), backlog=len(backlog), matched=matched,
+                       skipped=skipped, aborted=aborted, outcomes=outcomes,
+                       dry_run=dry_run, log=log)
     log.info("run_complete", source="ats", dry_run=dry_run, new=len(jobs), backlog=len(backlog),
              matched=matched, skipped=skipped, outcomes=outcomes,
              aborted="llm_budget_exhausted" if aborted else None)
