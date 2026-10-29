@@ -25,6 +25,7 @@ def parse_job(
     scrape_window_hours: float | None = None,
     shadow: bool = False,
     fallback: bool = True,
+    llm_available: bool = True,
 ) -> ParseResult:
     """Parse ``job`` and return the result with the route that decided it.
 
@@ -40,6 +41,9 @@ def parse_job(
        / ``LLM_ERROR``); with routing off the error propagates and the job
        carries over, as before #71. ``LLMBudgetError`` always propagates: the
        caller stops the batch on it.
+       ``llm_available`` off (the caller's allowed providers are spent for the
+       run) -> the dictionary parse, as ``DICTIONARY_FALLBACK`` /
+       ``LLM_UNAVAILABLE``, with no LLM call.
     5. ``shadow`` on and the LLM succeeded -> ``shadow.compare`` the two
        parses and log the difference; a shadow failure never fails the job.
        Off by default until ``shadow`` is implemented (#71).
@@ -63,6 +67,9 @@ def parse_job(
                          dict_parsed=dict_parsed, dict_result=dict_result)
     if decision.route in (Route.SKIPPED_FLOOR, Route.DICTIONARY):
         result.parsed, result.mode = dict_parsed, ParseMode.DICTIONARY
+    elif decision.route is Route.LLM and not llm_available:
+        result.parsed, result.mode = dict_parsed, ParseMode.DICTIONARY
+        result.decision = RouteDecision(Route.DICTIONARY_FALLBACK, Reason.LLM_UNAVAILABLE)
     elif decision.route is Route.LLM:
         result.llm_called = True
         try:

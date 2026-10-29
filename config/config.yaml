@@ -268,6 +268,12 @@ ats_poll:
   # 0.47 under the weighted_count fit (#101): as many matches as 0.40 gave
   # under the share formula. Other sources keep scoring.apply_threshold.
   apply_threshold: 0.47
+  # The only LLM providers the ATS run may call, by exact name in llm:. Free
+  # tiers only: the paid `gemini` key is for the LinkedIn/Naukri run alone.
+  # When these are out of quota, the rest of the run parses with the
+  # dictionary parser. Parse routing (scoring.parse_routing) applies as in
+  # the main run.
+  llm_providers: ["groq", "gemini-free"]
   # Minutes for parse/score/build after the poll.
   process_budget_minutes: 25
   closed_retention_days: 60

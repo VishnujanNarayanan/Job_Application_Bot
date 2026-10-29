@@ -45,6 +45,7 @@ class Reason(str, Enum):
     BUDGET_CAP = "budget_cap"
     ROUTING_DISABLED = "routing_disabled"
     LLM_ERROR = "llm_error"                      # set by the pipeline on fallback
+    LLM_UNAVAILABLE = "llm_unavailable"          # the run's allowed providers are spent
     FORCED = "forced"                            # mode passed explicitly (replays, tests)
 
 

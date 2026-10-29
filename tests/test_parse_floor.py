@@ -267,3 +267,22 @@ def test_the_route_is_recorded_on_the_row(fakes):
     assert (job.parse_mode, job.parse_route_reason) == ("skipped_floor", "below_floor")
     assert job.dict_score == 0.30 and job.llm_called is False
     assert job.routing_version == FLOOR_ONLY.version and job.routed_at == now
+
+
+def test_with_the_llm_unavailable_a_middle_band_job_uses_the_dictionary(fakes):
+    """The ATS run's free providers are spent: the job is still parsed, for free."""
+    from src.parsing.pipeline import parse_job
+
+    _, l = fakes
+    r = parse_job(_job(0.55), profile=None, rules=ROUTED, llm_available=False)
+    assert l.calls == 0 and r.llm_called is False
+    assert r.decision.route is Route.DICTIONARY_FALLBACK
+    assert r.decision.reason is Reason.LLM_UNAVAILABLE
+    assert r.parsed.name == "dict"
+
+
+def test_llm_unavailable_does_not_change_the_floor(fakes):
+    from src.parsing.pipeline import parse_job
+
+    r = parse_job(_job(0.30), profile=None, rules=ROUTED, llm_available=False)
+    assert r.decision.route is Route.SKIPPED_FLOOR

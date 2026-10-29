@@ -408,6 +408,29 @@ def observe(fn: Callable[[str, dict], None]):
         _observer.reset(token)
 
 
+#: Providers a block of code may use, or None for the whole chain. A run with its
+#: own cost rule sets it: the ATS run may use only the free tiers
+#: (``ats_poll.llm_providers``); the paid Gemini account is for the main run alone.
+_allowed: ContextVar[frozenset[str] | None] = ContextVar("llm_allowed_providers", default=None)
+
+
+@contextmanager
+def only_providers(names):
+    """Restrict every completion inside the block to providers named in ``names``.
+
+    Providers outside the list are dropped from the chain before any call, so
+    they are never tried, not even as a last resort. When none of the listed
+    providers is in the chain, :func:`complete` raises :class:`LLMBudgetError`,
+    which callers already treat as "no LLM for the rest of this run".
+    ``names`` of None leaves the chain alone.
+    """
+    token = _allowed.set(frozenset(str(n) for n in names) if names is not None else None)
+    try:
+        yield
+    finally:
+        _allowed.reset(token)
+
+
 def _emit(event: str, **fields) -> None:
     fn = _observer.get()
     if fn is None:
@@ -729,10 +752,19 @@ def complete(
     call_index, _CALLS = _CALLS, _CALLS + 1
     chain = rotate(chain, call_index)
 
+    allowed = _allowed.get()
+    if allowed is not None:
+        chain = [entry for entry in chain if str(entry[1].provider) in allowed]
+        if not chain:
+            raise LLMBudgetError(
+                f"No allowed LLM provider is configured (allowed: {sorted(allowed)})."
+            )
+
     # Nothing to fall back to: let the provider's own error through untouched,
     # rather than wrapping a single failure in chain language.
     if len(chain) == 1:
-        return _complete_with("primary", response_model, build(settings.llm))
+        which, cfg = chain[0]
+        return _complete_with(which, response_model, build(cfg))
 
     failures: list[tuple[object, Exception]] = []
     budget_failures = 0
