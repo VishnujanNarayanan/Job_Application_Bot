@@ -292,7 +292,7 @@ def _report_end_of_run(stats, *, new: int, backlog: int, matched: int, skipped: 
 
     * the poll line ("ATS poll: N new jobs ...") when the poll found something or a
       board failed; it used to go out mid-run, before any job was scored;
-    * the run summary when a job matched or the run aborted. An hourly poll that
+    * the run summary when a job matched or the run aborted. A scheduled poll that
       matched nothing stays quiet.
 
     A dry run sends nothing: it is a test, and it used to post to the real chat.
