@@ -448,13 +448,18 @@ class SelectedEntryOut(BaseModel):
     )
     header_right: str = Field(
         "",
-        description="Right-slot TEXT: dates for salaried work, the freelance "
-        "label for a gig, empty for a project.",
+        description="Right-slot TEXT: dates for salaried work, the shared "
+        "freelance period for a gig, empty for a project.",
     )
     header_link: str = Field(
         "",
-        description="Right-slot URL: a live demo where one exists, else the repo. "
-        "Empty for salaried employment, which has no public artifact.",
+        description="Right-slot URL: a project's live demo where one exists, else "
+        "the repo. Empty for salaried employment and for freelance.",
+    )
+    left_link: str = Field(
+        "",
+        description="URL shown right after the title: a freelance entry's live "
+        "client site ('View the Work'). Empty otherwise.",
     )
     bullet_ids: list[str] = Field(
         ..., description="Ordered; [0] is the entry's summary bullet."

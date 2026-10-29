@@ -116,10 +116,10 @@ def test_render_version_carries_the_bold_revision_only_when_bolding():
 
     selection = MagicMock(template_version="abc12345")
     with patch.object(cache, "BOLD_JD_KEYWORDS", True):
-        assert cache.render_version(selection) == "abc12345-kb1"
-        assert cache.cache_key_of("j1", selection) == "j1_abc12345-kb1"
+        assert cache.render_version(selection) == "abc12345-h141-kb1"
+        assert cache.cache_key_of("j1", selection) == "j1_abc12345-h141-kb1"
     with patch.object(cache, "BOLD_JD_KEYWORDS", False):
-        assert cache.render_version(selection) == "abc12345"
+        assert cache.render_version(selection) == "abc12345-h141"
 
 
 def test_render_version_never_contains_the_key_separator():

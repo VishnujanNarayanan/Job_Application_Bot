@@ -9,6 +9,19 @@ and this project loosely tracks iterations rather than semver.
 
 ### Changed
 
+- **Resume entry headers (#140, #141).**
+  - Salaried dates are short: `Jun 2025 – Present`, built from the entry's
+    `start_date`/`end_date` (`entry_dates` is the fallback).
+  - A freelance entry reads `<title>, Freelance  View the Work →` on the left,
+    with one shared period on the right for every freelance entry
+    (`selection.freelance.period_start`/`period_end`, Nov 2024 – Jun 2025)
+    instead of the `Freelance` label. The link is the client's live site; an
+    entry without one shows no link. It travels as a new `left_link` on the
+    stored selection.
+  - Education shows the graduation year: `Status - Graduated (2025)`.
+  - The render cache carries a header revision (`-h141`), so resumes cached
+    in the old format re-render once.
+
 - **Fewer, denser bullets per entry (#137).**
   - `selection.bullets.max_extras` (2): an entry shows at most two extra
     bullets, the strongest by coverage. A further extra renders only when it
