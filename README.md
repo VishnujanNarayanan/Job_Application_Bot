@@ -152,6 +152,7 @@ In `config/config.yaml`, change:
 | `aws.s3_bucket` | Your bucket name, if you use AWS |
 | `endpoint.base_url` | Your Tailscale URL, if you use Tailscale; otherwise leave it |
 | `relocation.enabled` | `true` to put "Relocating to <the job's city> by <date>" in the resume header for jobs in another city (`relocation.months` sets the lead time); every match message then shows the header line it printed |
+| `selection.freelance` | If you list freelance work: the start of your freelance period and the month your salaried job began (`period_start`, `period_end`, as `YYYY-MM`). Every freelance entry shows that one period |
 
 **8. Check your LLM key and run**
 
