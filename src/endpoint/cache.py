@@ -36,6 +36,10 @@ log = structlog.get_logger(__name__)
 
 _CONTENT_TYPES = CONTENT_TYPES
 _ROOT = Path(__file__).resolve().parents[2]
+#: Bumped when the frozen header or entry lines change format, so resumes cached
+#: under an older selection's template hash re-render. h141: graduation year in
+#: Education (#140), short dates and the freelance line (#141).
+_HEADER_REVISION = "-h141"
 
 
 def _cache_ttl_days() -> int:
@@ -72,7 +76,7 @@ def render_version(selection: StoredSelection, header: str | None = None) -> str
     format. Never contains ``_``: ``_check_render_cache`` reads the version back as
     the key's last ``_``-separated part.
     """
-    rv = selection.template_version
+    rv = selection.template_version + _HEADER_REVISION
     if BOLD_JD_KEYWORDS:
         rv += "-kb1"
     if header:
