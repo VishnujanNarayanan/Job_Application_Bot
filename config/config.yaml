@@ -466,10 +466,13 @@ selection:
   # over 1,220 stored jobs.
   entry_score_floor: 0.0
 
-  # What a freelance entry shows in the right slot (a job shows dates, a
-  # project its link).
+  # A freelance entry reads "<title>, Freelance  View the Work ->" on the left
+  # and shows ONE shared period on the right (#140, #141): the whole freelance
+  # stretch, up to the month the salaried job started, never each gig's own
+  # short span. A job shows its own dates; a project shows its link.
   freelance:
-    label: "Freelance"
+    period_start: "2024-11"
+    period_end: "2025-06"     # the month the salaried job started
 
 scoring:
   final:
@@ -924,6 +927,8 @@ endpoint:
     # gaps are U+00A0 so Word doesn't wrap the arrow onto its own line.
     link_text_demo: "View Demo →"
     link_text_code: "View Code →"
+    # A freelance entry links to the client's live site, beside its title (#141).
+    link_text_work: "View the Work →"
     code_hosts: ["github.com", "gitlab.com", "bitbucket.org"]
     bullet_num_id: "1"          # entry bullets, 1.5 line spacing
     education_num_id: "2"       # Education & Certificates lines
