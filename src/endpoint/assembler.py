@@ -717,9 +717,9 @@ def assemble_docx(
             elif link.startswith(("http://", "https://")):
                 # The full URL overflows the line (measured: 112 chars against a
                 # ~89-char budget at Arial 10.5 across 6.5in), so it renders as a
-                # short hyperlink. A freelance entry puts its label in the slot too
-                # ("Freelance   View Demo"); a project has label text of "" and
-                # shows the link alone.
+                # short hyperlink. A project has label text of "" and shows the
+                # link alone; a freelance selection stored before #141 still puts
+                # its label beside it ("Freelance   View Demo").
                 _set_entry_line(line, entry.header_left, "")
                 _set_hyperlink(
                     doc, line, link_label(link), link, prefix=entry.header_right
