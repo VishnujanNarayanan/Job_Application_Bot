@@ -332,6 +332,8 @@ def ats_poll_done_text(stats) -> str:
     """One line per ATS poll (#97), sent only when it found something or a
     board failed."""
     parts = [f"{stats.new} new jobs from {stats.boards} boards"]
+    if getattr(stats, "requeued", 0):
+        parts.append(f"{stats.requeued} re-sent from an interrupted run")
     if stats.duplicates:
         parts.append(f"{stats.duplicates} already found on LinkedIn/Naukri")
     if stats.closed:

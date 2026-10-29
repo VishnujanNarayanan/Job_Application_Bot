@@ -516,8 +516,14 @@ class AtsPosting(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Why it was not sent on to the pipeline, or null when it was.
     skipped: Mapped[str | None] = mapped_column(Text)
+    # For a posting sent on: "pending" until its job is saved to all_jobs,
+    # then "done". Still "pending" at a later run's start means the run that
+    # sent it stopped first; it is sent again (ats_poller.requeue_pending).
+    # Null for skipped postings.
+    status: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         Index("ix_ats_postings_job_id", "job_id"),
         Index("ix_ats_postings_first_seen", "first_seen_at"),
+        Index("ix_ats_postings_pending", "status", postgresql_where=sa_text("status = 'pending'")),
     )

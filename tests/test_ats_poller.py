@@ -421,3 +421,43 @@ def test_forgetting_a_posting_clears_its_boards_etag():
     assert delete.table.name == "ats_postings"
     assert update.table.name == "ats_boards"
     assert update.compile().params == {"etag": None, "ats_1": "lever", "board_id_1": "acme"}
+
+
+# --- pending / done status (stranded postings) --------------------------------------
+
+def test_a_sent_posting_is_recorded_pending_and_a_skipped_one_has_no_status():
+    ledger, sent, _stats = _record(_board(polled_at=NOW - timedelta(hours=1)), [
+        _posting("a"), _posting("i", title="Data Intern")], known=_known("old"))
+    assert sent == ["a"]
+    status = {r["posting_id"]: r["status"] for r in ledger.inserts}
+    assert status == {"a": poller.PENDING, "i": None}
+
+
+def test_a_posting_left_pending_by_an_earlier_run_is_sent_again():
+    known = {"a": poller.Known(NOW - timedelta(hours=2), None, None, None, poller.PENDING),
+             "b": poller.Known(NOW - timedelta(hours=2), None, None, None, poller.DONE)}
+    ledger, sent, stats = _record(_board(polled_at=NOW - timedelta(hours=1)),
+                                  [_posting("a"), _posting("b")], known=known)
+    assert sent == ["a"], "only the stranded one; a DONE posting is in all_jobs already"
+    assert stats.requeued == 1
+    assert ledger.inserts == [], "it keeps its row and first_seen_at"
+
+
+def test_a_stranded_posting_is_sent_again_even_on_a_board_otherwise_unknown():
+    """The baseline (first poll, older than a day) must not swallow it."""
+    known = {"a": poller.Known(NOW - timedelta(days=3), None, None, None, poller.PENDING)}
+    _ledger, sent, stats = _record(_board(), [_posting("a", posted=NOW - timedelta(days=9))], known=known)
+    assert sent == ["a"] and stats.requeued == 1 and stats.baseline == 0
+
+
+def test_a_stranded_posting_now_filtered_out_is_not_sent_again():
+    known = {"i": poller.Known(NOW - timedelta(hours=2), None, None, None, poller.PENDING)}
+    _ledger, sent, stats = _record(_board(polled_at=NOW), [_posting("i", title="Data Intern")], known=known)
+    assert sent == [] and stats.requeued == 0
+
+
+def test_the_poll_line_mentions_re_sent_postings():
+    from src.notifications import ats_poll_done_text
+
+    stats = poller.PollStats(new=5, boards=10, requeued=3)
+    assert "3 re-sent from an interrupted run" in ats_poll_done_text(stats)

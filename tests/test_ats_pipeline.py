@@ -149,6 +149,7 @@ def test_collect_runs_the_stages_in_order(monkeypatch):
     monkeypatch.setattr(poller, "mark_skipped", lambda s, p, reason: marked.__setitem__(p.posting_id, reason))
     monkeypatch.setattr(poller, "forget", lambda s, p: forgotten.append(p.posting_id))
     monkeypatch.setattr(poller, "prune", lambda *_a, **_k: 0)
+    monkeypatch.setattr(poller, "requeue_pending", lambda *_a, **_k: 0)
     cfg = SimpleNamespace(filters=SimpleNamespace(get=lambda k, d=None: {
         "job_type": "fulltime", "title_blocklist": [], "job_level_blocklist": [], "disallowed_regions": []}.get(k, d)),
         get=lambda k, d=None: {"ats_poll": {}}.get(k, d))

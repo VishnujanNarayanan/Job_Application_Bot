@@ -160,6 +160,12 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     tiers = a.get("tier_hours") or {}
     tier_hours = {k: float(tiers.get(k)) for k in ats_poller.TIER_HOURS if tiers.get(k) is not None}
 
+    # Postings an earlier run sent on but never saved to all_jobs (it stopped
+    # in between): make their boards due so this run sends them again.
+    stranded = ats_poller.requeue_pending(session)
+    session.commit()
+    if stranded:
+        log.warning("ats_requeue_pending", postings=stranded)
     boards = ats_poller.due_boards(session, now, atses or a.get("atses") or ats.ATSES)
     # No transaction open while fetching: Neon ends a session left idle in
     # one for 5 minutes.
@@ -373,6 +379,10 @@ def run(dry_run: bool, log, *, atses=None) -> int:
             for job, emb in zip(to_embed, embed_documents([j.jd_text or "" for j in to_embed]) if to_embed else []):
                 job.jd_embedding = emb
             passing = _upsert_scraped(session, passing)
+        # Saved (or already known, closed or blocked): from here the backlog
+        # guarantees a verdict, so these postings are no longer at risk.
+        ats_poller.mark_done(session, [j.job_id for j in jobs])
+        session.commit()
 
         hours = float(a.get("recency_window_hours", 24))
         budget = 60.0 * float(a.get("process_budget_minutes", 25))

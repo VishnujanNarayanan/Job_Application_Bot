@@ -7,6 +7,19 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Fixed
+
+- **An interrupted ATS run no longer loses the jobs it found.** The poller
+  recorded postings as seen before they were scored, so a run that stopped
+  in between (timeout, crash, cancel) stranded them: on 2026-10-29 two
+  interrupted runs stranded 1,316 jobs. `ats_postings.status` (migration
+  0016) is now `pending` from the moment a posting is sent on and `done`
+  once its job is saved to `all_jobs`. Each run first calls
+  `requeue_pending()`: pending postings whose job reached `all_jobs` become
+  `done`, and the boards of the rest are made due, so the run sends them
+  again, keeping their rows and first-seen time so the first-poll baseline
+  can't drop them. The poll line reports "N re-sent from an interrupted run".
+
 ### Changed
 
 - **The ATS run parses like the main run, on free LLM tiers only.**
