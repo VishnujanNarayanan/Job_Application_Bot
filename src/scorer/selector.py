@@ -192,9 +192,12 @@ class SelectedEntry:
     similarity: float
     score: float
     cap: int
-    #: URL for the right slot, or "". Separate from ``header_right`` because a
-    #: freelance entry shows BOTH a label and a link in that slot.
+    #: URL for the right slot, or "". Separate from ``header_right`` so the text
+    #: and the link can be rendered independently.
     header_link: str = ""
+    #: URL shown right after the title, left of the tab, or "": a freelance
+    #: entry's live client site ("View the Work", #141).
+    left_link: str = ""
     title_alias: str = ""
     link: str = ""
     end_date: str = ""
@@ -539,9 +542,11 @@ def _header_right(entry: EntryCand, block: RoleBlockCand) -> tuple[str, str]:
       artifact to show: the work belongs to the employer. Dates are the thing a
       recruiter checks, so they come short (``Jun 2025 – Present``, #141), built
       from the entry's own dates; ``entry_dates`` is the fallback.
-    * **Freelance** — the ``Freelance`` label and a link to the delivered site.
-      No dates. A short engagement's value is that the result is live and can be
-      clicked; its two-month span invites the wrong question.
+    * **Freelance** — one shared period (``Nov 2024 – Jun 2025``), the same on
+      every freelance entry (#140, #141): the whole freelance stretch up to the
+      salaried job, so the timeline reads continuously and no gig's two-month
+      span invites the wrong question. Its link moves beside the title; see
+      :func:`_header_left_link`.
     * **Project** — the link alone. Projects carry no dates by the method.
 
     The link prefers a live demo over a repo: a recruiter with twenty seconds
@@ -551,8 +556,26 @@ def _header_right(entry: EntryCand, block: RoleBlockCand) -> tuple[str, str]:
     if entry.kind != "work":
         return "", entry.link
     if entry.employment_type == "freelance":
-        return settings.selection.freelance.label, entry.link
+        cfg = settings.selection.freelance
+        return short_period(cfg.period_start, cfg.period_end), ""
     return short_period(entry.start_date, entry.end_date) or block.entry_dates, ""
+
+
+def _header_left_link(entry: EntryCand) -> str:
+    """The link shown right after a freelance entry's title, or ``""`` (#141).
+
+    A freelance entry links to the client's real, live site ("View the Work"). One
+    with no live site shows no link: a repo is not the delivered work, and the
+    freelance line has no "View Code" form.
+    """
+    if entry.kind != "work" or entry.employment_type != "freelance":
+        return ""
+    link = entry.link or ""
+    if not link.startswith(("http://", "https://")):
+        return ""
+    host = link.split("//", 1)[-1].split("/", 1)[0].lower()
+    code_hosts = getattr(settings.endpoint.render, "code_hosts", None) or ()
+    return "" if any(h in host for h in code_hosts) else link
 
 
 def _relevance(block_scores: dict[str, float], lead_id: str, block_id: str) -> float:
@@ -1002,6 +1025,7 @@ def select_entry_bullets(
         header_left=block.entry_header,
         header_right=right_text,
         header_link=right_link,
+        left_link=_header_left_link(entry),
         bullets=chosen,
         covered=covered - {AI_TOOLING_ASK},
         coverage=coverage_of(covered, keywords),

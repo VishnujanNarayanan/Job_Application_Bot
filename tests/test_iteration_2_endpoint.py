@@ -180,6 +180,32 @@ def test_a_project_entry_shows_a_short_hyperlink_where_a_job_shows_dates(  # noq
     assert doc.part.rels[rid].target_ref == "https://github.com/user/stock"
 
 
+def test_a_freelance_entry_links_beside_its_title_with_dates_on_the_right(
+    minimal_profile, minimal_selection, tmp_path
+):
+    """#141: '<title>, Freelance  View the Work ->' left of the tab, the shared
+    freelance period right-aligned after it, all on one line."""
+    from src.endpoint.assembler import _LINK_TEXT_WORK
+
+    sel = minimal_selection.model_copy(deep=True)
+    sel.entries[0].header_left = "Software Engineer, Freelance"
+    sel.entries[0].header_right = "Nov 2024 – Jun 2025"
+    sel.entries[0].left_link = "https://client.example/site"
+    doc = _assemble(minimal_profile, sel, tmp_path)
+    line = next(p for p in doc.paragraphs if p.text.startswith("Software Engineer, Freelance"))
+
+    left, right = line.text.split("\t")
+    assert left.endswith(_LINK_TEXT_WORK)
+    assert right == "Nov 2024 – Jun 2025"
+    assert len(line.text.replace("\t", "")) < 89, "must fit on one line"
+    link = line._p.find(qn("w:hyperlink"))
+    assert doc.part.rels[link.get(qn("r:id"))].target_ref == "https://client.example/site"
+    # The link sits before the tab, not in the right slot.
+    children = list(line._p)
+    tab_pos = next(i for i, c in enumerate(children) if c.find(qn("w:tab")) is not None)
+    assert children.index(link) < tab_pos
+
+
 def test_the_minted_hyperlink_has_no_dangling_relationship(
     minimal_profile, minimal_selection, tmp_path
 ):

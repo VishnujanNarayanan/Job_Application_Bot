@@ -85,6 +85,10 @@ _LINK_TEXT_DEMO = str(
 _LINK_TEXT_CODE = str(
     getattr(settings.endpoint.render, "link_text_code", "View\u00a0Code\u00a0\u2192")
 )
+#: A freelance entry's link, beside its title: the client's real, live site.
+_LINK_TEXT_WORK = str(
+    getattr(settings.endpoint.render, "link_text_work", "View\u00a0the\u00a0Work\u00a0\u2192")
+)
 #: Bold each JD keyword at its first appearance in the rendered bullets. The
 #: method once bolded only section headings; this is the deliberate exception,
 #: and it is safe structurally because a heading is found by being bold AND
@@ -454,10 +458,10 @@ def _set_keep(p_elem, *, keep_next: bool, keep_lines: bool = True) -> None:
 def _set_hyperlink(doc, p_elem, text: str, url: str, prefix: str = "") -> None:
     """Replace everything right of the tab with a hyperlinked ``text``.
 
-    ``prefix`` is plain text kept to the LEFT of the link inside the same slot,
-    for a freelance entry that shows its label and its link together
-    ("Freelance   View Demo"). It is re-added as its own run because this
-    function removes every run right of the tab before building the link.
+    ``prefix`` is plain text kept to the LEFT of the link inside the same slot.
+    Selections stored before #141 put a freelance entry's label there
+    ("Freelance   View Demo"); they still render that way. It is re-added as its
+    own run because this function removes every run right of the tab.
 
     The relationship is minted through python-docx's own ``part.relate_to``,
     which writes a correct entry into ``word/_rels/document.xml.rels``. That
@@ -482,15 +486,46 @@ def _set_hyperlink(doc, p_elem, text: str, url: str, prefix: str = "") -> None:
         p_elem.remove(r)
 
     if prefix:
-        label = copy.deepcopy(proto)
-        for existing in label.findall(qn("w:t")):
-            label.remove(existing)
-        lt = OxmlElement("w:t")
-        lt.text = f"{prefix}\u00a0\u00a0"
-        lt.set(qn("xml:space"), "preserve")
-        label.append(lt)
-        p_elem.append(label)
+        p_elem.append(_text_run(proto, f"{prefix}\u00a0\u00a0"))
+    p_elem.append(_link_element(doc, proto, text, url))
 
+
+def _insert_left_link(doc, p_elem, text: str, url: str) -> None:
+    """Put a hyperlinked ``text`` right after the title, LEFT of the tab (#141).
+
+    A freelance line reads ``Software Engineer, Freelance  View the Work ->`` with
+    the dates right-aligned after the tab, so the link is inserted just before the
+    tab run, formatted from the title's own run.
+    """
+    runs = _direct_runs(p_elem)
+    tab_idx = next(
+        (i for i, r in enumerate(runs) if r.find(qn("w:tab")) is not None), -1
+    )
+    if tab_idx <= 0:
+        return
+    proto, tab_run = runs[0], runs[tab_idx]
+    tab_run.addprevious(_text_run(proto, "\u00a0\u00a0"))
+    tab_run.addprevious(_link_element(doc, proto, text, url))
+
+
+def _text_run(proto, text: str):
+    """A copy of ``proto`` holding only ``text``, spaces preserved."""
+    run = copy.deepcopy(proto)
+    for existing in run.findall(qn("w:t")):
+        run.remove(existing)
+    t = OxmlElement("w:t")
+    t.text = text
+    t.set(qn("xml:space"), "preserve")
+    run.append(t)
+    return run
+
+
+def _link_element(doc, proto, text: str, url: str):
+    """A ``w:hyperlink`` to ``url`` showing ``text``, formatted from ``proto``.
+
+    See :func:`_set_hyperlink` for why the relationship is minted through
+    ``part.relate_to`` and why the run needs the ``Hyperlink`` character style.
+    """
     run = copy.deepcopy(proto)
     for existing in run.findall(qn("w:t")):
         run.remove(existing)
@@ -527,7 +562,7 @@ def _set_hyperlink(doc, p_elem, text: str, url: str, prefix: str = "") -> None:
         ),
     )
     link.append(run)
-    p_elem.append(link)
+    return link
 
 
 def _usable_width_twips(doc) -> int:
@@ -673,7 +708,13 @@ def assemble_docx(
             line = copy.deepcopy(protos["entry_line"])
             _force_right_tab(line, right_tab)
             link = getattr(entry, "header_link", "") or ""
-            if link.startswith(("http://", "https://")):
+            left_link = getattr(entry, "left_link", "") or ""
+            if left_link.startswith(("http://", "https://")):
+                # Freelance (#141): "<title>, Freelance  View the Work ->" on the
+                # left, the shared period right-aligned after the tab.
+                _set_entry_line(line, entry.header_left, entry.header_right)
+                _insert_left_link(doc, line, _LINK_TEXT_WORK, left_link)
+            elif link.startswith(("http://", "https://")):
                 # The full URL overflows the line (measured: 112 chars against a
                 # ~89-char budget at Arial 10.5 across 6.5in), so it renders as a
                 # short hyperlink. A freelance entry puts its label in the slot too

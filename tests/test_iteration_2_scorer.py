@@ -1009,18 +1009,34 @@ def test_short_period_formats_months_and_present() -> None:
     assert short_period("2025-13", "present") == ""
 
 
-def test_freelance_shows_its_label_and_link_but_no_dates() -> None:
-    """A short engagement's value is that the result is live and clickable; its
-    two-month span invites the wrong question."""
-    entry = _entry("e1", "work", link="https://client.example/site", blocks=[
+def test_freelance_shows_the_shared_period_and_links_beside_the_title() -> None:
+    """Every freelance entry shows the SAME span, the whole freelance stretch, never
+    its own two-month gig dates; the live site moves beside the title (#140, #141)."""
+    entry = _entry("e1", "work", link="https://client.example/site",
+                   start="2025-12", end="2026-01", blocks=[
         _block(dates="Dec 2025 to Jan 2026",
                bullets=[_bullet("b0", "S.", summary=True)]),
     ])
     entry.employment_type = "freelance"
     out = select_entry_bullets(entry, _jd(), _kw(), now=NOW)
-    assert out.header_right == settings.selection.freelance.label
-    assert out.header_link == "https://client.example/site"
-    assert "2025" not in out.header_right
+    cfg = settings.selection.freelance
+    from src.scorer.selector import short_period
+
+    assert out.header_right == short_period(cfg.period_start, cfg.period_end)
+    assert "Dec 2025" not in out.header_right, "a gig's own dates never show"
+    assert out.left_link == "https://client.example/site"
+    assert out.header_link == "", "the link is no longer in the right slot"
+
+
+def test_freelance_with_no_live_site_shows_no_link() -> None:
+    """A repo is not the delivered work, and the freelance line has no 'View Code'."""
+    for link in ("", "https://github.com/x/y"):
+        entry = _entry("e1", "work", link=link, blocks=[
+            _block(bullets=[_bullet("b0", "S.", summary=True)]),
+        ])
+        entry.employment_type = "freelance"
+        out = select_entry_bullets(entry, _jd(), _kw(), now=NOW)
+        assert out.left_link == "" and out.header_link == ""
 
 
 # ---------------------------------------------------------------------------
