@@ -339,6 +339,13 @@ def fetch_details(postings: list[ats.Posting], lanes: dict[str, Lane], *, delay:
 #: it as skipped, or DROP to neither record nor send it.
 DROP = "drop"
 
+# ats_postings.status for a posting sent on to the pipeline: PENDING once it
+# passes the free filters, DONE once its job is saved to all_jobs (from there
+# the backlog guarantees a verdict). A posting still PENDING at the start of a
+# later run was stranded by a run that stopped in between; it is sent again.
+PENDING = "pending"
+DONE = "done"
+
 
 @dataclass
 class PollStats:
@@ -358,6 +365,8 @@ class PollStats:
     not_modified: int = 0
     bytes: int = 0
     atses_skipped: list = field(default_factory=list)
+    # PENDING postings from an earlier, interrupted run that were sent again.
+    requeued: int = 0
 
     def skip(self, reason: str) -> None:
         self.skipped[reason] = self.skipped.get(reason, 0) + 1
@@ -370,6 +379,7 @@ class Known:
     skipped: str | None
     closed_at: datetime | None
     posted_at: datetime | None = None
+    status: str | None = None
 
 
 class Ledger:
@@ -405,10 +415,10 @@ class Ledger:
         for i in range(0, len(keys), 1000):
             rows = session.execute(
                 select(AtsPosting.ats, AtsPosting.board_id, AtsPosting.posting_id, AtsPosting.first_seen_at,
-                       AtsPosting.skipped, AtsPosting.closed_at, AtsPosting.posted_at)
+                       AtsPosting.skipped, AtsPosting.closed_at, AtsPosting.posted_at, AtsPosting.status)
                 .where(tuple_(AtsPosting.ats, AtsPosting.board_id).in_(keys[i:i + 1000])))
-            for a, b, pid, first, skipped, closed, posted in rows:
-                known[(a, b)][pid] = Known(first, skipped, closed, posted)
+            for a, b, pid, first, skipped, closed, posted, status in rows:
+                known[(a, b)][pid] = Known(first, skipped, closed, posted, status)
         return cls(now, known, tier_hours)
 
     def record(self, res: BoardResult, classify: Callable, *, baseline_hours: float,
@@ -438,17 +448,27 @@ class Ledger:
             kept.add(p.posting_id)
             if p.posting_id in known:
                 self.seen.append((p.ats, p.board_id, p.posting_id))
+                row = known[p.posting_id]
+                # Sent on by an EARLIER run that stopped before saving it to
+                # all_jobs: send it again. Its first_seen_at is kept, so the
+                # first-poll baseline can't drop it.
+                if row.status == PENDING and row.first_seen_at < now and reason is None:
+                    stats.requeued += 1
+                    send.append(p)
+                    self._sent.add((board.ats, board.board_id))
                 continue
             if reason:
                 stats.skip(reason)
             elif first_poll and not (p.posted_at and now - p.posted_at <= timedelta(hours=baseline_hours)):
                 reason = "baseline"
                 stats.baseline += 1
+            status = PENDING if reason is None else None
             self.inserts.append(dict(
                 ats=p.ats, board_id=p.board_id, posting_id=p.posting_id, job_id=p.job_id,
                 title=p.title[:500], location=(p.location or "")[:500], place=ats.place(p),
-                posted_at=p.posted_at, first_seen_at=now, last_seen_at=now, skipped=reason))
-            known[p.posting_id] = Known(now, reason, None, p.posted_at)
+                posted_at=p.posted_at, first_seen_at=now, last_seen_at=now, skipped=reason,
+                status=status))
+            known[p.posting_id] = Known(now, reason, None, p.posted_at, status)
             if reason is None:
                 send.append(p)
                 self._sent.add((board.ats, board.board_id))
@@ -554,6 +574,44 @@ def mark_skipped(session, p: ats.Posting, reason: str) -> None:
     row = session.get(AtsPosting, (p.ats, p.board_id, p.posting_id))
     if row is not None:
         row.skipped = reason
+        row.status = None  # skipped, so no longer waiting to be saved
+
+
+def mark_done(session, job_ids: list[str]) -> int:
+    """PENDING -> DONE for postings whose jobs are now saved in all_jobs."""
+    from sqlalchemy import text
+
+    if not job_ids:
+        return 0
+    return session.execute(text(
+        "UPDATE ats_postings SET status = :done WHERE status = :pending AND job_id = ANY(CAST(:ids AS text[]))"),
+        {"done": DONE, "pending": PENDING, "ids": list(job_ids)}).rowcount
+
+
+def requeue_pending(session) -> int:
+    """Make boards with stranded postings due now; returns how many are stranded.
+
+    A posting still PENDING was sent on by an earlier run that stopped before
+    saving it to all_jobs (timeout, crash, cancel). Ones whose job did reach
+    all_jobs are just marked DONE. For the rest, the board's ETag is cleared and
+    it is made due, so this run reads its full list and :meth:`Ledger.record`
+    sends them again. Rows are kept, not deleted: a board with no known
+    postings would count as a first poll, and the baseline would drop any
+    stranded posting older than a day.
+    """
+    from sqlalchemy import text
+
+    session.execute(text(
+        "UPDATE ats_postings p SET status = :done WHERE p.status = :pending "
+        "AND EXISTS (SELECT 1 FROM all_jobs j WHERE j.job_id = p.job_id)"), {"done": DONE, "pending": PENDING})
+    stranded = session.execute(text(
+        "SELECT count(*) FROM ats_postings WHERE status = :pending"), {"pending": PENDING}).scalar() or 0
+    if stranded:
+        session.execute(text(
+            "UPDATE ats_boards b SET etag = NULL, next_poll_at = NULL "
+            "FROM (SELECT DISTINCT ats, board_id FROM ats_postings WHERE status = :pending) s "
+            "WHERE b.ats = s.ats AND b.board_id = s.board_id"), {"pending": PENDING})
+    return int(stranded)
 
 
 def forget(session, p: ats.Posting) -> None:
