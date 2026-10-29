@@ -184,3 +184,44 @@ def test_the_database_size_warns_above_the_limit():
     assert calls == [("warning", {"mb": 350.0, "ats_postings_mb": 30.0, "warn_mb": 300})]
     pipe.log_db_size(_Session(), log, warn_mb=400)
     assert calls[-1][0] == "info"
+
+
+def _report(monkeypatch, *, dry_run, new=3, matched=1, aborted=False, failed=0):
+    """Run _report_end_of_run with Telegram replaced; return what was sent, in order."""
+    import src.notifications as notif
+
+    sent = []
+    monkeypatch.setattr(notif, "send_status", lambda text: sent.append(("status", text)))
+    monkeypatch.setattr(notif, "send_dry_run_summary", lambda **kw: sent.append(("summary", kw)))
+    stats = SimpleNamespace(new=new, boards=5, duplicates=0, closed=0, failed=failed,
+                            gone_stopped=0, atses_skipped=[])
+    logged = []
+    log = SimpleNamespace(info=lambda e, **kw: logged.append((e, kw)),
+                          error=lambda e, **kw: logged.append((e, kw)))
+    pipe._report_end_of_run(stats, new=new, backlog=0, matched=matched, skipped=new - matched,
+                            aborted=aborted, outcomes={}, dry_run=dry_run, log=log)
+    return sent, logged
+
+
+def test_the_poll_line_and_summary_are_sent_at_the_end_in_order(monkeypatch):
+    sent, _ = _report(monkeypatch, dry_run=False)
+    assert [kind for kind, _ in sent] == ["status", "summary"]
+    assert sent[0][1].startswith("ATS poll: 3 new jobs from 5 boards")
+
+
+def test_a_dry_run_sends_nothing_to_telegram(monkeypatch):
+    sent, logged = _report(monkeypatch, dry_run=True)
+    assert sent == []
+    assert logged[0][0] == "dry_run_telegram_suppressed"
+    assert logged[0][1]["poll_line"].startswith("ATS poll:")
+
+
+def test_a_quiet_run_stays_quiet(monkeypatch):
+    sent, _ = _report(monkeypatch, dry_run=False, new=0, matched=0)
+    assert sent == []
+
+
+def test_a_failed_board_is_reported_even_without_matches(monkeypatch):
+    sent, _ = _report(monkeypatch, dry_run=False, new=0, matched=0, failed=2)
+    assert [kind for kind, _ in sent] == ["status"]
+    assert "2 boards failed" in sent[0][1]
