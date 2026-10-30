@@ -431,7 +431,10 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
 
         matched_count = 0
         skipped_count = 0
-        budget_exhausted = False
+        # Set once every LLM provider is out of quota; the rest of the run then
+        # parses with the dictionary instead of stopping.
+        llm_available = True
+        llm_exhausted = False
         short_circuit = int(cfg.scraper.get("short_circuit_count", 0) or 0)
         time_budget = 60.0 * float(cfg.scraper.get("time_budget_minutes", 0) or 0)
         not_reached = 0
@@ -471,23 +474,27 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
             # the route. Below the floor the LLM is never called (#100).
             try:
                 routed = parse_job(job, profile=profile, llm_calls_today=llm_calls_today,
-                                   rules=routing_rules, scrape_window_hours=hours_old)
+                                   rules=routing_rules, scrape_window_hours=hours_old,
+                                   llm_available=llm_available)
             except LLMBudgetError as exc:
-                # The account is out of budget or daily quota, so every
-                # remaining job would fail the same way. Stop the batch and
-                # keep what has already been committed rather than logging 24
-                # more identical failures (observed 2026-08-08: a spend cap
-                # took a 25-job run through ~15 minutes of doomed retries).
-                log.error(
-                    "run_aborted",
-                    reason="llm_budget_exhausted",
+                # Every provider is out of budget or daily quota, so every
+                # remaining job would fail the same way. Rather than stop the
+                # batch, stop calling the LLM: this job and the rest of the run
+                # use the dictionary parse (dictionary_fallback / llm_unavailable),
+                # as the ATS run does. No more doomed retries either way
+                # (observed 2026-08-08: a spend cap took a 25-job run through
+                # ~15 minutes of them).
+                log.warning(
+                    "llm_exhausted_dictionary_fallback",
                     processed=matched_count + skipped_count,
                     remaining=len(passing) - (matched_count + skipped_count),
-                    error=str(exc),
+                    error=str(exc)[:200],
                 )
-                budget_exhausted = True
-                not_reached = len(passing) - index
-                break
+                llm_available = False
+                llm_exhausted = True
+                routed = parse_job(job, profile=profile, llm_calls_today=llm_calls_today,
+                                   rules=routing_rules, scrape_window_hours=hours_old,
+                                   llm_available=False)
             except LLMError as exc:
                 # No verdict: a job whose parse failed has not been judged, so
                 # it stays in the backlog and the next run tries again. Writing
@@ -719,11 +726,11 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         # Of the LOW_SCORE jobs, how many were decided below the parse floor
         # without an LLM call (#100).
         parse_floored=parse_floored,
-        aborted="llm_budget_exhausted" if budget_exhausted else None,
+        # True when every LLM provider ran out of quota and the dictionary
+        # parsed the rest of the run.
+        llm_exhausted=llm_exhausted,
     )
-    # Non-zero so a scheduled run surfaces as failed rather than quietly
-    # reporting success while having processed almost nothing.
-    return 2 if budget_exhausted else 0
+    return 0
 
 
 # Kept importable from here; the steps live in src.tailor (shared with #20).
