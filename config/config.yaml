@@ -264,10 +264,18 @@ ats_poll:
   dedupe_days: 30
   # Jobs a poll found but did not reach are retried for this long.
   backlog_days: 2
-  # ATS jobs have no applicant count (x1.0), so they get their own bar (#120).
-  # 0.47 under the weighted_count fit (#101): as many matches as 0.40 gave
-  # under the share formula. Other sources keep scoring.apply_threshold.
-  apply_threshold: 0.47
+  # The same bar as LinkedIn/Naukri (scoring.apply_threshold). It was 0.47
+  # while ATS jobs had no success_prob at all (x1.0, #120); recency_multiplier
+  # below now plays the applicant count's part on the same scale.
+  apply_threshold: 0.65
+  # success_prob for ATS jobs, which publish no applicant count: the posting's
+  # age in hours -> multiplier, interpolated, flat beyond both ends. Mirrors
+  # scoring.success_prob: 1.5 in the first hour (<=24 applicants), sliding to
+  # 1.3 at 6 h, 1.0 at two days (100 applicants) and 0.5 at seven days (200+),
+  # which is max_posting_age_days.
+  recency_multiplier:
+    points: [[1, 1.5], [6, 1.3], [48, 1.0], [168, 0.5]]
+    undated: 1.0
   # The only LLM providers the ATS run may call, by exact name in llm:. Free
   # tiers only: the paid `gemini` key is for the LinkedIn/Naukri run alone.
   # When these are out of quota, the rest of the run parses with the
@@ -281,7 +289,7 @@ ats_poll:
   # (no LLM call): the score has no freshness term and ATS boards give no
   # applicant count, so a stale posting would otherwise match like a new
   # one. Undated postings pass. Greenhouse's date is the last update.
-  max_posting_age_days: 14
+  max_posting_age_days: 7
   closed_retention_days: 60
   # The ATS run logs the database size; a warning above this (Neon's free
   # tier is 512 MB, #115).

@@ -7,6 +7,22 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Changed
+
+- **ATS jobs score posting age the way LinkedIn jobs score applicant count.**
+  ATS boards publish no applicant count, so ATS jobs had success_prob x1.0
+  and a lower bar (0.47) to make up for it, with no freshness check, and old
+  postings matched like new ones (only 9 of 105 matches were under a day
+  old). Now `success_prob` for an ATS job is `recency_multiplier(posted_at)`
+  on the same 1.5 -> 0.5 scale: 1.5 in the first hour, sliding to 1.3 at 6 h,
+  1.0 at two days and 0.5 at seven days (`ats_poll.recency_multiplier`;
+  undated = 1.0). The
+  ATS bar returns to **0.65**, the same as LinkedIn, and the age cutoff
+  (`max_posting_age_days`) is 7 days. A job too old for even a perfect fit to
+  reach the bar is skipped before parsing (`POSTING_TOO_OLD`). ATS match
+  messages show the posting's age and multiplier. Replayed on 228 judged ATS
+  jobs: 107 matches -> 19, none older than 3 days.
+
 ### Fixed
 
 - **An interrupted ATS run no longer loses the jobs it found.** The poller

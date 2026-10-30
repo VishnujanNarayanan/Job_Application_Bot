@@ -165,6 +165,7 @@ def send_match_notification(
         f"Location: {loc_str}" if loc_str else "",
         f"Salary: {salary_display}",
         f"Source: {job.site}",
+        _posted_line(job, result),
         f"Resume header: {header}" if header else "",
     ]
     if gap_skills:
@@ -327,6 +328,21 @@ def scrape_done_text(term: str, *, found: int, remote: int, new: int) -> str:
     if new != found:
         parts.append(f"{found - new} already found by an earlier term")
     return f"Found for \"{term}\": " + ", ".join(parts)
+
+
+def _posted_line(job, result) -> str | None:
+    """'Posted: 5 h ago (x1.42)' for an ATS job, whose success_prob is its
+    posting's age; None (no line) when undated or for other sources."""
+    posted = getattr(job, "posted_at", None)
+    site = getattr(job, "site", "") or ""
+    if posted is None or not site.startswith("ats:"):
+        return None
+    from datetime import datetime, timezone
+
+    hours = max(0.0, (datetime.now(timezone.utc) - posted).total_seconds() / 3600)
+    age = f"{hours:.0f} h ago" if hours < 48 else f"{hours / 24:.0f} days ago"
+    mult = getattr(result, "success_prob", None)
+    return f"Posted: {age}" + (f" (x{mult:.2f})" if mult is not None else "")
 
 
 def ats_poll_done_text(stats) -> str:

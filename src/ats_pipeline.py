@@ -128,6 +128,20 @@ def too_old(posted_at: datetime | None, oldest: datetime | None) -> bool:
     return bool(oldest and posted_at and posted_at < oldest)
 
 
+def cannot_reach_bar(posted_at: datetime | None, now: datetime, bar: float) -> bool:
+    """True when even a perfect fit couldn't clear ``bar`` at this posting's age:
+    best final = max_score x recency multiplier x the junior boost. The ATS
+    twin of LinkedIn's TOO_MANY_APPLICANTS pre-check; saves the LLM call."""
+    from src.config import settings
+    from src.scorer.apply_decision import recency_multiplier
+
+    if posted_at is None:
+        return False
+    best = (float(settings.scoring.final.max_score) * recency_multiplier(posted_at, now)
+            * float(settings.scoring.junior_boost.multiplier))
+    return best < bar
+
+
 def newest_first(jobs: list) -> list:
     """Order jobs for processing: newest posting first, undated last. A fresh
     posting is worth most early, so it must not wait behind the backlog for a
@@ -384,6 +398,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         existing = filters.existing_job_ids(session, [j.job_id for j in raw])
         blocklist = list(cfg.filters.get("company_blocklist") or [])
         oldest = rules_from(cfg, now=now)["oldest"]
+        ats_bar = threshold_for("ats:")
         queue: list = []
         passing = []
         for job in raw:
@@ -394,6 +409,10 @@ def run(dry_run: bool, log, *, atses=None) -> int:
             elif too_old(job.posted_at, oldest):
                 # Mostly backlog: new postings this old are stopped at classify.
                 queue.append((job, POSTING_TOO_OLD, job.posted_at.date().isoformat(), None))
+            elif cannot_reach_bar(job.posted_at, now, ats_bar):
+                # Even a perfect fit at this age can't reach the bar: skip the LLM.
+                queue.append((job, POSTING_TOO_OLD,
+                              f"{job.posted_at.date().isoformat()} (cannot reach {ats_bar})", None))
             elif filters.company_blocked(job.company, blocklist):
                 queue.append((job, COMPANY_BLOCKED, job.company, None))
             else:
