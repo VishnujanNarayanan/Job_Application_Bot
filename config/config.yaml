@@ -281,7 +281,7 @@ ats_poll:
   # (no LLM call): the score has no freshness term and ATS boards give no
   # applicant count, so a stale posting would otherwise match like a new
   # one. Undated postings pass. Greenhouse's date is the last update.
-  max_posting_age_days: 7
+  max_posting_age_days: 14
   closed_retention_days: 60
   # The ATS run logs the database size; a warning above this (Neon's free
   # tier is 512 MB, #115).
