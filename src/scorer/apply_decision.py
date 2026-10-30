@@ -246,14 +246,15 @@ def recency_multiplier(posted_at: datetime | None, now: datetime) -> float:
 
     ``ats_poll.recency_multiplier.points`` are ``[hours_since_posting,
     multiplier]`` pairs, interpolated linearly and flat beyond both ends:
-    1.5 at 6 h or less (like 24 or fewer applicants), 1.3 at a day, 1.0 at two
-    days (like 100 applicants), 0.5 at seven days, the age cutoff (like 200+).
+    1.5 in the first hour (like 24 or fewer applicants), sliding to 1.3 at 6 h,
+    1.0 at two days (like 100 applicants) and 0.5 at seven days, the age
+    cutoff (like 200+).
     Undated postings get ``undated`` (neutral), as a missing applicant count
     does. Measured when the job is scored, so a job loses value while it waits.
     """
     cfg = (settings.get("ats_poll") or {}).get("recency_multiplier") or {}
     points = [(float(h), float(m)) for h, m in (cfg.get("points") or
-              [[6, 1.5], [24, 1.3], [48, 1.0], [168, 0.5]])]
+              [[1, 1.5], [6, 1.3], [48, 1.0], [168, 0.5]])]
     if posted_at is None:
         return float(cfg.get("undated", 1.0))
     hours = max(0.0, (now - posted_at).total_seconds() / 3600)

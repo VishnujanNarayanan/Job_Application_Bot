@@ -270,10 +270,11 @@ ats_poll:
   apply_threshold: 0.65
   # success_prob for ATS jobs, which publish no applicant count: the posting's
   # age in hours -> multiplier, interpolated, flat beyond both ends. Mirrors
-  # scoring.success_prob: 1.5 at 6 h or less (<=24 applicants), 1.0 at two days
-  # (100 applicants), 0.5 at seven days (200+), which is max_posting_age_days.
+  # scoring.success_prob: 1.5 in the first hour (<=24 applicants), sliding to
+  # 1.3 at 6 h, 1.0 at two days (100 applicants) and 0.5 at seven days (200+),
+  # which is max_posting_age_days.
   recency_multiplier:
-    points: [[6, 1.5], [24, 1.3], [48, 1.0], [168, 0.5]]
+    points: [[1, 1.5], [6, 1.3], [48, 1.0], [168, 0.5]]
     undated: 1.0
   # The only LLM providers the ATS run may call, by exact name in llm:. Free
   # tiers only: the paid `gemini` key is for the LinkedIn/Naukri run alone.

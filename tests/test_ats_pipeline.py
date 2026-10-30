@@ -260,7 +260,7 @@ def test_jobs_are_processed_newest_first_with_undated_last():
 # --- recency multiplier (ATS success_prob) ---------------------------------------------
 
 @pytest.mark.parametrize("hours, expected", [
-    (0, 1.5), (6, 1.5), (24, 1.3), (36, 1.15), (48, 1.0), (108, 0.75), (168, 0.5), (400, 0.5),
+    (0, 1.5), (1, 1.5), (3.5, 1.4), (6, 1.3), (27, 1.15), (48, 1.0), (108, 0.75), (168, 0.5), (400, 0.5),
 ])
 def test_the_recency_multiplier_follows_the_curve(hours, expected):
     from src.scorer.apply_decision import recency_multiplier
@@ -277,7 +277,7 @@ def test_an_undated_ats_posting_is_neutral():
 def test_ats_jobs_use_recency_and_others_use_applicants():
     from src.scorer.apply_decision import success_multiplier
 
-    fresh = SimpleNamespace(site="ats:greenhouse", posted_at=NOW - timedelta(hours=2), applicants_count=None)
+    fresh = SimpleNamespace(site="ats:greenhouse", posted_at=NOW - timedelta(minutes=30), applicants_count=None)
     crowded = SimpleNamespace(site="linkedin", posted_at=NOW - timedelta(hours=2), applicants_count=250)
     assert success_multiplier(fresh, NOW) == 1.5
     assert success_multiplier(crowded, NOW) == 0.5, "LinkedIn keeps the applicant count"
