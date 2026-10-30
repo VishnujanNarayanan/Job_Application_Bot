@@ -229,6 +229,42 @@ def junior_multiplier(jd: JDContext) -> float:
     return 1.0
 
 
+def is_ats(site: str | None) -> bool:
+    return bool(site and site.startswith("ats:"))
+
+
+def success_multiplier(jd: JDContext, now: datetime) -> float:
+    """success_prob for one job: the applicant count, or for an ATS job (whose
+    board publishes none) the posting's age, on the same 1.5 -> 0.5 scale."""
+    if is_ats(getattr(jd, "site", None)):
+        return recency_multiplier(jd.posted_at, now)
+    return applicant_multiplier(jd.applicants_count)
+
+
+def recency_multiplier(posted_at: datetime | None, now: datetime) -> float:
+    """An ATS job's stand-in for the applicant multiplier: how recently it was posted.
+
+    ``ats_poll.recency_multiplier.points`` are ``[hours_since_posting,
+    multiplier]`` pairs, interpolated linearly and flat beyond both ends:
+    1.5 at 6 h or less (like 24 or fewer applicants), 1.3 at a day, 1.0 at two
+    days (like 100 applicants), 0.5 at seven days, the age cutoff (like 200+).
+    Undated postings get ``undated`` (neutral), as a missing applicant count
+    does. Measured when the job is scored, so a job loses value while it waits.
+    """
+    cfg = (settings.get("ats_poll") or {}).get("recency_multiplier") or {}
+    points = [(float(h), float(m)) for h, m in (cfg.get("points") or
+              [[6, 1.5], [24, 1.3], [48, 1.0], [168, 0.5]])]
+    if posted_at is None:
+        return float(cfg.get("undated", 1.0))
+    hours = max(0.0, (now - posted_at).total_seconds() / 3600)
+    if hours <= points[0][0]:
+        return points[0][1]
+    for (h0, m0), (h1, m1) in zip(points, points[1:]):
+        if hours <= h1:
+            return m0 + (m1 - m0) * (hours - h0) / (h1 - h0)
+    return points[-1][1]
+
+
 def applicant_multiplier(count: int | None) -> float:
     """Boost an early posting, penalise a crowded one: ``max`` -> 1.0 -> ``min``.
 
@@ -424,7 +460,7 @@ def evaluate(
         scraped_at=jd.scraped_at,
         window_hours=jd.scrape_window_hours,
     )
-    success_prob = applicant_multiplier(jd.applicants_count)
+    success_prob = success_multiplier(jd, now)
 
     junior = junior_multiplier(jd)
     final_score = min(float(settings.scoring.final.max_score), fit * success_prob * junior)

@@ -228,6 +228,9 @@ class JDContext:
     #: boost (apply_decision.junior_multiplier).
     title: str | None = None
     years_required: int | None = None
+    #: Where the job came from (``all_jobs.site``). ATS jobs have no applicant
+    #: count, so their success_prob comes from the posting's age instead.
+    site: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1304,6 +1307,7 @@ def build_jd_context(
     applicants_count: int | None = None,
     jd_text: str | None = None,
     title: str | None = None,
+    site: str | None = None,
     embed_batch_fn=None,
 ) -> JDContext:
     """Embed a parsed JD into the query facets Layer 4 scores against.
@@ -1336,6 +1340,7 @@ def build_jd_context(
         scrape_window_hours=scrape_window_hours,
         applicants_count=applicants_count,
         title=title,
+        site=site,
         years_required=getattr(parsed, "years_required", None),
         ai_tooling_asked=ai_tooling_asked(
             jd_text,

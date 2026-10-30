@@ -70,7 +70,8 @@ def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None)
 
     # scraped_at + the window the run used let recency be inferred for the
     # listings that carry no posting date (almost all of them). Recency is
-    # recorded, not scored; the applicant count is scored.
+    # recorded, not scored; the applicant count is scored, and for ATS jobs
+    # (no applicant count) the posting's age takes its place.
     jd_context = build_jd_context(
         parsed,
         posted_at=job.posted_at,
@@ -79,6 +80,7 @@ def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None)
         applicants_count=job.applicants_count,
         jd_text=job.jd_text,
         title=job.role,
+        site=job.site,
     )
     return evaluate(profile, jd_context, keywords=jd_keywords(parsed, title=job.role, jd_text=job.jd_text),
                     threshold=threshold_for(job.site))

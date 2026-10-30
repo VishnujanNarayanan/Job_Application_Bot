@@ -168,7 +168,7 @@ def test_ats_jobs_have_their_own_apply_threshold(monkeypatch):
     from src.config import settings
     from src.scorer.apply_decision import threshold_for
 
-    assert threshold_for("ats:greenhouse") == 0.47
+    assert threshold_for("ats:greenhouse") == 0.65  # the LinkedIn bar, now that recency stands in for applicants
     assert threshold_for("linkedin") == float(settings.scoring.apply_threshold)
     assert threshold_for(None) == float(settings.scoring.apply_threshold)
 
@@ -255,3 +255,45 @@ def test_jobs_are_processed_newest_first_with_undated_last():
         ("old", NOW - timedelta(days=5)), ("none", None), ("new", NOW - timedelta(hours=1)),
         ("mid", NOW - timedelta(days=1)))]
     assert [j.job_id for j in pipe.newest_first(jobs)] == ["new", "mid", "old", "none"]
+
+
+# --- recency multiplier (ATS success_prob) ---------------------------------------------
+
+@pytest.mark.parametrize("hours, expected", [
+    (0, 1.5), (6, 1.5), (24, 1.3), (36, 1.15), (48, 1.0), (108, 0.75), (168, 0.5), (400, 0.5),
+])
+def test_the_recency_multiplier_follows_the_curve(hours, expected):
+    from src.scorer.apply_decision import recency_multiplier
+
+    assert recency_multiplier(NOW - timedelta(hours=hours), NOW) == pytest.approx(expected)
+
+
+def test_an_undated_ats_posting_is_neutral():
+    from src.scorer.apply_decision import recency_multiplier
+
+    assert recency_multiplier(None, NOW) == 1.0
+
+
+def test_ats_jobs_use_recency_and_others_use_applicants():
+    from src.scorer.apply_decision import success_multiplier
+
+    fresh = SimpleNamespace(site="ats:greenhouse", posted_at=NOW - timedelta(hours=2), applicants_count=None)
+    crowded = SimpleNamespace(site="linkedin", posted_at=NOW - timedelta(hours=2), applicants_count=250)
+    assert success_multiplier(fresh, NOW) == 1.5
+    assert success_multiplier(crowded, NOW) == 0.5, "LinkedIn keeps the applicant count"
+
+
+def test_a_job_too_old_to_reach_the_bar_is_skipped_before_the_llm():
+    # best = 1.0 x multiplier x 1.10 junior boost; at 0.65 the bar is out of reach
+    # once the multiplier drops below ~0.59 (about 6 days old).
+    assert pipe.cannot_reach_bar(NOW - timedelta(days=6, hours=12), NOW, 0.65) is True
+    assert pipe.cannot_reach_bar(NOW - timedelta(days=3), NOW, 0.65) is False
+    assert pipe.cannot_reach_bar(None, NOW, 0.65) is False
+
+
+def test_the_match_message_shows_an_ats_postings_age():
+    from src.notifications import _posted_line
+
+    job = SimpleNamespace(site="ats:lever", posted_at=datetime.now(timezone.utc) - timedelta(hours=5))
+    assert _posted_line(job, SimpleNamespace(success_prob=1.5)) == "Posted: 5 h ago (x1.50)"
+    assert _posted_line(SimpleNamespace(site="linkedin", posted_at=job.posted_at), None) is None
