@@ -6,8 +6,11 @@
 # Telegram. Runs on GitHub's runners, so it works with the laptop shut; the
 # repo is public, so Actions minutes are free.
 #
-# Schedule: every two hours on the half hour, 07:00 to 17:00 IST (01:30-11:30
-# UTC), 6 runs a day. Each ATS gets at most one request a second
+# Schedule: started from outside GitHub, by a cron-job.org job that calls
+# this workflow's workflow_dispatch API at 07:00, 09:00, 11:00, 13:00, 15:00
+# and 17:00 IST. GitHub's own `schedule:` trigger was removed on 2026-10-30:
+# it ran one slot of six on time that day, and one 4.5 hours late. Each ATS
+# gets at most one request a second
 # (src/scraper/ats_poller.py). Boards are polled by tier (hot hourly, active every
 # 3 h, quiet every 12 h); the list phase stops after
 # ats_poll.time_budget_minutes and the next run carries on.
@@ -21,8 +24,6 @@ on:
         description: "Poll, score and build, but send nothing to Telegram (results in the log only)"
         type: boolean
         default: false
-  schedule:
-    - cron: "30 1-12/2 * * *"
 
 # Shares the pipeline's group: an ATS poll and a JobSpy run must not overlap
 # (same LLM quota, same rows).
