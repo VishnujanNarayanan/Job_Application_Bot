@@ -274,8 +274,14 @@ ats_poll:
   # dictionary parser. Parse routing (scoring.parse_routing) applies as in
   # the main run.
   llm_providers: ["groq", "gemini-free"]
-  # Minutes for parse/score/build after the poll.
-  process_budget_minutes: 25
+  # Minutes for parse/score/build after the poll. 40 leaves room in the
+  # job's 58-minute limit for the ~10-minute poll and setup.
+  process_budget_minutes: 40
+  # Postings dated more than this many days ago are skipped before parsing
+  # (no LLM call): the score has no freshness term and ATS boards give no
+  # applicant count, so a stale posting would otherwise match like a new
+  # one. Undated postings pass. Greenhouse's date is the last update.
+  max_posting_age_days: 7
   closed_retention_days: 60
   # The ATS run logs the database size; a warning above this (Neon's free
   # tier is 512 MB, #115).

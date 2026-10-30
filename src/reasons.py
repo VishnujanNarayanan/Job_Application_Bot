@@ -23,6 +23,8 @@ JOB_LEVEL_DISALLOWED = "JOB_LEVEL_DISALLOWED"
 EXPERIENCE_TOO_HIGH = "EXPERIENCE_TOO_HIGH"
 # LinkedIn says the posting no longer accepts applications (backlog refresh).
 JOB_CLOSED = "JOB_CLOSED"
+# ATS posting dated more than ats_poll.max_posting_age_days ago.
+POSTING_TOO_OLD = "POSTING_TOO_OLD"
 # Listing arrived with no description body (e.g. a throttled LinkedIn
 # description fetch). Can't parse or score, and an empty-text embedding is
 # identical to every other empty one — which collapses near-duplicate

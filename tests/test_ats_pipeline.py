@@ -226,3 +226,32 @@ def test_a_failed_board_is_reported_even_without_matches(monkeypatch):
     sent, _ = _report(monkeypatch, dry_run=False, new=0, matched=0, failed=2)
     assert [kind for kind, _ in sent] == ["status"]
     assert "2 boards failed" in sent[0][1]
+
+
+# --- posting age and processing order ------------------------------------------------
+
+def test_a_posting_older_than_the_limit_is_skipped_at_classify():
+    rules = {**RULES, "oldest": NOW - timedelta(days=7)}
+    old = ats.Posting("lever", "acme", "o", "Backend Engineer", "Pune", posted_at=NOW - timedelta(days=9))
+    new = ats.Posting("lever", "acme", "n", "Backend Engineer", "Pune", posted_at=NOW - timedelta(days=2))
+    undated = ats.Posting("lever", "acme", "u", "Backend Engineer", "Pune")
+    assert pipe.classify(old, rules) == "age"
+    assert pipe.classify(new, rules) is None
+    assert pipe.classify(undated, rules) is None, "nothing to judge an undated posting by"
+
+
+def test_no_age_limit_when_unset():
+    assert pipe.too_old(NOW - timedelta(days=400), None) is False
+
+
+def test_rules_from_turns_the_day_limit_into_a_cutoff():
+    cfg = SimpleNamespace(filters=SimpleNamespace(get=lambda k, d=None: d),
+                          get=lambda k, d=None: {"ats_poll": {"max_posting_age_days": 7}}.get(k, d))
+    assert pipe.rules_from(cfg, now=NOW)["oldest"] == NOW - timedelta(days=7)
+
+
+def test_jobs_are_processed_newest_first_with_undated_last():
+    jobs = [SimpleNamespace(job_id=n, posted_at=t) for n, t in (
+        ("old", NOW - timedelta(days=5)), ("none", None), ("new", NOW - timedelta(hours=1)),
+        ("mid", NOW - timedelta(days=1)))]
+    assert [j.job_id for j in pipe.newest_first(jobs)] == ["new", "mid", "old", "none"]

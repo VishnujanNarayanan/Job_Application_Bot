@@ -105,6 +105,8 @@ def classify(p: ats.Posting, rules: dict) -> str | None:
         return ats_poller.DROP
     if where == "remote_locked":
         return "place:remote_locked" if "remote_locked" in rules["record_places"] else ats_poller.DROP
+    if too_old(p.posted_at, rules.get("oldest")):
+        return "age"
     kind = ats.employment_type(p.employment_type)
     if kind and filters.job_type_disallowed(kind, rules["job_type"]):
         return f"type:{kind}"
@@ -120,6 +122,20 @@ def classify(p: ats.Posting, rules: dict) -> str | None:
     return None
 
 
+def too_old(posted_at: datetime | None, oldest: datetime | None) -> bool:
+    """Dated before ``oldest`` (``ats_poll.max_posting_age_days``). An
+    undated posting is never too old: there is nothing to judge it by."""
+    return bool(oldest and posted_at and posted_at < oldest)
+
+
+def newest_first(jobs: list) -> list:
+    """Order jobs for processing: newest posting first, undated last. A fresh
+    posting is worth most early, so it must not wait behind the backlog for a
+    later run (the run stops starting jobs at process_budget_minutes)."""
+    return sorted(jobs, key=lambda j: (j.posted_at is None,
+                                       -(j.posted_at.timestamp() if j.posted_at else 0.0)))
+
+
 def decide(p: ats.Posting, rules: dict) -> str | None:
     """Stage G, once the description is in. None = send to the parser."""
     from src.parser import with_pool_skills
@@ -133,9 +149,13 @@ def decide(p: ats.Posting, rules: dict) -> str | None:
     return None
 
 
-def rules_from(cfg) -> dict:
+def rules_from(cfg, *, now: datetime | None = None) -> dict:
     a = cfg.get("ats_poll") or {}
+    max_age = a.get("max_posting_age_days")
+    now = now or datetime.now(timezone.utc)
     return {
+        # Postings dated before this are skipped (None = no age limit).
+        "oldest": now - timedelta(days=float(max_age)) if max_age else None,
         "record_places": list(a.get("record_places") or ["remote_locked"]),
         "job_type": cfg.filters.get("job_type"),
         "title_patterns": list(cfg.filters.get("title_blocklist") or []),
@@ -155,7 +175,7 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     stats = stats if stats is not None else ats_poller.PollStats()
     lanes = lanes if lanes is not None else {}
     delay = float(a.get("delay_seconds", 0.5))
-    rules = rules_from(cfg)
+    rules = rules_from(cfg, now=now)
     # The config section is a wrapper, not a dict: read the keys it has.
     tiers = a.get("tier_hours") or {}
     tier_hours = {k: float(tiers.get(k)) for k in ats_poller.TIER_HOURS if tiers.get(k) is not None}
@@ -333,6 +353,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         HARD_FILTER_LAYER_3,
         JOB_CLOSED,
         JOB_TYPE_DISALLOWED,
+        POSTING_TOO_OLD,
         LOW_SCORE,
     )
     from src.scorer.embeddings import embed_documents
@@ -362,6 +383,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
 
         existing = filters.existing_job_ids(session, [j.job_id for j in raw])
         blocklist = list(cfg.filters.get("company_blocklist") or [])
+        oldest = rules_from(cfg, now=now)["oldest"]
         queue: list = []
         passing = []
         for job in raw:
@@ -369,6 +391,9 @@ def run(dry_run: bool, log, *, atses=None) -> int:
                 queue.append((job, DUPLICATE, None, None))
             elif job.job_id in closed:
                 queue.append((job, JOB_CLOSED, None, None))
+            elif too_old(job.posted_at, oldest):
+                # Mostly backlog: new postings this old are stopped at classify.
+                queue.append((job, POSTING_TOO_OLD, job.posted_at.date().isoformat(), None))
             elif filters.company_blocked(job.company, blocklist):
                 queue.append((job, COMPANY_BLOCKED, job.company, None))
             else:
@@ -383,6 +408,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         # guarantees a verdict, so these postings are no longer at risk.
         ats_poller.mark_done(session, [j.job_id for j in jobs])
         session.commit()
+        passing = newest_first(passing)
 
         hours = float(a.get("recency_window_hours", 24))
         budget = 60.0 * float(a.get("process_budget_minutes", 25))

@@ -285,6 +285,7 @@ async def send_resume_file(data: bytes, ext: str, *, caption: str = "", reply_to
 _OUTCOME_LABELS = (
     ("DUPLICATE", "Already notified"),
     ("JOB_CLOSED", "No longer accepting applications"),
+    ("POSTING_TOO_OLD", "Posted too long ago"),
     ("EMPTY_JD", "No description scraped"),
     ("LOCATION_DISALLOWED", "Blocked location"),
     ("COMPANY_BLOCKED", "Blocked company"),
