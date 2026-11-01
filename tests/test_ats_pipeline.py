@@ -57,10 +57,10 @@ def _p(title="Backend Engineer", location="Bengaluru", remote=None, etype=None, 
     ("Chief Executive Officer", "exec"),
     ("Senior IT Manager", "manager"),
     ("Senior Project Manager", "manager"),
-    ("Engineering Manager - Backend", "manager"),  # every manager title (2026-11-01)
-    ("Software Engineering Manager", "manager"),
-    ("Data Engineering Manager", "manager"),
-    ("Manager, Data Engineering", "manager"),
+    ("Engineering Manager - Backend", "tech"),  # a tech manager goes to the scorer
+    ("Software Engineering Manager", "tech"),
+    ("Data Engineering Manager", "tech"),
+    ("Manager, Data Engineering", "tech"),
     # Bank VP / AVP titles name senior individual engineers.
     ("VP, Data Engineer (KDB Developer)", "tech"),
     ("Vice President, Senior Backend Developer - Lending/Commercial (Mumbai)", "tech"),
@@ -107,7 +107,7 @@ def test_role_family(title, family):
     (_p(title="Account Executive"), "role:nontech"),
     (_p(title="VP Engineering"), "role:exec"),
     (_p(title="Senior Project Manager"), "role:manager"),
-    (_p(title="Data Engineering Manager"), "role:manager"),
+    (_p(title="Data Engineering Manager"), None),
     (_p(title="VP, Data Engineer"), None),
     (_p(location="Indianapolis, IN, United States", remote=True), "place:remote_locked"),
 ])

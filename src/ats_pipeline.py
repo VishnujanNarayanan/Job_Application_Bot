@@ -97,9 +97,8 @@ CIVIL = re.compile(r"\b(utility|utilities|water|wastewater|hydraulic|mep|hvac|pl
                    r"qa/qc|qa ?& ?qc|geotech\w*|surveyor|piping|instrumentation)\b", re.I)
 SOFTWARE = re.compile(r"software|developer|\bdata\b|cloud|devops|\bml\b|\bai\b|python|java|\bweb\b|\bapp\b|"
                       r"embedded|firmware|c\+\+", re.I)
-# Any manager title, tech or not, is not the operator's kind of role: an
-# operator rule (2026-11-01). "Software Engineering Manager" and "Data
-# Engineering Manager" used to pass on their tech word.
+# A manager title with no tech word: not the operator's kind of role. A tech
+# manager ("Data Engineering Manager") goes on to the scorer.
 MANAGER = re.compile(r"\bmanager\b", re.I)
 
 
@@ -121,7 +120,7 @@ def role_family(title: str) -> str:
         return "nontech"
     if _is_exec(title):
         return "exec"
-    if MANAGER.search(title):
+    if MANAGER.search(title) and not tech:
         return "manager"
     return "tech" if tech else "unclear"
 
