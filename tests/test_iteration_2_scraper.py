@@ -492,3 +492,33 @@ def test_linkedin_retry_is_mounted_on_each_scraper_session(monkeypatch) -> None:
     retries = LinkedIn().session.get_adapter("https://www.linkedin.com").max_retries
     assert retries.total == 3
     assert 429 in retries.status_forcelist
+
+
+def test_captured_apply_links_land_on_their_own_rows(monkeypatch) -> None:
+    """#158: a LinkedIn apply link captured during the scrape becomes the
+    row's job_url_direct; a link JobSpy already gave (Naukri) is kept."""
+    from src.scraper import jobspy_wrapper as jw
+
+    monkeypatch.setattr(jw.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(jw, "install_applicant_capture", lambda: None)
+    jw._APPLY_URLS.clear()
+    jw._APPLY_URLS["li-111"] = "https://jobs.lever.co/acme/1"
+    jw._APPLY_URLS["li-333"] = "https://jobs.lever.co/other/9"
+
+    fake_module = types.ModuleType("jobspy")
+    fake_module.scrape_jobs = lambda **kw: _FakeDF([
+        {"site": "linkedin", "id": "li-111", "company": "A", "title": "SDE"},
+        {"site": "linkedin", "id": "li-222", "company": "B", "title": "SDE"},
+        {"site": "linkedin", "id": "li-333", "company": "C", "title": "SDE",
+         "job_url_direct": "https://jobs.ashbyhq.com/c/1"},
+    ])
+    monkeypatch.setitem(sys.modules, "jobspy", fake_module)
+
+    jobs = {j.job_id: j for j in jw.scrape(
+        "sde", sites=["linkedin"], country="india", results_wanted=5, hours_old=1,
+        fetch_description=True,
+    )}
+    assert jobs["linkedin-li-111"].job_url_direct == "https://jobs.lever.co/acme/1"
+    assert jobs["linkedin-li-222"].job_url_direct is None
+    assert jobs["linkedin-li-333"].job_url_direct == "https://jobs.ashbyhq.com/c/1"
+    assert jw._APPLY_URLS == {}, "links must not leak into the next scrape"
