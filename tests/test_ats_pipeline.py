@@ -47,7 +47,7 @@ def _p(title="Backend Engineer", location="Bengaluru", remote=None, etype=None, 
     ("Program Operations Specialist", "nontech"),
     ("Service Desk Technician", "nontech"),
     ("Finance Data Engineer", "tech"),        # a tech word wins
-    ("Cloud Operations Engineer", "unclear"),  # not a business-operations title
+    ("Cloud Operations Engineer", "tech"),     # not a business-operations title
     ("QA/QC Engineer", "nontech"),
     ("Senior Engineer-Dry Utility(Infrastructure)", "nontech"),
     ("PLC Automation Engineer-ECF2", "nontech"),
@@ -57,7 +57,36 @@ def _p(title="Backend Engineer", location="Bengaluru", remote=None, etype=None, 
     ("Chief Executive Officer", "exec"),
     ("Senior IT Manager", "manager"),
     ("Senior Project Manager", "manager"),
-    ("Engineering Manager - Backend", "tech"),
+    ("Engineering Manager - Backend", "manager"),  # every manager title (2026-11-01)
+    ("Software Engineering Manager", "manager"),
+    ("Data Engineering Manager", "manager"),
+    ("Manager, Data Engineering", "manager"),
+    # Bank VP / AVP titles name senior individual engineers.
+    ("VP, Data Engineer (KDB Developer)", "tech"),
+    ("Vice President, Senior Backend Developer - Lending/Commercial (Mumbai)", "tech"),
+    ("Associate/VP, Back-End Software Engineer", "tech"),
+    ("Agentic AI Engineer - Assistant Vice President / Vice President", "tech"),
+    ("VP, Senior Blockchain Security Engineer", "tech"),
+    ("Chief Technical Architect, Engineering (IC Role)", "unclear"),  # not exec: its description decides
+    ("VP of Engineering", "exec"),
+    ("VP Engineering, Ongoing Monitoring", "exec"),
+    ("Vice President, Software", "exec"),
+    ("Director of Data Engineering", "exec"),
+    ("Head of Engineering, AI Platform", "exec"),
+    # Tech titles a business word used to outvote.
+    ("Senior Cloud Operations Specialist", "tech"),
+    ("Staff Engineer - Linux Kernel and Device Driver", "tech"),
+    ("Embedded C++ & PLC Automation Engineer-EPS1", "tech"),
+    ("Revenue Operations Lead (GTM Engineer)", "tech"),
+    ("GTM Data Specialist, Consumption & Revenue Operations", "tech"),
+    ("Supply Chain Security Engineer", "tech"),
+    ("Principal Engineer  (Warehouse Engineering)", "tech"),
+    ("Associate Principal Engineer (Integration Lead- ESB & Kafka)", "tech"),
+    # ...and the non-tech ones still are.
+    ("Principal Engineer - Primary Substation", "nontech"),
+    ("Mechanical Engineer - Data Centers", "nontech"),
+    ("Sales Engineer - Enterprise", "nontech"),
+    ("Truck Driver", "nontech"),
 ])
 def test_role_family(title, family):
     assert pipe.role_family(title) == family
@@ -78,6 +107,9 @@ def test_role_family(title, family):
     (_p(title="Account Executive"), "role:nontech"),
     (_p(title="VP Engineering"), "role:exec"),
     (_p(title="Senior Project Manager"), "role:manager"),
+    (_p(title="Data Engineering Manager"), "role:manager"),
+    (_p(title="VP, Data Engineer"), None),
+    (_p(location="Indianapolis, IN, United States", remote=True), "place:remote_locked"),
 ])
 def test_classify(posting, reason):
     assert pipe.classify(posting, RULES) == reason
@@ -93,13 +125,28 @@ def test_an_unknown_place_needs_india_in_the_description(monkeypatch):
     assert pipe.decide(_p(location="Hybrid", desc="Join our Berlin team."), RULES) == "place:unknown"
 
 
+_PAD = " We are a growing team with a friendly culture." * 12  # past short_description_chars
+
+
 def test_an_unclear_title_needs_the_operators_skills_in_the_description(monkeypatch):
-    monkeypatch.setattr("src.parser._pool_terms", lambda: ("Python", "SQL", "Airflow", "fintech"))
-    assert pipe.decide(_p(title="Analyst", desc="Python, SQL and Airflow daily."), RULES) is None
-    assert pipe.decide(_p(title="Analyst", desc="Python and fintech."), RULES) == "relevance:skills=2"
-    assert pipe.decide(_p(title="Analyst", desc="Excel and PowerPoint."), RULES) == "relevance:skills=0"
+    monkeypatch.setattr("src.parser._pool_terms", lambda: ("Python", "SQL", "Airflow", "fintech", "Kafka"))
+    assert pipe.decide(_p(title="Analyst", desc="Python, SQL and Airflow daily." + _PAD), RULES) is None
+    assert pipe.decide(_p(title="Analyst", desc="Python and fintech." + _PAD), RULES) == "relevance:skills=2"
+    assert pipe.decide(_p(title="Analyst", desc="Excel and PowerPoint." + _PAD), RULES) == "relevance:skills=0"
     # A tech title is never held back by the skills check.
-    assert pipe.decide(_p(title="Backend Engineer", desc="Excel."), RULES) is None
+    assert pipe.decide(_p(title="Backend Engineer", desc="Excel." + _PAD), RULES) is None
+
+
+def test_the_title_counts_towards_the_skills(monkeypatch):
+    monkeypatch.setattr("src.parser._pool_terms", lambda: ("Python", "SQL", "Kafka"))
+    assert pipe.decide(_p(title="Partner Lead (Kafka)", desc="Python and SQL." + _PAD), RULES) is None
+
+
+def test_a_description_too_short_to_judge_goes_to_the_parser(monkeypatch):
+    monkeypatch.setattr("src.parser._pool_terms", lambda: ("Python", "SQL", "Airflow"))
+    assert pipe.decide(_p(title="Partner Engineer", desc="Join our Bengaluru team."), RULES) is None
+    rules = {**RULES, "short_description_chars": 10}
+    assert pipe.decide(_p(title="Partner Engineer", desc="Join our Bengaluru team."), rules) == "relevance:skills=0"
 
 
 def test_company_name_falls_back_to_a_tidied_board_id():

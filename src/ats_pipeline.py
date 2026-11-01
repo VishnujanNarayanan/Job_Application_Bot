@@ -23,7 +23,9 @@ Front, in order (each skip is recorded in ``ats_postings.skipped``):
   E dedupe        already found on LinkedIn/Naukri: that job gets the ATS link
   F description   fetched for Greenhouse/SmartRecruiters
   G decide        unknown place -> India named in the description?
-                  unclear title -> enough of the operator's skills named?
+                  unclear title -> enough of the operator's skills named
+                  (in the title or description)? a description too short
+                  to name them goes to the parser unchecked
 """
 
 from __future__ import annotations
@@ -53,7 +55,14 @@ TECH = re.compile(
     r"\bapi\b|\bjava\b|python|golang|\bgo\b developer|\bnode(\.?js)?\b|\.net\b|c\+\+|\brust\b|\bscala\b|"
     r"software|developer|"
     r"\bsde\b|programmer|engineer i\b|engineer ii\b|member of technical staff|\bmts\b|"
-    r"application engineer|graduate engineer|solutions engineer|forward deployed",
+    r"application engineer|graduate engineer|solutions engineer|forward deployed|"
+    # Tech titles a business word used to outvote (title audit, 2026-11-01):
+    # "Senior Cloud Operations Specialist", "Staff Engineer - Linux Kernel and
+    # Device Driver", "Revenue Operations Lead (GTM Engineer)", "Supply Chain
+    # Security Engineer", "Principal Engineer (Warehouse Engineering)".
+    r"\bcloud\b|kernel|device driver|embedded|firmware|security engineer|gtm engineer|"
+    r"\bdata specialist|(staff|principal) (software )?engineer\b|\bkafka\b|\besb\b|"
+    r"integration (engineer|developer|architect|lead)",
     re.I)
 NONTECH = re.compile(
     r"\b(sales|account (executive|manager)|business development|marketing|recruit\w*|talent acquisition|"
@@ -69,6 +78,16 @@ NONTECH = re.compile(
     r"operations (specialist|manager|executive|associate|coordinator)|service desk|help ?desk)\b",
     re.I)
 EXEC = re.compile(r"\b(director|vice president|vp|head of|chief|cto|ceo|cfo|coo)\b", re.I)
+# Banks title individual engineers "VP" / "AVP" ("VP, Data Engineer (KDB
+# Developer)", "Vice President, Senior Backend Developer"): with an engineer
+# noun and no "of" it is a senior IC role, not an executive one. "VP of
+# Engineering", "VP Engineering" and any director / head / chief stay exec.
+_VP = re.compile(r"\b(a?vp|vice president)\b", re.I)
+_VP_OF = re.compile(r"\b(a?vp|vice president) (of|for)\b", re.I)
+_IC_NOUN = re.compile(r"\b(engineer|developer|programmer|scientist|architect)\b", re.I)
+_NOT_VP_EXEC = re.compile(r"\b(director|head of|chief|cto|ceo|cfo|coo)\b", re.I)
+# "Chief Technical Architect (IC Role)": the title says it is not a manager.
+_IC_ROLE = re.compile(r"\bIC role\b|individual contributor", re.I)
 # "Principal Engineer (AI, Office of the CEO)" is not an executive role.
 _OFFICE_OF = re.compile(r"office of the \w+", re.I)
 # Civil and industrial engineering, which shares words with software
@@ -76,9 +95,21 @@ _OFFICE_OF = re.compile(r"office of the \w+", re.I)
 # also in the title (gate analysis, 2026-10-16).
 CIVIL = re.compile(r"\b(utility|utilities|water|wastewater|hydraulic|mep|hvac|plc|substation|structural|"
                    r"qa/qc|qa ?& ?qc|geotech\w*|surveyor|piping|instrumentation)\b", re.I)
-SOFTWARE = re.compile(r"software|developer|\bdata\b|cloud|devops|\bml\b|\bai\b|python|java|\bweb\b|\bapp\b", re.I)
-# A manager title with no tech word: not the operator's kind of role.
+SOFTWARE = re.compile(r"software|developer|\bdata\b|cloud|devops|\bml\b|\bai\b|python|java|\bweb\b|\bapp\b|"
+                      r"embedded|firmware|c\+\+", re.I)
+# Any manager title, tech or not, is not the operator's kind of role: an
+# operator rule (2026-11-01). "Software Engineering Manager" and "Data
+# Engineering Manager" used to pass on their tech word.
 MANAGER = re.compile(r"\bmanager\b", re.I)
+
+
+def _is_exec(title: str) -> bool:
+    t = _OFFICE_OF.sub(" ", title)
+    if not EXEC.search(t) or _IC_ROLE.search(t):
+        return False
+    vp_ic = (_VP.search(t) and _IC_NOUN.search(t) and not _VP_OF.search(t)
+             and not _NOT_VP_EXEC.search(t))
+    return not vp_ic
 
 
 def role_family(title: str) -> str:
@@ -88,9 +119,9 @@ def role_family(title: str) -> str:
         return "nontech"
     if CIVIL.search(title) and not SOFTWARE.search(title):
         return "nontech"
-    if EXEC.search(_OFFICE_OF.sub(" ", title)):
+    if _is_exec(title):
         return "exec"
-    if MANAGER.search(title) and not tech:
+    if MANAGER.search(title):
         return "manager"
     return "tech" if tech else "unclear"
 
@@ -157,7 +188,13 @@ def decide(p: ats.Posting, rules: dict) -> str | None:
     if ats.place(p) == "unknown" and not ats.mentions_india(p.description):
         return "place:unknown"
     if role_family(p.title) == "unclear":
-        named = len(with_pool_skills([], p.description or ""))
+        description = (p.description or "").strip()
+        # Too short to name the skills it wants: the parser reads it instead
+        # of the job being dropped unread (title audit, 2026-11-01).
+        if len(description) < rules.get("short_description_chars", 500):
+            return None
+        # The title counts too: "Integration Lead - ESB & Kafka".
+        named = len(with_pool_skills([], f"{p.title}\n{description}"))
         if named < rules["min_pool_skills"]:
             return f"relevance:skills={named}"
     return None
@@ -176,6 +213,7 @@ def rules_from(cfg, *, now: datetime | None = None) -> dict:
         "level_blocklist": list(cfg.filters.get("job_level_blocklist") or []),
         "disallowed_regions": list(cfg.filters.get("disallowed_regions") or []),
         "min_pool_skills": int(a.get("min_pool_skills", 3)),
+        "short_description_chars": int(a.get("short_description_chars", 500)),
     }
 
 
