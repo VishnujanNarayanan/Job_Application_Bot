@@ -165,3 +165,32 @@ def test_oracle_site_without_india():
 def test_oracle_canary():
     lane, http = _lane("oracle", (-1, ""))
     assert poller.canary_ok(lane)
+
+
+# --- Amazon's own site (#161) -----------------------------------------------------
+
+def _amazon_page(ids, hits):
+    return json.dumps({"hits": hits, "jobs": [
+        {"id_icims": str(i), "title": f"SDE {i}", "normalized_location": "Bengaluru, Karnataka, IND",
+         "country_code": "IND", "posted_date": "November  2, 2026", "job_path": f"/en/jobs/{i}/sde",
+         "description": "<p>Build services</p>", "basic_qualifications": "- Java", "preferred_qualifications": "",
+         "company_name": "Amazon Dev Center India", "job_schedule_type": "full-time"} for i in ids]})
+
+
+def test_amazon_pages_and_parses():
+    lane, http = _lane("amazon", (200, _amazon_page(range(100), 150)), (200, _amazon_page(range(100, 150), 150)))
+    res = poller.fetch_board(lane, poller.Board("amazon", "amazon"))
+    assert res.error is None and res.complete and len(res.postings) == 150
+    assert "country=IND" in http.calls[0] and "offset=100" in http.calls[1]
+    p = res.postings[0]
+    assert ats.place(p) == "india" and p.posted_at == datetime(2026, 11, 2, tzinfo=timezone.utc)
+    assert "Build services" in p.description and "Java" in p.description
+    assert p.url == "https://www.amazon.jobs/en/jobs/0/sde" and ats.detail_url(p) is None
+    assert ats.employment_type(p.employment_type) == "fulltime"
+
+
+def test_amazon_canary():
+    lane, _ = _lane("amazon", (200, '{"hits": 5, "jobs": []}'))
+    assert poller.canary_ok(lane)
+    lane, _ = _lane("amazon", (503, ""))
+    assert not poller.canary_ok(lane)

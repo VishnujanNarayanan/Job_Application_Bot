@@ -28,12 +28,13 @@ from urllib.parse import quote
 from src.state.models import AllJobs
 
 ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
-         "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle")
+         "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
 # Eightfold returns 10 postings a page.
 EIGHTFOLD_PAGE = 10
+AMAZON_PAGE = 100
 
 
 @dataclass
@@ -104,6 +105,10 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
         return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
     if ats == "oracle":
         return oracle_search_url(board_id, offset=offset, location_id=country)
+    if ats == "amazon":
+        # #161: Amazon's own site, one board ("amazon"), India only, newest first.
+        return (f"https://www.amazon.jobs/en/search.json?country=IND&result_limit={AMAZON_PAGE}"
+                f"&offset={offset}&sort=recent")
     b = quote(board_id, safe="")
     if ats == "greenhouse":
         return f"https://boards-api.greenhouse.io/v1/boards/{b}/jobs"
@@ -155,7 +160,7 @@ _SUBDOMAIN_HOSTS = {
 # Path segments that are pages of the ATS itself, not a board.
 _NOT_BOARDS = {"embed", "api", "v1", "jobs", "job_app", "o", "j", "careers", ""}
 _WORKDAY = re.compile(r"^(?P<tenant>[a-z0-9-]+)\.(?P<shard>wd\d+)\.myworkdayjobs\.com$")
-_LOCALE = re.compile(r"^[a-z]{2}-[A-Z]{2}$")
+_LOCALE = re.compile(r"^[a-z]{2}(-[a-z]{2})?$", re.I)
 # Generic subdomains that are never a customer's board.
 _NOT_TENANTS = {"www", "api", "app", "careers", "jobs", "help", "support"}
 
@@ -359,6 +364,30 @@ def _oracle(board_id: str, data: dict) -> list[Posting]:
             location=" / ".join(x for x in locs if x), country=_country(j.get("PrimaryLocationCountry")),
             remote=True if "remote" in workplace else None, posted_at=_when(j.get("PostedDate")),
             url=url, apply_url=url, employment_type=j.get("JobSchedule"),
+        ))
+    return out
+
+
+def _amazon_date(text: str | None) -> datetime | None:
+    try:
+        return datetime.strptime(" ".join((text or "").split()), "%B %d, %Y").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _amazon(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in data.get("jobs") or []:
+        parts = [html_to_text(j.get(k)) for k in ("description", "basic_qualifications", "preferred_qualifications")]
+        heads = ("", "## Basic qualifications\n\n", "## Preferred qualifications\n\n")
+        desc = "\n\n".join(h + t for h, t in zip(heads, parts) if t)
+        url = f"https://www.amazon.jobs{j.get('job_path') or ''}"
+        out.append(Posting(
+            ats="amazon", board_id=board_id, posting_id=str(j.get("id_icims") or j.get("id")),
+            title=(j.get("title") or "").strip(), location=j.get("normalized_location") or j.get("location") or "",
+            country=_country(j.get("country_code")), posted_at=_amazon_date(j.get("posted_date")),
+            url=url, apply_url=url, description=desc or None, company=j.get("company_name") or "Amazon",
+            employment_type=j.get("job_schedule_type"),
         ))
     return out
 
@@ -595,7 +624,7 @@ def _eightfold(board_id: str, data: dict) -> list[Posting]:
 _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
             "smartrecruiters": _smartrecruiters, "workday": _workday, "recruitee": _recruitee,
             "rippling": _rippling, "workable": _workable, "bamboohr": _bamboohr, "eightfold": _eightfold,
-            "oracle": _oracle}
+            "oracle": _oracle, "amazon": _amazon}
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:

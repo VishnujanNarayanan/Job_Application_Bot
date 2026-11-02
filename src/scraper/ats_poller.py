@@ -231,6 +231,8 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
             return _fetch_eightfold(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "oracle":
             return _fetch_oracle(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "amazon":
+            return _fetch_amazon(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "smartrecruiters":
             # India through the country filter, all pages. SmartRecruiters
             # boards can hold thousands of jobs, most of them elsewhere.
@@ -336,6 +338,28 @@ def _fetch_oracle(lane: Lane, board: Board, res: BoardResult, *, max_pages: int)
     return res
 
 
+def _fetch_amazon(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Amazon's own site (#161): India, 100 a page until ``hits``."""
+    import json
+
+    offset, total = 0, None
+    for _page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("amazon", board.board_id, offset=offset))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        data = json.loads(body)
+        total = total if total is not None else int(data.get("hits") or 0)
+        page = ats.parse_list("amazon", board.board_id, body)
+        res.postings += page
+        offset += ats.AMAZON_PAGE
+        if offset >= total or not page:
+            break
+    else:
+        res.complete = False
+    return res
+
+
 def _fetch_eightfold(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
     """Eightfold (#160): India-filtered pages of 10 until ``count``."""
     import json
@@ -408,6 +432,10 @@ def canary_ok(lane: Lane) -> bool:
         board = f"{CANARY}/wd5/External"
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
+    if lane.name == "amazon":
+        # One board, no "no such board" answer: the search must just work.
+        status, body = lane.get(ats.list_url("amazon", "amazon"), patient=False)
+        return status == 200 and '"hits"' in body
     if lane.name == "oracle":
         # No such pod: the connection fails (checked 2026-11-02).
         status, _body = lane.get(ats.oracle_search_url(f"{CANARY}.fa.us2.oraclecloud.com/CX_1", limit=1),
