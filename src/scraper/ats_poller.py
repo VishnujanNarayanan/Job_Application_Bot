@@ -40,6 +40,7 @@ import difflib
 import re
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -762,6 +763,37 @@ def learn_boards(session, jobs: list) -> dict[str, int]:
         session.execute(insert(AtsBoard).values(rows).on_conflict_do_nothing())
     stats["new"] = len(rows)
     return stats
+
+
+def coverage(session, jobs: list, *, top: int = 5) -> dict:
+    """How many of a portal run's jobs come from a company whose ATS board
+    the poll covers (#163): a polled board on a supported ATS that is not an
+    empty / no-API guess, matched by company key or named by the job's apply
+    link. The uncovered companies with most jobs are listed with the ATS
+    their apply link points to, when known, to show what to build next."""
+    from sqlalchemy import select
+
+    from src.state.models import AtsBoard
+
+    if not jobs:
+        return {"jobs": 0, "covered": 0, "pct": 0, "uncovered": []}
+    rows = session.execute(
+        select(AtsBoard.ats, AtsBoard.board_id, AtsBoard.company_key)
+        .where(AtsBoard.poll.is_(True), AtsBoard.ats.in_(list(ats.ATSES)),
+               AtsBoard.state.notin_(("empty", "no_api")))).all()
+    keys = {k for _a, _b, k in rows if k}
+    boards = {(a, b) for a, b, _k in rows}
+    covered, missing, via = 0, Counter(), {}
+    for job in jobs:
+        link = ats.board_from_url(getattr(job, "job_url_direct", None))
+        if (link and link in boards) or ats.key(job.company or "") in keys:
+            covered += 1
+            continue
+        missing[job.company or "?"] += 1
+        if link:
+            via[job.company or "?"] = link[0]
+    return {"jobs": len(jobs), "covered": covered, "pct": round(100 * covered / len(jobs)),
+            "uncovered": [(c, n, via.get(c)) for c, n in missing.most_common(top)]}
 
 
 def portal_jobs(session, now: datetime, days: int) -> list:

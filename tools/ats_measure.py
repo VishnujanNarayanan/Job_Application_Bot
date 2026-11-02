@@ -52,6 +52,8 @@ def candidates(atses: list[str]) -> dict[str, list[str]]:
                 ids[r["ats"]].add(r["id"])
     with session_scope() as s:
         known = {(a, b) for a, b in s.execute(text("SELECT ats, board_id FROM ats_boards"))}
+        # Ids discovery already asked about and found missing.
+        known |= {(a, b) for a, b in s.execute(text("SELECT ats, board_id FROM ats_probes"))}
     measured = set()
     if MEASURE.exists():
         measured = {(r["ats"], r["board"]) for r in map(json.loads, MEASURE.read_text().splitlines())}
