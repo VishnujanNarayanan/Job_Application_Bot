@@ -44,7 +44,6 @@ def test_no_employer_link(html):
     ("https://job-boards.eu.greenhouse.io/bradken/jobs/4943118101", ("greenhouse", "bradken")),
     ("https://boards.greenhouse.io/embed/job_app?for=acme&token=123", ("greenhouse", "acme")),
     ("https://jobs.lever.co/cred/2f1c-aa/apply", ("lever", "cred")),
-    ("https://jobs.eu.lever.co/acme/123", ("lever", "acme")),
     ("https://jobs.ashbyhq.com/telus-digital/104b1b56/application", ("ashby", "telus-digital")),
     ("https://jobs.smartrecruiters.com/NielsenIQ/744000158440229", ("smartrecruiters", "nielseniq")),
     ("https://wellsfargo.wd1.myworkdayjobs.com/en-US/WellsFargoJobs/job/Bengaluru/Engineer_R-1",
@@ -67,6 +66,7 @@ def test_board_from_url(url, expected):
     "https://boards.greenhouse.io/embed/job_app?token=123",   # no board named
     "https://jobs.lever.co/", "https://www.myworkdayjobs.com/x",
     "https://www.keka.com/careers",
+    "https://jobs.eu.lever.co/acme/123",                   # EU API: no adapter
     "https://career8.successfactors.com/career",          # no company
     "https://www.icims.com/careers",
 ])

@@ -136,7 +136,9 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
 _PATH_HOSTS = {
     "boards.greenhouse.io": "greenhouse", "job-boards.greenhouse.io": "greenhouse",
     "boards.eu.greenhouse.io": "greenhouse", "job-boards.eu.greenhouse.io": "greenhouse",
-    "jobs.lever.co": "lever", "jobs.eu.lever.co": "lever",
+    # jobs.eu.lever.co boards live on Lever's EU API, which the adapter does
+    # not read: left out rather than polled as 404s.
+    "jobs.lever.co": "lever",
     "jobs.ashbyhq.com": "ashby",
     "jobs.smartrecruiters.com": "smartrecruiters", "careers.smartrecruiters.com": "smartrecruiters",
     "apply.workable.com": "workable",

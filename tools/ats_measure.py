@@ -36,6 +36,8 @@ from pathlib import Path
 
 OUT = Path("data/ats_probe")
 IDS = OUT / "commoncrawl_ids.jsonl"
+# Guessed candidates from company lists (tools.ats_candidates), same shape.
+EXTRA = OUT / "extra_ids.jsonl"
 MEASURE = OUT / "measure_cc.jsonl"
 _lock = threading.Lock()
 
@@ -45,21 +47,28 @@ def candidates(atses: list[str]) -> dict[str, list[str]]:
 
     from src.state.db import session_scope
 
-    ids: dict[str, set[str]] = defaultdict(set)
-    if IDS.exists():
-        for r in map(json.loads, IDS.read_text().splitlines()):
-            if r["ats"] in atses:
-                ids[r["ats"]].add(r["id"])
+    ids: dict[str, list[str]] = defaultdict(list)
+    seen: set[tuple[str, str]] = set()
+    for f in (IDS, EXTRA):
+        if f.exists():
+            # File order is kept: candidate lists put their likeliest first.
+            for r in map(json.loads, f.read_text().splitlines()):
+                # Case-insensitive: Ashby "G2" is the stored "g2"; Workday
+                # sites "Search" / "search" are one board.
+                k = (r["ats"], r["id"].lower())
+                if r["ats"] in atses and k not in seen:
+                    seen.add(k)
+                    ids[r["ats"]].append(r["id"])
     with session_scope() as s:
-        known = {(a, b) for a, b in s.execute(text("SELECT ats, board_id FROM ats_boards"))}
+        known = {(a, b.lower()) for a, b in s.execute(text("SELECT ats, board_id FROM ats_boards"))}
         # Ids discovery already asked about and found missing.
-        known |= {(a, b) for a, b in s.execute(text("SELECT ats, board_id FROM ats_probes"))}
+        known |= {(a, b.lower()) for a, b in s.execute(text("SELECT ats, board_id FROM ats_probes"))}
     measured = set()
     if MEASURE.exists():
-        measured = {(r["ats"], r["board"]) for r in map(json.loads, MEASURE.read_text().splitlines())}
+        measured = {(r["ats"], r["board"].lower()) for r in map(json.loads, MEASURE.read_text().splitlines())}
     # Board ids are compared as stored: Greenhouse and SmartRecruiters ids
     # are lower-cased by board_from_url, like discovery's.
-    return {a: sorted(b for b in v if (a, b) not in known and (a, b) not in measured)
+    return {a: [b for b in v if (a, b.lower()) not in known and (a, b.lower()) not in measured]
             for a, v in ids.items()}
 
 
@@ -147,10 +156,11 @@ def upload(dry_run: bool) -> None:
     from src.state.db import session_scope
     from src.state.models import AtsBoard
 
-    rows = []
+    rows, taken = [], set()
     for r in map(json.loads, MEASURE.read_text().splitlines()):
-        if r.get("error"):
+        if r.get("error") or (r["ats"], r["board"].lower()) in taken:
             continue
+        taken.add((r["ats"], r["board"].lower()))
         poll = worth_polling(r)
         state = ("active_india" if r.get("india") else "active_remote" if poll
                  else "active_other" if r.get("jobs") else "empty")
