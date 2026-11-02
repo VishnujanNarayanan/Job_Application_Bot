@@ -33,6 +33,7 @@ import threading
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import unquote
 
 OUT = Path("data/ats_probe")
 IDS = OUT / "commoncrawl_ids.jsonl"
@@ -55,10 +56,12 @@ def candidates(atses: list[str]) -> dict[str, list[str]]:
             for r in map(json.loads, f.read_text().splitlines()):
                 # Case-insensitive: Ashby "G2" is the stored "g2"; Workday
                 # sites "Search" / "search" are one board.
-                k = (r["ats"], r["id"].lower())
+                # Ids collected before board_from_url decoded them ("Anthos%20Capital").
+                ident = unquote(r["id"])
+                k = (r["ats"], ident.lower())
                 if r["ats"] in atses and k not in seen:
                     seen.add(k)
-                    ids[r["ats"]].append(r["id"])
+                    ids[r["ats"]].append(ident)
     with session_scope() as s:
         known = {(a, b.lower()) for a, b in s.execute(text("SELECT ats, board_id FROM ats_boards"))}
         # Ids discovery already asked about and found missing.

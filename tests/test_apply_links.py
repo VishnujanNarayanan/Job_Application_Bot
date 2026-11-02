@@ -45,6 +45,7 @@ def test_no_employer_link(html):
     ("https://boards.greenhouse.io/embed/job_app?for=acme&token=123", ("greenhouse", "acme")),
     ("https://jobs.lever.co/cred/2f1c-aa/apply", ("lever", "cred")),
     ("https://jobs.ashbyhq.com/telus-digital/104b1b56/application", ("ashby", "telus-digital")),
+    ("https://jobs.ashbyhq.com/Anthos%20Capital/123", ("ashby", "Anthos Capital")),   # decoded
     ("https://jobs.smartrecruiters.com/NielsenIQ/744000158440229", ("smartrecruiters", "nielseniq")),
     ("https://wellsfargo.wd1.myworkdayjobs.com/en-US/WellsFargoJobs/job/Bengaluru/Engineer_R-1",
      ("workday", "wellsfargo/wd1/WellsFargoJobs")),

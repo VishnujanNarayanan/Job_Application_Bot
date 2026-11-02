@@ -179,8 +179,11 @@ def board_from_url(url: str | None) -> tuple[str, str] | None:
         u = urlsplit(url.strip())
     except ValueError:
         return None
+    from urllib.parse import unquote
+
     host = (u.hostname or "").lower()
-    parts = [p for p in u.path.split("/") if p]
+    # Decoded: "jobs.ashbyhq.com/Anthos%20Capital" is the board "Anthos Capital".
+    parts = [unquote(p) for p in u.path.split("/") if p]
     if host in _PATH_HOSTS:
         ats = _PATH_HOSTS[host]
         # boards.greenhouse.io/embed/job_app?for=acme&token=...
