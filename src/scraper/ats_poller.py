@@ -233,6 +233,8 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
             return _fetch_oracle(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "amazon":
             return _fetch_amazon(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "keka":
+            return _fetch_keka(lane, board, res)
         if board.ats == "smartrecruiters":
             # India through the country filter, all pages. SmartRecruiters
             # boards can hold thousands of jobs, most of them elsewhere.
@@ -338,6 +340,25 @@ def _fetch_oracle(lane: Lane, board: Board, res: BoardResult, *, max_pages: int)
     return res
 
 
+def _fetch_keka(lane: Lane, board: Board, res: BoardResult) -> BoardResult:
+    """Keka (#160): the careers page for the org id, then the active jobs.
+    A tenant that does not exist redirects to TenantNotFound.html."""
+    status, page, _ = lane.fetch(ats.list_url("keka", board.board_id))
+    if status != 200:
+        res.error = f"HTTP {status}"
+        return res
+    org = ats.keka_org_id(page)
+    if org is None:
+        res.error = "HTTP 404"
+        return res
+    status, body, _ = lane.fetch(ats.keka_jobs_url(board.board_id, org))
+    if status != 200:
+        res.error = f"HTTP {status}"
+        return res
+    res.postings = ats.parse_list("keka", board.board_id, body)
+    return res
+
+
 def _fetch_amazon(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
     """Amazon's own site (#161): India, 100 a page until ``hits``."""
     import json
@@ -432,6 +453,10 @@ def canary_ok(lane: Lane) -> bool:
         board = f"{CANARY}/wd5/External"
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
+    if lane.name == "keka":
+        # Redirected to TenantNotFound.html, which names no org (2026-11-02).
+        status, body = lane.get(ats.list_url("keka", CANARY), patient=False)
+        return status in (200, 404) and ats.keka_org_id(body) is None
     if lane.name == "amazon":
         # One board, no "no such board" answer: the search must just work.
         status, body = lane.get(ats.list_url("amazon", "amazon"), patient=False)

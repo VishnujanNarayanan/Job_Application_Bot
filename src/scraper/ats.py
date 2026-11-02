@@ -28,7 +28,7 @@ from urllib.parse import quote
 from src.state.models import AllJobs
 
 ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
-         "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon")
+         "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon", "keka")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
@@ -105,6 +105,9 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
         return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
     if ats == "oracle":
         return oracle_search_url(board_id, offset=offset, location_id=country)
+    if ats == "keka":
+        # The careers page: it names the org id the jobs call needs (#160).
+        return f"https://{quote(board_id, safe='')}.keka.com/careers/"
     if ats == "amazon":
         # #161: Amazon's own site, one board ("amazon"), India only, newest first.
         return (f"https://www.amazon.jobs/en/search.json?country=IND&result_limit={AMAZON_PAGE}"
@@ -368,6 +371,38 @@ def _oracle(board_id: str, data: dict) -> list[Posting]:
     return out
 
 
+# --- Keka (#160) --------------------------------------------------------------------
+# Indian SMB/startup HR suite. The careers page names the org id; the active
+# jobs (with descriptions) come from careers/api/embedjobs/default/active/{id}.
+
+_KEKA_ORG = re.compile(r"/ats/documents/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+
+
+def keka_org_id(page: str) -> str | None:
+    m = _KEKA_ORG.search(page or "")
+    return m.group(1) if m else None
+
+
+def keka_jobs_url(board_id: str, org_id: str) -> str:
+    return f"https://{quote(board_id, safe='')}.keka.com/careers/api/embedjobs/default/active/{org_id}"
+
+
+def _keka(board_id: str, data: list) -> list[Posting]:
+    out = []
+    for j in data or []:
+        locs = j.get("jobLocations") or []
+        codes = {(x.get("countryCode") or "").upper() for x in locs}
+        loc = " / ".join(", ".join(x for x in (l.get("city"), l.get("state"), l.get("countryCode")) if x) for l in locs)
+        url = f"https://{board_id}.keka.com/careers/jobdetails/{j['id']}"
+        out.append(Posting(
+            ats="keka", board_id=board_id, posting_id=str(j["id"]), title=(j.get("title") or "").strip(),
+            location=loc, country="IN" if "IN" in codes else (sorted(codes)[0] if codes - {""} else None),
+            posted_at=_when(j.get("publishedOn")), url=url, apply_url=url,
+            description=html_to_text(j.get("description")),
+        ))
+    return out
+
+
 def _amazon_date(text: str | None) -> datetime | None:
     try:
         return datetime.strptime(" ".join((text or "").split()), "%B %d, %Y").replace(tzinfo=timezone.utc)
@@ -624,7 +659,7 @@ def _eightfold(board_id: str, data: dict) -> list[Posting]:
 _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
             "smartrecruiters": _smartrecruiters, "workday": _workday, "recruitee": _recruitee,
             "rippling": _rippling, "workable": _workable, "bamboohr": _bamboohr, "eightfold": _eightfold,
-            "oracle": _oracle, "amazon": _amazon}
+            "oracle": _oracle, "amazon": _amazon, "keka": _keka}
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
@@ -634,7 +669,7 @@ def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
         data = json.loads(body)
     except ValueError as exc:
         raise ValueError(f"{ats}/{board_id}: not JSON") from exc
-    expected = list if ats in ("lever", "rippling") else dict
+    expected = list if ats in ("lever", "rippling", "keka") else dict
     if not isinstance(data, expected):
         raise ValueError(f"{ats}/{board_id}: unexpected {type(data).__name__}")
     return _PARSERS[ats](board_id, data)

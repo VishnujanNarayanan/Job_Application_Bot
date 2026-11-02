@@ -194,3 +194,35 @@ def test_amazon_canary():
     assert poller.canary_ok(lane)
     lane, _ = _lane("amazon", (503, ""))
     assert not poller.canary_ok(lane)
+
+
+# --- Keka (#160) ------------------------------------------------------------------
+
+KEKA_PAGE = '<script>fetch("/ats/documents/7159a120-94d0-4bec-83fe-30b283210841/careerportal/x.html")</script>'
+
+
+def test_keka_org_then_jobs():
+    jobs = json.dumps([{"id": "167256", "title": "Data Engineer", "description": "<div>Spark and Airflow</div>",
+                        "jobLocations": [{"city": "Hyderabad", "state": "TG", "countryCode": "IN"}],
+                        "publishedOn": "2026-10-21T05:58:00.08Z", "experience": "2 - 4 Years"},
+                       {"id": "2", "title": "Marketer", "description": "<div>Chennai office</div>",
+                        "jobLocations": [], "publishedOn": "2026-10-29T13:44:20.557Z"}])
+    lane, http = _lane("keka", (200, KEKA_PAGE), (200, jobs))
+    res = poller.fetch_board(lane, poller.Board("keka", "aidenai"))
+    assert res.error is None and len(res.postings) == 2
+    assert http.calls == ["https://aidenai.keka.com/careers/",
+                          "https://aidenai.keka.com/careers/api/embedjobs/default/active/"
+                          "7159a120-94d0-4bec-83fe-30b283210841"]
+    a, b = res.postings
+    assert ats.place(a) == "india" and "Spark" in a.description and a.posted_at.day == 21
+    assert a.url == "https://aidenai.keka.com/careers/jobdetails/167256" and ats.detail_url(a) is None
+    assert ats.place(b) == "unknown"   # the description decides
+
+
+def test_keka_missing_tenant_is_gone_and_canary():
+    lane, _ = _lane("keka", (200, "<html>Tenant not found</html>"))
+    assert poller.fetch_board(lane, poller.Board("keka", "nope")).error == "HTTP 404"
+    lane, _ = _lane("keka", (200, "<html>Tenant not found</html>"))
+    assert poller.canary_ok(lane)
+    lane, _ = _lane("keka", (200, KEKA_PAGE))
+    assert not poller.canary_ok(lane)
