@@ -112,3 +112,56 @@ def test_canaries():
                              ("recruitee", (200, '{"offers": []}'), False)]:
         lane, _ = _lane(name, answer)
         assert poller.canary_ok(lane) is ok, (name, answer)
+
+
+# --- Oracle HCM -------------------------------------------------------------------
+
+ORACLE = "jpmc.fa.oraclecloud.com/CX_1001"
+
+
+def _oracle_page(ids, total, facets=None):
+    return json.dumps({"items": [{"TotalJobsCount": total, "locationsFacet": facets or [],
+                                  "requisitionList": [
+                                      {"Id": str(i), "Title": f"Software Engineer {i}", "PostedDate": "2026-11-02",
+                                       "PrimaryLocation": "Mumbai, Maharashtra, India",
+                                       "PrimaryLocationCountry": "IN", "WorkplaceType": "",
+                                       "secondaryLocations": [], "JobSchedule": "Full time"} for i in ids]}]})
+
+
+def test_oracle_board_from_url_and_urls():
+    assert ats.board_from_url(
+        "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/210722431") == ("oracle", ORACLE)
+    assert ats.board_from_url("https://jpmc.fa.oraclecloud.com/fscmUI/faces/x") is None
+    url = ats.oracle_search_url(ORACLE, offset=25, location_id="300")
+    assert url.startswith("https://jpmc.fa.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions?")
+    assert "siteNumber=CX_1001" in url and "offset=25" in url and "locationId=300" in url
+
+
+def test_oracle_india_facet_then_pages():
+    facets = [{"Id": 1, "Name": "United States"}, {"Id": 300000000289360, "Name": "India"},
+              {"Id": 2, "Name": "Karnataka, India"}]
+    lane, http = _lane("oracle", (200, _oracle_page([], 7077, facets)), (200, _oracle_page(range(25), 30)),
+                       (200, _oracle_page(range(25, 30), 30)))
+    res = poller.fetch_board(lane, poller.Board("oracle", ORACLE))
+    assert res.error is None and res.complete and len(res.postings) == 30
+    assert "locationId=300000000289360" in http.calls[1] and "offset=25" in http.calls[2]
+    p = res.postings[0]
+    assert ats.place(p) == "india" and p.url.endswith("/sites/CX_1001/job/0")
+    assert ats.detail_url(p).endswith('finder=ById;Id="0",siteNumber=CX_1001')
+    ats.parse_detail(p, json.dumps({"items": [{"ExternalDescriptionStr": "<p>Java</p>",
+                                               "ExternalResponsibilitiesStr": "<p>Build</p>",
+                                               "ExternalPostedStartDate": "2026-11-02T07:58:57+00:00",
+                                               "JobSchedule": "Full time", "PrimaryLocationCountry": "IN"}]}))
+    assert "Java" in p.description and p.posted_at.hour == 7
+    assert ats.employment_type(p.employment_type) == "fulltime"
+
+
+def test_oracle_site_without_india():
+    lane, http = _lane("oracle", (200, _oracle_page([], 50, [{"Id": 1, "Name": "United States"}])))
+    res = poller.fetch_board(lane, poller.Board("oracle", ORACLE))
+    assert res.error is None and res.complete and res.postings == [] and len(http.calls) == 1
+
+
+def test_oracle_canary():
+    lane, http = _lane("oracle", (-1, ""))
+    assert poller.canary_ok(lane)

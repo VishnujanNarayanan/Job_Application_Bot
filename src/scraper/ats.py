@@ -28,7 +28,7 @@ from urllib.parse import quote
 from src.state.models import AllJobs
 
 ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
-         "recruitee", "rippling", "workable", "bamboohr", "eightfold")
+         "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
@@ -102,6 +102,8 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
     if ats == "workday":
         tenant, shard, site = workday_parts(board_id)
         return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
+    if ats == "oracle":
+        return oracle_search_url(board_id, offset=offset, location_id=country)
     b = quote(board_id, safe="")
     if ats == "greenhouse":
         return f"https://boards-api.greenhouse.io/v1/boards/{b}/jobs"
@@ -185,6 +187,13 @@ def board_from_url(url: str | None) -> tuple[str, str] | None:
     if host.endswith((".successfactors.com", ".successfactors.eu")) and host.startswith("career"):
         company = (parse_qs(u.query).get("company") or [""])[0].strip()
         return ("successfactors", company) if company else None
+    # Oracle HCM Candidate Experience (#160):
+    # {pod}.fa.{region}.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/...
+    if host.endswith(".oraclecloud.com") and "sites" in parts:
+        i = parts.index("sites")
+        if i + 1 < len(parts) and "CandidateExperience" in parts:
+            return "oracle", f"{host}/{parts[i + 1]}"
+        return None
     # iCIMS: the whole host is the board (careers-acme.icims.com) (#160).
     if host.endswith(".icims.com"):
         sub = host[: -len(".icims.com")]
@@ -301,10 +310,67 @@ def _workday(board_id: str, data: dict, now: datetime | None = None) -> list[Pos
     return out
 
 
+# --- Oracle HCM (#160) -------------------------------------------------------------
+# A board is a Candidate Experience site: {host}/{siteNumber}, e.g.
+# "jpmc.fa.oraclecloud.com/CX_1001". The public REST finder lists 25 a page;
+# India is a location facet id per site, read from an unfiltered first call.
+
+ORACLE_PAGE = 25
+
+
+def oracle_parts(board_id: str) -> tuple[str, str]:
+    host, site = board_id.split("/", 1)
+    return host, site
+
+
+def oracle_search_url(board_id: str, *, offset: int = 0, location_id: str | None = None,
+                      limit: int = ORACLE_PAGE) -> str:
+    host, site = oracle_parts(board_id)
+    finder = (f"findReqs;siteNumber={site},facetsList=LOCATIONS,limit={limit},offset={offset},"
+              f"sortBy=POSTING_DATES_DESC" + (f",locationId={location_id}" if location_id else ""))
+    return (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+            f"?onlyData=true&expand=requisitionList.secondaryLocations&finder={finder}")
+
+
+def oracle_india_location(data: dict) -> str | None:
+    """The site's location-facet id for India, or None (no India postings)."""
+    items = data.get("items") or [{}]
+    for f in items[0].get("locationsFacet") or []:
+        if (f.get("Name") or "").strip().lower() == "india":
+            return str(f["Id"])
+    return None
+
+
+def oracle_total(data: dict) -> int:
+    items = data.get("items") or [{}]
+    return int(items[0].get("TotalJobsCount") or 0)
+
+
+def _oracle(board_id: str, data: dict) -> list[Posting]:
+    host, site = oracle_parts(board_id)
+    items = data.get("items") or [{}]
+    out = []
+    for j in items[0].get("requisitionList") or []:
+        locs = [j.get("PrimaryLocation") or ""] + [x.get("Name") or "" for x in j.get("secondaryLocations") or []]
+        workplace = (j.get("WorkplaceType") or j.get("WorkplaceTypeCode") or "").lower()
+        url = f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{j['Id']}"
+        out.append(Posting(
+            ats="oracle", board_id=board_id, posting_id=str(j["Id"]), title=(j.get("Title") or "").strip(),
+            location=" / ".join(x for x in locs if x), country=_country(j.get("PrimaryLocationCountry")),
+            remote=True if "remote" in workplace else None, posted_at=_when(j.get("PostedDate")),
+            url=url, apply_url=url, employment_type=j.get("JobSchedule"),
+        ))
+    return out
+
+
 def detail_url(posting: Posting) -> str | None:
     """Where the description is, for lists that leave it out; else None."""
     if posting.description is not None:
         return None
+    if posting.ats == "oracle":
+        host, site = oracle_parts(posting.board_id)
+        return (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
+                f'?expand=all&onlyData=true&finder=ById;Id="{posting.posting_id}",siteNumber={site}')
     if posting.ats == "workday":
         tenant, _shard, site = workday_parts(posting.board_id)
         host = workday_host(posting.board_id)
@@ -528,7 +594,8 @@ def _eightfold(board_id: str, data: dict) -> list[Posting]:
 
 _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
             "smartrecruiters": _smartrecruiters, "workday": _workday, "recruitee": _recruitee,
-            "rippling": _rippling, "workable": _workable, "bamboohr": _bamboohr, "eightfold": _eightfold}
+            "rippling": _rippling, "workable": _workable, "bamboohr": _bamboohr, "eightfold": _eightfold,
+            "oracle": _oracle}
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
@@ -598,6 +665,15 @@ def parse_detail(posting: Posting, body: str) -> None:
         # "India - Salaried" says where the role is when the location does not.
         if in_india(job.get("employmentStatusLabel")):
             posting.country = "IN"
+    elif posting.ats == "oracle":
+        job = (data.get("items") or [{}])[0]
+        parts = [html_to_text(job.get(k)) for k in
+                 ("ExternalDescriptionStr", "ExternalResponsibilitiesStr", "ExternalQualificationsStr")]
+        posting.description = "\n\n".join(t for t in parts if t) or html_to_text(job.get("ShortDescriptionStr"))
+        posting.posted_at = _when(job.get("ExternalPostedStartDate")) or posting.posted_at
+        posting.employment_type = job.get("JobSchedule") or posting.employment_type
+        if job.get("PrimaryLocationCountry"):
+            posting.country = _country(job.get("PrimaryLocationCountry"))
     elif posting.ats == "eightfold":
         posting.description = html_to_text(data.get("job_description"))
         posting.apply_url = data.get("apply_redirect_url") or posting.apply_url

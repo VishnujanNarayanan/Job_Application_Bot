@@ -229,6 +229,8 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
             return _fetch_workday(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "eightfold":
             return _fetch_eightfold(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "oracle":
+            return _fetch_oracle(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "smartrecruiters":
             # India through the country filter, all pages. SmartRecruiters
             # boards can hold thousands of jobs, most of them elsewhere.
@@ -297,6 +299,36 @@ def _fetch_workday(lane: Lane, board: Board, res: BoardResult, *, max_pages: int
         page = ats.parse_list("workday", board.board_id, body)
         res.postings += page
         offset += ats.WORKDAY_PAGE
+        if offset >= total or not page:
+            break
+    else:
+        res.complete = False
+    return res
+
+
+def _fetch_oracle(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Oracle HCM (#160): one call for the India location id, then the
+    India-filtered pages of 25. No India facet = no India postings."""
+    import json
+
+    status, body, _ = lane.fetch(ats.oracle_search_url(board.board_id, limit=1))
+    if status != 200:
+        res.error = f"HTTP {status}"
+        return res
+    india = ats.oracle_india_location(json.loads(body))
+    if india is None:
+        return res
+    offset, total = 0, None
+    for _page in range(max_pages):
+        status, body, _ = lane.fetch(ats.oracle_search_url(board.board_id, offset=offset, location_id=india))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        data = json.loads(body)
+        total = total if total is not None else ats.oracle_total(data)
+        page = ats.parse_list("oracle", board.board_id, body)
+        res.postings += page
+        offset += ats.ORACLE_PAGE
         if offset >= total or not page:
             break
     else:
@@ -376,6 +408,11 @@ def canary_ok(lane: Lane) -> bool:
         board = f"{CANARY}/wd5/External"
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
+    if lane.name == "oracle":
+        # No such pod: the connection fails (checked 2026-11-02).
+        status, _body = lane.get(ats.oracle_search_url(f"{CANARY}.fa.us2.oraclecloud.com/CX_1", limit=1),
+                                 patient=False)
+        return status in (-1, 404)
     status, body = lane.get(ats.list_url(lane.name, CANARY), patient=False)
     if lane.name == "bamboohr":
         # Redirected to bamboohr.com's home page (checked 2026-11-02).

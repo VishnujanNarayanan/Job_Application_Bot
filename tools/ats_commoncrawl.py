@@ -186,7 +186,10 @@ SURT_PREFIXES = (
     "com,recruitee,", "com,bamboohr,", "hr,breezy,", "com,teamtailor,", "com,applytojob,",
     "in,darwinbox,", "com,keka,", "com,freshteam,", "com,zohorecruit,", "in,zohorecruit,",
     "ai,eightfold,", "com,icims,", "com,successfactors,", "eu,successfactors,",
+    "com,oraclecloud,",
 )
+# Prefixes covering far more than job pages: only these paths are read.
+PATH_FILTER = {"com,oraclecloud,": "%CandidateExperience%"}
 
 
 def _prefix_end(prefix: str) -> str:
@@ -261,12 +264,15 @@ def parquet_collect(n_crawls: int) -> None:
             # One row per (host, first two path segments, embed "for="):
             # enough to tell boards apart, far fewer rows than URLs.
             try:
+                path_like = PATH_FILTER.get(prefix, "%")
+                # Oracle's site number sits deeper in the path (/sites/CX_1001/).
                 rows = con.execute(f"""
                     SELECT any_value(url) FROM read_parquet([{listing}])
-                    WHERE url_surtkey >= ? AND url_surtkey < ?
+                    WHERE url_surtkey >= ? AND url_surtkey < ? AND url_path LIKE ?
                     GROUP BY url_host_name, split_part(url_path, '/', 2), split_part(url_path, '/', 3),
+                             regexp_extract(url_path, '/sites/([^/]+)', 1),
                              regexp_extract(coalesce(url_query, ''), '(for|company)=([^&]+)', 2)
-                """, [prefix, end]).fetchall()
+                """, [prefix, end, path_like]).fetchall()
             except Exception as exc:  # noqa: BLE001 - a flaky range read: retry on rerun
                 log(f"{crawl} {prefix}: failed ({type(exc).__name__}), will retry on rerun")
                 continue
