@@ -55,6 +55,8 @@ def test_no_employer_link(html):
     ("https://zeta.keka.com/careers/jobdetails/123", ("keka", "zeta")),
     ("https://razorpay.darwinbox.in/ms/candidate/careers/123", ("darwinbox", "razorpay")),
     ("https://apply.workable.com/acme/j/ABC123/", ("workable", "acme")),
+    ("https://career8.successfactors.com/career?company=AcmeP&career_job_req_id=1", ("successfactors", "AcmeP")),
+    ("https://careers-acme.icims.com/jobs/1234/engineer/job", ("icims", "careers-acme")),
 ])
 def test_board_from_url(url, expected):
     assert ats.board_from_url(url) == expected
@@ -65,6 +67,8 @@ def test_board_from_url(url, expected):
     "https://boards.greenhouse.io/embed/job_app?token=123",   # no board named
     "https://jobs.lever.co/", "https://www.myworkdayjobs.com/x",
     "https://www.keka.com/careers",
+    "https://career8.successfactors.com/career",          # no company
+    "https://www.icims.com/careers",
 ])
 def test_no_board(url):
     assert ats.board_from_url(url) is None

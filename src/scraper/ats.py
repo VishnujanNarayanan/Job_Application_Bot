@@ -158,6 +158,14 @@ def board_from_url(url: str | None) -> tuple[str, str] | None:
         if board.lower() in _NOT_BOARDS:
             return None
         return ats, board.lower() if ats in ("smartrecruiters", "greenhouse") else board
+    # SuccessFactors: career{n}.successfactors.com/career?company=acme (#160).
+    if host.endswith((".successfactors.com", ".successfactors.eu")) and host.startswith("career"):
+        company = (parse_qs(u.query).get("company") or [""])[0].strip()
+        return ("successfactors", company) if company else None
+    # iCIMS: the whole host is the board (careers-acme.icims.com) (#160).
+    if host.endswith(".icims.com"):
+        sub = host[: -len(".icims.com")]
+        return ("icims", sub) if sub and sub not in _NOT_TENANTS else None
     m = _WORKDAY.match(host)
     if m:
         site = next((p for p in parts if not _LOCALE.match(p)), None)
