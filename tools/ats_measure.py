@@ -180,10 +180,12 @@ def upload(dry_run: bool) -> None:
     print(f"rows {len(rows)}  poll {sum(r['poll'] for r in rows)}  ~{size / 1e6:.2f} MB")
     if dry_run or not rows:
         return
-    with session_scope() as s:
-        for i in range(0, len(rows), 1000):
-            s.execute(insert(AtsBoard).values(rows[i:i + 1000]).on_conflict_do_nothing())
-        s.commit()
+    # Small batches, each committed: Neon dropped a 1,000-row insert
+    # (2026-11-02). A rerun skips what landed (on conflict do nothing).
+    for i in range(0, len(rows), 200):
+        with session_scope() as s:
+            s.execute(insert(AtsBoard).values(rows[i:i + 200]).on_conflict_do_nothing())
+            s.commit()
     print("uploaded")
 
 
