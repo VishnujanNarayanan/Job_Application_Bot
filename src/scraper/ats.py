@@ -27,10 +27,13 @@ from urllib.parse import quote
 
 from src.state.models import AllJobs
 
-ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday")
+ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
+         "recruitee", "rippling", "workable", "bamboohr", "eightfold")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
+# Eightfold returns 10 postings a page.
+EIGHTFOLD_PAGE = 10
 
 
 @dataclass
@@ -109,6 +112,19 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
     if ats == "smartrecruiters":
         url = f"https://api.smartrecruiters.com/v1/companies/{b}/postings?limit={SR_PAGE}&offset={offset}"
         return f"{url}&country={country}" if country else url
+    # #160: the next ATSes. Eightfold needs the company's web domain too;
+    # every board seen so far is {id}.com (hsbc, netapp, netflix, insight).
+    if ats == "recruitee":
+        return f"https://{b}.recruitee.com/api/offers"
+    if ats == "rippling":
+        return f"https://api.rippling.com/platform/api/ats/v1/board/{b}/jobs"
+    if ats == "workable":
+        return f"https://apply.workable.com/api/v1/widget/accounts/{b}"
+    if ats == "bamboohr":
+        return f"https://{b}.bamboohr.com/careers/list"
+    if ats == "eightfold":
+        return (f"https://{b}.eightfold.ai/api/apply/v2/jobs?domain={b}.com"
+                f"&location=India&num={EIGHTFOLD_PAGE}&start={offset}")
     raise ValueError(f"no adapter for {ats}")
 
 
@@ -297,6 +313,14 @@ def detail_url(posting: Posting) -> str | None:
         return f"https://boards-api.greenhouse.io/v1/boards/{b}/jobs/{posting.posting_id}"
     if posting.ats == "smartrecruiters":
         return f"https://api.smartrecruiters.com/v1/companies/{b}/postings/{posting.posting_id}"
+    if posting.ats == "rippling":
+        return f"https://api.rippling.com/platform/api/ats/v1/board/{b}/jobs/{posting.posting_id}"
+    if posting.ats == "workable":
+        return f"https://apply.workable.com/api/v2/accounts/{b}/jobs/{posting.posting_id}"
+    if posting.ats == "bamboohr":
+        return f"https://{b}.bamboohr.com/careers/{posting.posting_id}/detail"
+    if posting.ats == "eightfold":
+        return f"https://{b}.eightfold.ai/api/apply/v2/jobs/{posting.posting_id}?domain={b}.com"
     return None
 
 
@@ -420,8 +444,89 @@ def _smartrecruiters(board_id: str, data: dict) -> list[Posting]:
     return out
 
 
+def _recruitee(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in data.get("offers") or []:
+        locs = j.get("locations") or []
+        codes = {(x.get("country_code") or "").upper() for x in locs}
+        desc = "\n\n".join(t for t in (html_to_text(j.get("description")), html_to_text(j.get("requirements"))) if t)
+        out.append(Posting(
+            ats="recruitee", board_id=board_id, posting_id=str(j["id"]), title=(j.get("title") or "").strip(),
+            location=j.get("location") or " / ".join(x.get("name") or "" for x in locs),
+            country="IN" if "IN" in codes else _country(j.get("country_code") or j.get("country")),
+            remote=bool(j.get("remote")) or None,
+            posted_at=_when((j.get("published_at") or j.get("created_at") or "").replace(" UTC", "+00:00")),
+            url=j.get("careers_url"), apply_url=j.get("careers_apply_url") or j.get("careers_url"),
+            description=desc or None, company=j.get("company_name"),
+            employment_type=j.get("employment_type_code"),
+        ))
+    return out
+
+
+def _rippling(board_id: str, data: list) -> list[Posting]:
+    out = []
+    for j in data or []:
+        loc = (j.get("workLocation") or {}).get("label") or ""
+        out.append(Posting(
+            ats="rippling", board_id=board_id, posting_id=str(j["uuid"]), title=(j.get("name") or "").strip(),
+            location=loc, remote=True if re.search(r"\bremote\b", loc, re.I) else None,
+            url=j.get("url"), apply_url=j.get("url"),
+        ))
+    return out
+
+
+def _workable(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in data.get("jobs") or []:
+        locs = j.get("locations") or []
+        codes = {(x.get("countryCode") or "").upper() for x in locs}
+        loc = ", ".join(x for x in (j.get("city"), j.get("state"), j.get("country")) if x)
+        out.append(Posting(
+            ats="workable", board_id=board_id, posting_id=str(j["shortcode"]), title=(j.get("title") or "").strip(),
+            location=loc, country="IN" if "IN" in codes else _country(j.get("country")),
+            remote=True if j.get("telecommuting") else None,
+            posted_at=_when(j.get("published_on")),
+            url=j.get("url"), apply_url=j.get("application_url") or j.get("url"),
+            employment_type=j.get("employment_type"),
+        ))
+    return out
+
+
+def _bamboohr(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in data.get("result") or []:
+        loc = j.get("location") or {}
+        ats_loc = j.get("atsLocation") or {}
+        place_text = ", ".join(x for x in (loc.get("city") or ats_loc.get("city"), loc.get("state") or ats_loc.get("state"),
+                                            ats_loc.get("country")) if x)
+        out.append(Posting(
+            ats="bamboohr", board_id=board_id, posting_id=str(j["id"]), title=(j.get("jobOpeningName") or "").strip(),
+            location=place_text, country=_country(ats_loc.get("country")) if ats_loc.get("country") else None,
+            remote=True if j.get("isRemote") else None,
+            url=f"https://{board_id}.bamboohr.com/careers/{j['id']}",
+            apply_url=f"https://{board_id}.bamboohr.com/careers/{j['id']}",
+            employment_type=j.get("employmentType"),
+        ))
+    return out
+
+
+def _eightfold(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in data.get("positions") or []:
+        locs = j.get("locations") or [j.get("location") or ""]
+        out.append(Posting(
+            ats="eightfold", board_id=board_id, posting_id=str(j["id"]),
+            title=(j.get("posting_name") or j.get("name") or "").strip(), location=" / ".join(x for x in locs if x),
+            remote=True if (j.get("work_location_option") or "").lower() == "remote" else None,
+            posted_at=_when(j.get("t_create")),
+            url=j.get("canonicalPositionUrl"), apply_url=j.get("canonicalPositionUrl"),
+        ))
+    return out
+
+
 _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
-            "smartrecruiters": _smartrecruiters, "workday": _workday}
+            "smartrecruiters": _smartrecruiters, "workday": _workday, "recruitee": _recruitee,
+            "rippling": _rippling, "workable": _workable, "bamboohr": _bamboohr, "eightfold": _eightfold}
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
@@ -431,7 +536,7 @@ def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
         data = json.loads(body)
     except ValueError as exc:
         raise ValueError(f"{ats}/{board_id}: not JSON") from exc
-    expected = list if ats == "lever" else dict
+    expected = list if ats in ("lever", "rippling") else dict
     if not isinstance(data, expected):
         raise ValueError(f"{ats}/{board_id}: unexpected {type(data).__name__}")
     return _PARSERS[ats](board_id, data)
@@ -467,6 +572,33 @@ def parse_detail(posting: Posting, body: str) -> None:
         posting.description = "\n\n".join(parts) or None
         posting.apply_url = data.get("applyUrl") or posting.apply_url
         posting.url = data.get("postingUrl") or posting.url
+    elif posting.ats == "rippling":
+        d = data.get("description") or {}
+        posting.description = "\n\n".join(t for t in (html_to_text(d.get("role")), html_to_text(d.get("company"))) if t) or None
+        posting.posted_at = _when(data.get("createdOn")) or posting.posted_at
+        posting.employment_type = (data.get("employmentType") or {}).get("id") or posting.employment_type
+        locs = data.get("workLocations") or []
+        if locs and not posting.location:
+            posting.location = " / ".join(locs)
+    elif posting.ats == "workable":
+        posting.description = "\n\n".join(
+            t for t in (html_to_text(data.get("description")), html_to_text(data.get("requirements"))) if t) or None
+        posting.posted_at = _when(data.get("published")) or posting.posted_at
+        if data.get("remote"):
+            posting.remote = True
+    elif posting.ats == "bamboohr":
+        job = (data.get("result") or {}).get("jobOpening") or {}
+        posting.description = html_to_text(job.get("description"))
+        posting.posted_at = _when(job.get("datePosted")) or posting.posted_at
+        country = ((job.get("atsLocation") or {}).get("country"))
+        if country:
+            posting.country = _country(country)
+        # "India - Salaried" says where the role is when the location does not.
+        if in_india(job.get("employmentStatusLabel")):
+            posting.country = "IN"
+    elif posting.ats == "eightfold":
+        posting.description = html_to_text(data.get("job_description"))
+        posting.apply_url = data.get("apply_redirect_url") or posting.apply_url
     elif posting.ats == "workday":
         info = data.get("jobPostingInfo") or {}
         posting.description = html_to_text(info.get("jobDescription"))

@@ -227,6 +227,8 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
     try:
         if board.ats == "workday":
             return _fetch_workday(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "eightfold":
+            return _fetch_eightfold(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "smartrecruiters":
             # India through the country filter, all pages. SmartRecruiters
             # boards can hold thousands of jobs, most of them elsewhere.
@@ -254,6 +256,9 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
             if status == 304 and board.etag:
                 res.not_modified = True
                 return res
+            # A BambooHR company that left redirects to bamboohr.com's home page.
+            if board.ats == "bamboohr" and status == 200 and not body.lstrip().startswith("{"):
+                status = 404
             if status != 200:
                 res.error = f"HTTP {status}"
                 return res
@@ -292,6 +297,28 @@ def _fetch_workday(lane: Lane, board: Board, res: BoardResult, *, max_pages: int
         page = ats.parse_list("workday", board.board_id, body)
         res.postings += page
         offset += ats.WORKDAY_PAGE
+        if offset >= total or not page:
+            break
+    else:
+        res.complete = False
+    return res
+
+
+def _fetch_eightfold(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Eightfold (#160): India-filtered pages of 10 until ``count``."""
+    import json
+
+    offset, total = 0, None
+    for _page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("eightfold", board.board_id, offset=offset))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        data = json.loads(body)
+        total = total if total is not None else int(data.get("count") or 0)
+        page = ats.parse_list("eightfold", board.board_id, body)
+        res.postings += page
+        offset += ats.EIGHTFOLD_PAGE
         if offset >= total or not page:
             break
     else:
@@ -350,6 +377,12 @@ def canary_ok(lane: Lane) -> bool:
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
     status, body = lane.get(ats.list_url(lane.name, CANARY), patient=False)
+    if lane.name == "bamboohr":
+        # Redirected to bamboohr.com's home page (checked 2026-11-02).
+        return status in (404, 200) and not body.lstrip().startswith("{")
+    if lane.name == "eightfold":
+        # No such subdomain: the connection fails (checked 2026-11-02).
+        return status in (-1, 404)
     if lane.name == "smartrecruiters":
         return status == 200 and ats.sr_total(body) == 0 and '"content":[]' in body.replace(" ", "")
     return status == 404
