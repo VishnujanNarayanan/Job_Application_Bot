@@ -48,6 +48,9 @@ def test_no_employer_link(html):
     ("https://jobs.smartrecruiters.com/NielsenIQ/744000158440229", ("smartrecruiters", "nielseniq")),
     ("https://wellsfargo.wd1.myworkdayjobs.com/en-US/WellsFargoJobs/job/Bengaluru/Engineer_R-1",
      ("workday", "wellsfargo/wd1/WellsFargoJobs")),
+    ("https://nvidia.wd5.myworkdayjobs.com/en-us/NVIDIAExternalCareerSite/job/x", ("workday", "nvidia/wd5/NVIDIAExternalCareerSite")),
+    ("https://pwc.wd3.myworkdayjobs.com/es/Global_Experienced_Careers", ("workday", "pwc/wd3/Global_Experienced_Careers")),
+    ("https://wf.wd1.myworkdayjobs.com/WF/job/y", ("workday", "wf/wd1/WF")),   # a 2-letter site, not a locale
     ("https://accenture.wd103.myworkdayjobs.com/AccentureCareers/job/Pune/X_R1",
      ("workday", "accenture/wd103/AccentureCareers")),
     ("https://acme.recruitee.com/o/backend-engineer", ("recruitee", "acme")),

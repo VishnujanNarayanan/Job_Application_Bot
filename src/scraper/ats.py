@@ -160,7 +160,7 @@ _SUBDOMAIN_HOSTS = {
 # Path segments that are pages of the ATS itself, not a board.
 _NOT_BOARDS = {"embed", "api", "v1", "jobs", "job_app", "o", "j", "careers", ""}
 _WORKDAY = re.compile(r"^(?P<tenant>[a-z0-9-]+)\.(?P<shard>wd\d+)\.myworkdayjobs\.com$")
-_LOCALE = re.compile(r"^[a-z]{2}(-[a-z]{2})?$", re.I)
+_LOCALE = re.compile(r"^[a-z]{2}(-[a-zA-Z]{2})?$")
 # Generic subdomains that are never a customer's board.
 _NOT_TENANTS = {"www", "api", "app", "careers", "jobs", "help", "support"}
 
