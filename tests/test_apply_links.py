@@ -116,7 +116,7 @@ def test_learn_boards_adds_new_boards_and_polls_supported_atses():
     ]
     session = _Session(known=[("lever", "known")])
     stats = poller.learn_boards(session, jobs)
-    assert stats == {"links": 5, "boards": 3, "new": 2, "new_polled": 1}
+    assert stats == {"links": 5, "boards": 3, "new": 2, "new_polled": 2}
     (stmt,) = session.inserted
     rows = {(r["ats"], r["board_id"]): r for r in _rows(stmt)}
     assert set(rows) == {("greenhouse", "taketwo"), ("workday", "wellsfargo/wd1/WellsFargoJobs")}
@@ -125,7 +125,8 @@ def test_learn_boards_adds_new_boards_and_polls_supported_atses():
     assert gh["jobs_url"] == "https://boards-api.greenhouse.io/v1/boards/taketwo/jobs"
     assert gh["company_key"] == ats.key("Take-Two")
     wd = rows[("workday", "wellsfargo/wd1/WellsFargoJobs")]
-    assert wd["poll"] is False and wd["jobs_url"] is None   # no adapter yet (#103)
+    assert wd["poll"] is True   # Workday has an adapter (#103)
+    assert wd["jobs_url"] == "https://wellsfargo.wd1.myworkdayjobs.com/wday/cxs/wellsfargo/WellsFargoJobs/jobs"
 
 
 def test_learn_boards_with_no_links_writes_nothing():

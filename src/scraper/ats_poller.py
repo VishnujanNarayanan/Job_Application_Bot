@@ -60,7 +60,8 @@ TIER_HOURS = {"hot": 1.0, "active": 3.0, "quiet": 12.0}
 RETRY_HOURS = 1.0
 # 404 / 410: the board is gone. Retried after GONE_HOURS; polling stops after
 # GONE_LIMIT in a row.
-GONE = ("HTTP 404", "HTTP 410")
+# Workday answers 422 for a tenant that does not exist (checked 2026-11-02).
+GONE = ("HTTP 404", "HTTP 410", "HTTP 422")
 GONE_HOURS = 24.0
 GONE_LIMIT = 3
 # poll_error of a board held open after it suddenly listed nothing.
@@ -76,7 +77,7 @@ class LaneStopped(Exception):
 class Lane:
     """One ATS's paced HTTP client."""
 
-    def __init__(self, name: str, delay: float, sleep=time.sleep, get=None):
+    def __init__(self, name: str, delay: float, sleep=time.sleep, get=None, post=None):
         self.name = name
         self.delay = delay
         self.sleep = sleep
@@ -85,11 +86,14 @@ class Lane:
         self.bytes = 0
         self.throttled = 0
         self._last = 0.0
-        if get is None:
+        if get is None or post is None:
             session = requests.Session()
             session.headers["User-Agent"] = UA
-            get = session.get
+            get = get or session.get
+            post = post or session.post
         self._get = get
+        # Workday's job search is a POST with a JSON body (#103).
+        self._post = post
 
     def get(self, url: str, *, patient: bool = True) -> tuple[int, str]:
         """(status, body); status -1 on a network error. ``patient=False``
@@ -97,10 +101,16 @@ class Lane:
         status, body, _etag = self.fetch(url, patient=patient)
         return status, body
 
-    def fetch(self, url: str, *, patient: bool = True, etag: str | None = None) -> tuple[int, str, str | None]:
+    def fetch(self, url: str, *, patient: bool = True, etag: str | None = None,
+              body: dict | None = None) -> tuple[int, str, str | None]:
         """:meth:`get`, plus the response's ETag. ``etag`` is sent as
-        If-None-Match: a 304 with an empty body means nothing changed."""
+        If-None-Match: a 304 with an empty body means nothing changed.
+        ``body`` makes it a JSON POST (Workday), paced and retried the same."""
         extra = {"headers": {"If-None-Match": etag}} if etag else {}
+        send = self._get
+        if body is not None:
+            send = self._post
+            extra = {"json": body, "headers": {"Accept": "application/json"}}
         while True:
             wait = self._last + self.delay - time.monotonic()
             if wait > 0:
@@ -108,7 +118,7 @@ class Lane:
             self._last = time.monotonic()
             self.requests += 1
             try:
-                r = self._get(url, timeout=TIMEOUT, **extra)
+                r = send(url, timeout=TIMEOUT, **extra)
                 status, body = r.status_code, r.text
             except requests.RequestException:
                 return -1, "", None
@@ -214,6 +224,8 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
     """One board's postings. Never raises except LaneStopped."""
     res = BoardResult(board)
     try:
+        if board.ats == "workday":
+            return _fetch_workday(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "smartrecruiters":
             # India through the country filter, all pages. SmartRecruiters
             # boards can hold thousands of jobs, most of them elsewhere.
@@ -250,6 +262,39 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
         raise
     except Exception as exc:  # noqa: BLE001 - one board must not stop the run
         res.error = f"{type(exc).__name__}: {exc}"[:300]
+    return res
+
+
+def _fetch_workday(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Workday (#103): an unfiltered first page for the India facet ids, then
+    the India-filtered pages. No India facet = no India postings (a complete,
+    empty list). POSTs carry no ETag, so every poll reads the list."""
+    import json
+
+    url = ats.list_url("workday", board.board_id)
+    status, body, _ = lane.fetch(url, body=ats.workday_search())
+    if status != 200:
+        res.error = f"HTTP {status}"
+        return res
+    facets = ats.workday_india_facets(json.loads(body))
+    if not facets:
+        return res
+    offset, total = 0, None
+    for _page in range(max_pages):
+        status, body, _ = lane.fetch(url, body=ats.workday_search(offset, facets))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        data = json.loads(body)
+        # Later pages often report total 0: the first one's count stands.
+        total = total if total is not None else int(data.get("total") or 0)
+        page = ats.parse_list("workday", board.board_id, body)
+        res.postings += page
+        offset += ats.WORKDAY_PAGE
+        if offset >= total or not page:
+            break
+    else:
+        res.complete = False
     return res
 
 
@@ -299,6 +344,10 @@ def canary_ok(lane: Lane) -> bool:
     404; SmartRecruiters answers 200 with nothing found (checked 2026-10-17).
     Anything else (429, 403, a 200 with jobs, a network error) means the ATS
     is not answering normally."""
+    if lane.name == "workday":
+        board = f"{CANARY}/wd5/External"
+        status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
+        return status in (404, 422)
     status, body = lane.get(ats.list_url(lane.name, CANARY), patient=False)
     if lane.name == "smartrecruiters":
         return status == 200 and ats.sr_total(body) == 0 and '"content":[]' in body.replace(" ", "")
