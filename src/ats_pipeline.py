@@ -286,7 +286,9 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     session.commit()
 
     # F: descriptions, for the lists that leave them out.
-    fetched = ats_poller.fetch_details([p for p, _b in fresh], lanes, delay=delay)
+    fetched = ats_poller.fetch_details([p for p, _b in fresh], lanes, delay=delay,
+                                       budget_s=60 * float(a.get("detail_budget_minutes", 8)))
+    stats.details_deferred = sum(1 for p, _b in fresh if p.job_id not in fetched)
 
     jobs = []
     for p, board in fresh:
@@ -451,6 +453,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
             return 1
         profile = master_profile.load_profile(session)
 
+        run_started = time.monotonic()
         jobs = collect(session, cfg, atses=atses, now=now, stats=stats, log=log)
         backlog = _backlog(session, now, int(a.get("backlog_days", 2)), {j.job_id for j in jobs})
         closed = ats_poller.closed_job_ids(session, [j.job_id for j in backlog])
@@ -493,6 +496,9 @@ def run(dry_run: bool, log, *, atses=None) -> int:
 
         hours = float(a.get("recency_window_hours", 24))
         budget = 60.0 * float(a.get("process_budget_minutes", 25))
+        # The whole run's deadline, from its start: no new job after it, so
+        # the run saves and reports inside the workflow's 58-minute limit.
+        deadline = 60.0 * float(a.get("run_deadline_minutes", 48))
         matched = skipped = not_reached = parse_failed = 0
         aborted = False
         routing_rules = router.rules_from_config()
@@ -502,9 +508,10 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         llm_available = True
         written = 0  # verdicts in `queue` already saved
         for index, job in enumerate(passing):
-            if time.monotonic() - started > budget:
+            if time.monotonic() - started > budget or time.monotonic() - run_started > deadline:
                 not_reached = len(passing) - index  # no verdict: back next run
-                log.warning("time_budget_reached", not_reached=not_reached)
+                log.warning("time_budget_reached", not_reached=not_reached,
+                            run_minutes=round((time.monotonic() - run_started) / 60, 1))
                 break
             # Save the verdicts so far, then commit: no transaction stays open
             # across the slow calls, and a dropped connection costs at most

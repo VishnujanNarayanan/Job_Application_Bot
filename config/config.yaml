@@ -289,6 +289,13 @@ ats_poll:
   # Minutes for parse/score/build after the poll. 40 leaves room in the
   # job's 58-minute limit for the ~10-minute poll and setup.
   process_budget_minutes: 40
+  # Descriptions fetched per run (one request each, Workday/Oracle/...):
+  # postings not reached are fetched next run. The first sweep of the new
+  # adapters spent 26 minutes here (2026-11-03) and the run was killed.
+  detail_budget_minutes: 8
+  # No job is started after this many minutes from the run's start, so it
+  # saves and reports inside the workflow's 58-minute timeout.
+  run_deadline_minutes: 48
   # Postings dated more than this many days ago are skipped before parsing
   # (no LLM call): the score has no freshness term and ATS boards give no
   # applicant count, so a stale posting would otherwise match like a new

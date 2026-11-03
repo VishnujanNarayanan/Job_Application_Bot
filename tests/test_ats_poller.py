@@ -420,7 +420,7 @@ def test_forgetting_a_posting_clears_its_boards_etag():
     delete, update = session.statements
     assert delete.table.name == "ats_postings"
     assert update.table.name == "ats_boards"
-    assert update.compile().params == {"etag": None, "ats_1": "lever", "board_id_1": "acme"}
+    assert update.compile().params == {"etag": None, "next_poll_at": None, "ats_1": "lever", "board_id_1": "acme"}
 
 
 # --- pending / done status (stranded postings) --------------------------------------
@@ -461,3 +461,21 @@ def test_the_poll_line_mentions_re_sent_postings():
 
     stats = poller.PollStats(new=5, boards=10, requeued=3)
     assert "3 re-sent from an interrupted run" in ats_poll_done_text(stats)
+
+
+def test_fetch_details_stops_starting_at_its_budget(monkeypatch):
+    """Postings not reached in time are left out (fetched next run)."""
+    clock = iter([0.0, 0.0, 1.0, 100.0, 100.0, 100.0])
+    monkeypatch.setattr(poller.time, "monotonic", lambda: next(clock, 100.0))
+    calls = []
+
+    def fake_detail(lane, p):
+        calls.append(p.posting_id)
+        return True
+
+    monkeypatch.setattr(poller, "fetch_detail", fake_detail)
+    posts = [ats.Posting(ats="greenhouse", board_id="b", posting_id=str(i), title="t", location="x")
+             for i in range(5)]
+    lanes = {"greenhouse": poller.Lane("greenhouse", 0.0, sleep=lambda _s: None, get=FakeGet())}
+    got = poller.fetch_details(posts, lanes, budget_s=10)
+    assert 0 < len(got) < 5 and set(got) == {f"greenhouse-b-{i}" for i in calls}
