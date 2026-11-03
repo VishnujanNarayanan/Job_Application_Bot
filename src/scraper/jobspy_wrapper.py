@@ -142,36 +142,6 @@ def applicant_caption(html: str) -> str | None:
     return " ".join(m.group(1).split()) if m else None
 
 
-# The employer's own apply link (#158). JobSpy 1.3 stopped reading it; an
-# off-site apply puts it in a hidden element of the same page, as LinkedIn's
-# redirect with the real address in ``url=``:
-#   <code id="applyUrl" style="display: none"><!--"https://www.linkedin.com/
-#   jobs/view/externalApply/123?url=https%3A%2F%2Fjobs%2Elever%2Eco...&urlHash=x"--></code>
-# Easy Apply jobs have no such element. Captured links land in _APPLY_URLS,
-# keyed like _APPLICANTS.
-_APPLY_CODE = re.compile(r'<code[^>]*\bid="applyUrl"[^>]*>(.*?)</code>', re.IGNORECASE | re.DOTALL)
-_APPLY_URLS: dict[str, str] = {}
-
-
-def apply_link(html: str) -> str | None:
-    """The employer's apply URL from a LinkedIn job page, or None (Easy Apply,
-    or no link)."""
-    import html as html_lib
-    from urllib.parse import parse_qs, urlsplit
-
-    m = _APPLY_CODE.search(html or "")
-    if not m:
-        return None
-    raw = html_lib.unescape(m.group(1)).replace("<!--", "").replace("-->", "").strip().strip('"').strip()
-    if not raw:
-        return None
-    target = (parse_qs(urlsplit(raw).query).get("url") or [None])[0]
-    link = target or raw
-    if not link.startswith("http") or "linkedin.com" in (urlsplit(link).hostname or ""):
-        return None
-    return link
-
-
 def install_applicant_capture() -> None:
     """Wrap JobSpy's LinkedIn detail fetch so it records the applicant caption.
 
@@ -210,13 +180,9 @@ def install_applicant_capture() -> None:
         finally:
             self.session.get = real_get
         try:
-            page = seen[-1].text if seen else ""
-            caption = applicant_caption(page)
+            caption = applicant_caption(seen[-1].text) if seen else None
             if caption:
                 _APPLICANTS[f"li-{job_id}"] = caption
-            link = apply_link(page)
-            if link:
-                _APPLY_URLS[f"li-{job_id}"] = link
         except Exception as exc:  # never let the count cost the description
             log.warning("applicants_capture_failed", job_id=job_id, error=str(exc))
         return details
@@ -613,13 +579,9 @@ def scrape(
 
         # DataFrame → list[dict] keeps _row_to_job pure and pandas-agnostic.
         for record in df.to_dict(orient="records"):
-            rid = _as_str(record.get("id")) or ""
-            caption = _APPLICANTS.pop(rid, None)
+            caption = _APPLICANTS.pop(_as_str(record.get("id")) or "", None)
             if caption:
                 record["applicants_text"] = caption
-            link = _APPLY_URLS.pop(rid, None)
-            if link and not _as_str(record.get("job_url_direct")):
-                record["job_url_direct"] = link
             job = _row_to_job(record)
             if job is None or job.job_id in seen:
                 continue

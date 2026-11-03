@@ -1,5 +1,6 @@
-"""#158 — portal jobs' apply links: read from LinkedIn, mapped to ATS boards,
-and the new boards added for the ATS poll."""
+"""#158 — portal jobs' apply links (Naukri gives the employer's own link;
+LinkedIn's public pages no longer carry it, 2026-11-03) mapped to ATS
+boards, and the new boards added for the ATS poll."""
 
 from __future__ import annotations
 
@@ -9,33 +10,6 @@ import pytest
 
 from src.scraper import ats
 from src.scraper import ats_poller as poller
-from src.scraper.jobspy_wrapper import apply_link
-
-
-def _page(inner: str) -> str:
-    return (f'<html><body><div class="top-card"></div>'
-            f'<code id="applyUrl" style="display: none">{inner}</code></body></html>')
-
-
-def test_linkedin_offsite_apply_link_is_unwrapped():
-    html = _page('<!--"https://www.linkedin.com/jobs/view/externalApply/4466501068?url=https%3A%2F%2F'
-                 'job-boards%2Egreenhouse%2Eio%2Ftaketwo%2Fjobs%2F8075058%3Fgh_src%3Dabc&amp;urlHash=Xy1z"-->')
-    assert apply_link(html) == "https://job-boards.greenhouse.io/taketwo/jobs/8075058?gh_src=abc"
-
-
-def test_a_plain_link_in_the_element_is_kept():
-    assert apply_link(_page('<!--"https://jobs.lever.co/acme/123"-->')) == "https://jobs.lever.co/acme/123"
-
-
-@pytest.mark.parametrize("html", [
-    "<html><body>Easy Apply</body></html>",                      # no element
-    _page(""),
-    _page('<!--"https://www.linkedin.com/jobs/view/4466501068"-->'),  # only LinkedIn
-    "",
-    None,
-])
-def test_no_employer_link(html):
-    assert apply_link(html) is None
 
 
 @pytest.mark.parametrize("url,expected", [
