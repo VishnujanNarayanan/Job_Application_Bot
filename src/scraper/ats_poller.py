@@ -564,7 +564,7 @@ def canary_ok(lane: Lane) -> bool:
         board = f"{CANARY}/wd5/External"
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
-    if lane.name in ("successfactors", "avature", "phenom"):
+    if lane.name in ("successfactors", "avature", "phenom", "xmlfeed"):
         # Employer-hosted sites: no shared "no such board" answer to ask for.
         return True
     if lane.name == "keka":

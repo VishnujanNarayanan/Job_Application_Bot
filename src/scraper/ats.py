@@ -29,7 +29,7 @@ from src.state.models import AllJobs
 
 ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
          "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon", "keka",
-         "successfactors", "avature", "phenom")
+         "successfactors", "avature", "phenom", "xmlfeed")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
@@ -62,7 +62,10 @@ class Posting:
     @property
     def job_id(self) -> str:
         # Workday board ids are tenant/wdN/site: no slashes in a job id.
-        return f"{self.ats}-{self.board_id.replace('/', '_')}-{self.posting_id}"
+        board = self.board_id.replace('/', '_')
+        if self.ats == "xmlfeed":   # a feed URL: no "?", "=" or "&" in a job id (it is used in URLs)
+            board = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.board_id).strip("_")
+        return f"{self.ats}-{board}-{self.posting_id}"
 
 
 # --- Company names ----------------------------------------------------------------
@@ -108,6 +111,9 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
         return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
     if ats == "oracle":
         return oracle_search_url(board_id, offset=offset, location_id=country)
+    if ats == "xmlfeed":
+        # #161: an employer's full XML job feed; the board id is its URL sans scheme.
+        return f"https://{board_id}"
     if ats == "phenom":
         # #160: Phenom career site ("host/lang"); the search is a POST (phenom_search).
         return f"https://{board_id.split('/', 1)[0]}/widgets"
@@ -589,6 +595,47 @@ def _phenom(board_id: str, data: dict) -> list[Posting]:
     return out
 
 
+# --- XML job feeds (#161) -----------------------------------------------------------
+# Some employers publish every open job as one Indeed-style XML feed
+# (Cognizant: careers.cognizant.com/global-en/jobs/xml/?rss=true, 2,100 jobs,
+# descriptions included). <job> elements with title, date, referencenumber /
+# requisitionid, url, company, city, state, country, description. Filters in
+# the URL are ignored by such feeds, so India is picked from <country>.
+
+def _xmlfeed(board_id: str, body: str) -> list[Posting]:
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
+
+    root = ET.fromstring(body.encode("utf-8"))
+
+    def text(el, *names):
+        for n in names:
+            v = el.findtext(n)
+            if v and v.strip():
+                return v.strip()
+        return ""
+
+    out = []
+    for j in root.iter("job"):
+        pid = text(j, "referencenumber", "requisitionid", "apijobid", "id")
+        if not pid:
+            continue
+        country = text(j, "country")
+        location = ", ".join(x for x in (text(j, "city"), text(j, "state"), country) if x)
+        try:
+            posted = parsedate_to_datetime(text(j, "date", "pubDate"))
+        except (TypeError, ValueError):
+            posted = None
+        url = text(j, "url", "link")
+        out.append(Posting(
+            ats="xmlfeed", board_id=board_id, posting_id=pid, title=text(j, "title"), location=location,
+            country=_country(country), posted_at=posted, url=url, apply_url=url,
+            description=html_to_text(text(j, "description")) or None, company=text(j, "company") or None,
+            employment_type=text(j, "jobtype") or None,
+        ))
+    return out
+
+
 def sf_total(data: dict) -> int:
     return int(data.get("totalJobs") or 0)
 
@@ -860,6 +907,11 @@ _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
     if ats == "avature":   # an HTML search page
         return _avature(board_id, body)
+    if ats == "xmlfeed":   # an XML feed
+        try:
+            return _xmlfeed(board_id, body)
+        except Exception as exc:  # noqa: BLE001 - xml.etree's ParseError and kin
+            raise ValueError(f"xmlfeed/{board_id}: not a job feed") from exc
     """A board's postings from its list response. Raises ValueError when the
     body is not the expected JSON, so a changed API fails loudly per board."""
     try:

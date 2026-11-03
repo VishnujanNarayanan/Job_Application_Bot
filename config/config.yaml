@@ -235,7 +235,7 @@ scraper:
 # (tools/ats_discover.py --upload). Separate from the JobSpy run.
 # ---------------------------------------------------------------------------
 ats_poll:
-  atses: [greenhouse, lever, ashby, smartrecruiters, workday, recruitee, rippling, workable, bamboohr, eightfold, oracle, amazon, keka, successfactors, avature, phenom]
+  atses: [greenhouse, lever, ashby, smartrecruiters, workday, recruitee, rippling, workable, bamboohr, eightfold, oracle, amazon, keka, successfactors, avature, phenom, xmlfeed]
   # One request per ATS this far apart; ATSes run in parallel. 0.5 s = two
   # a second (#111: no 429 in 50,000+ requests at 1 s). A 429 slows that
   # ATS back to 1 s for the rest of the run.
