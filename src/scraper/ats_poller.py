@@ -496,14 +496,18 @@ def fetch_lists(boards: list[Board], lanes: dict[str, Lane], *, budget_s: float,
     return [res for _b, res in pairs]
 
 
-def fetch_details(postings: list[ats.Posting], lanes: dict[str, Lane], *, delay: float = 1.0) -> dict[str, bool]:
-    """job_id -> whether the description was fetched."""
+def fetch_details(postings: list[ats.Posting], lanes: dict[str, Lane], *, delay: float = 1.0,
+                  budget_s: float | None = None) -> dict[str, bool]:
+    """job_id -> whether the description was fetched. A posting the lanes did
+    not reach within ``budget_s`` is absent (the caller forgets it, so the
+    next run fetches it): the first sweep of big Workday tenants spent 26
+    minutes here and the run hit the job's 58-minute limit (2026-11-03)."""
     work: dict[str, list] = {}
     for p in postings:
         work.setdefault(p.ats, []).append(p)
     for name in work:
         lanes.setdefault(name, Lane(name, delay))
-    return {p.job_id: ok for p, ok in run_lanes(lanes, work, fetch_detail, None)}
+    return {p.job_id: ok for p, ok in run_lanes(lanes, work, fetch_detail, budget_s)}
 
 
 # --- Bookkeeping -------------------------------------------------------------------
@@ -540,6 +544,8 @@ class PollStats:
     atses_skipped: list = field(default_factory=list)
     # PENDING postings from an earlier, interrupted run that were sent again.
     requeued: int = 0
+    # New postings whose description the detail budget did not reach (next run).
+    details_deferred: int = 0
 
     def skip(self, reason: str) -> None:
         self.skipped[reason] = self.skipped.get(reason, 0) + 1
@@ -797,8 +803,10 @@ def forget(session, p: ats.Posting) -> None:
 
     session.execute(delete(AtsPosting).where(AtsPosting.ats == p.ats, AtsPosting.board_id == p.board_id,
                                              AtsPosting.posting_id == p.posting_id))
+    # Due again at once: a posting deferred by the detail budget should wait
+    # for the next run, not for the board's tier interval.
     session.execute(update(AtsBoard).where(AtsBoard.ats == p.ats, AtsBoard.board_id == p.board_id)
-                    .values(etag=None))
+                    .values(etag=None, next_poll_at=None))
 
 
 def prune(session, *, now: datetime | None = None, days: int = 60) -> int:
