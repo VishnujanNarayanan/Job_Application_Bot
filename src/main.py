@@ -320,6 +320,17 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         log.info("scrape_done", terms=run_terms, raw_count=len(raw_jobs))
         scraped_count = len(raw_jobs)
 
+        # Every apply link names the employer's ATS board: add the new ones
+        # so the ATS poll covers them (#158). Never allowed to stop the run.
+        try:
+            from src.scraper.ats_poller import learn_boards
+
+            with session.begin_nested():  # a failure undoes only this
+                learned = learn_boards(session, raw_jobs)
+            log.info("boards_learned", **learned)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("boards_learn_failed", error=str(exc))
+
         # --- Backlog: earlier jobs that never got a verdict, processed FIRST ---
         backlog = _load_backlog(
             session, now, int(cfg.scraper.get("backlog_days", 0) or 0), seen_job_ids

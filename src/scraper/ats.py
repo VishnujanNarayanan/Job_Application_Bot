@@ -107,6 +107,71 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
     raise ValueError(f"no adapter for {ats}")
 
 
+# --- Boards from apply links (#158) -------------------------------------------------
+# A LinkedIn / Naukri job's own apply link names the company's ATS board, so
+# every portal job can teach us a board. Hosts where the board id is a path
+# segment, and hosts where it is the subdomain.
+
+_PATH_HOSTS = {
+    "boards.greenhouse.io": "greenhouse", "job-boards.greenhouse.io": "greenhouse",
+    "boards.eu.greenhouse.io": "greenhouse", "job-boards.eu.greenhouse.io": "greenhouse",
+    "jobs.lever.co": "lever", "jobs.eu.lever.co": "lever",
+    "jobs.ashbyhq.com": "ashby",
+    "jobs.smartrecruiters.com": "smartrecruiters", "careers.smartrecruiters.com": "smartrecruiters",
+    "apply.workable.com": "workable",
+    "ats.rippling.com": "rippling",
+}
+_SUBDOMAIN_HOSTS = {
+    "recruitee.com": "recruitee", "bamboohr.com": "bamboohr", "breezy.hr": "breezy",
+    "teamtailor.com": "teamtailor", "applytojob.com": "jazzhr", "darwinbox.in": "darwinbox",
+    "keka.com": "keka", "freshteam.com": "freshteam", "zohorecruit.com": "zoho_recruit",
+    "zohorecruit.in": "zoho_recruit", "eightfold.ai": "eightfold",
+}
+# Path segments that are pages of the ATS itself, not a board.
+_NOT_BOARDS = {"embed", "api", "v1", "jobs", "job_app", "o", "j", "careers", ""}
+_WORKDAY = re.compile(r"^(?P<tenant>[a-z0-9-]+)\.(?P<shard>wd\d+)\.myworkdayjobs\.com$")
+_LOCALE = re.compile(r"^[a-z]{2}-[A-Z]{2}$")
+# Generic subdomains that are never a customer's board.
+_NOT_TENANTS = {"www", "api", "app", "careers", "jobs", "help", "support"}
+
+
+def board_from_url(url: str | None) -> tuple[str, str] | None:
+    """(ats, board_id) named by a job's apply link, or None. Workday's id is
+    ``tenant/wdN/site``; every other id is what ``list_url`` takes."""
+    from urllib.parse import parse_qs, urlsplit
+
+    if not url:
+        return None
+    try:
+        u = urlsplit(url.strip())
+    except ValueError:
+        return None
+    host = (u.hostname or "").lower()
+    parts = [p for p in u.path.split("/") if p]
+    if host in _PATH_HOSTS:
+        ats = _PATH_HOSTS[host]
+        # boards.greenhouse.io/embed/job_app?for=acme&token=...
+        if ats == "greenhouse" and parts[:1] == ["embed"]:
+            board = (parse_qs(u.query).get("for") or [""])[0]
+        else:
+            board = parts[0] if parts else ""
+        if board.lower() in _NOT_BOARDS:
+            return None
+        return ats, board.lower() if ats in ("smartrecruiters", "greenhouse") else board
+    m = _WORKDAY.match(host)
+    if m:
+        site = next((p for p in parts if not _LOCALE.match(p)), None)
+        if not site or site in ("wday", "job"):
+            return None
+        return "workday", f"{m['tenant']}/{m['shard']}/{site}"
+    for suffix, ats in _SUBDOMAIN_HOSTS.items():
+        if host.endswith("." + suffix):
+            tenant = host[: -len(suffix) - 1].split(".")[-1]
+            if tenant and tenant not in _NOT_TENANTS:
+                return ats, tenant
+    return None
+
+
 def detail_url(posting: Posting) -> str | None:
     """Where the description is, for lists that leave it out; else None."""
     if posting.description is not None:

@@ -672,6 +672,49 @@ def portal_duplicate(candidates: list, company_key: str, title: str) -> str | No
     return None
 
 
+#: ats_boards.source for a board learned from a portal job's apply link (#158).
+APPLY_LINK = "apply_link"
+
+
+def learn_boards(session, jobs: list) -> dict[str, int]:
+    """Add the ATS boards that portal jobs' apply links name and ats_boards
+    lacks. Such a board has just posted a job the portal search found in
+    India, so one on a polled ATS gets ``poll = true`` and is due at once; one
+    on another ATS (Workday, ...) is recorded for its adapter (#103, #160).
+    Existing boards are left alone. Returns counts for the run log."""
+    from sqlalchemy import select, tuple_
+    from sqlalchemy.dialects.postgresql import insert
+
+    from src.state.models import AtsBoard
+
+    found: dict[tuple[str, str], object] = {}
+    for job in jobs:
+        hit = ats.board_from_url(getattr(job, "job_url_direct", None))
+        if hit and hit not in found:
+            found[hit] = job
+    stats = {"links": sum(bool(getattr(j, "job_url_direct", None)) for j in jobs),
+             "boards": len(found), "new": 0, "new_polled": 0}
+    if not found:
+        return stats
+    known = set(session.execute(
+        select(AtsBoard.ats, AtsBoard.board_id)
+        .where(tuple_(AtsBoard.ats, AtsBoard.board_id).in_(list(found)))).all())
+    rows = []
+    for (a, b), job in found.items():
+        if (a, b) in known:
+            continue
+        polled = a in ats.ATSES
+        rows.append(dict(
+            ats=a, board_id=b, source=APPLY_LINK, company=job.company,
+            company_key=ats.key(job.company or "") or b, state="from_apply_link",
+            jobs_url=ats.list_url(a, b) if polled else None, poll=polled))
+        stats["new_polled"] += polled
+    if rows:
+        session.execute(insert(AtsBoard).values(rows).on_conflict_do_nothing())
+    stats["new"] = len(rows)
+    return stats
+
+
 def portal_jobs(session, now: datetime, days: int) -> list:
     """(job_id, company, role) of LinkedIn/Naukri jobs from the last ``days``."""
     from sqlalchemy import select
