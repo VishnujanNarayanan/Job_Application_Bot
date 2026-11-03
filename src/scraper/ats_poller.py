@@ -70,6 +70,8 @@ GONE_LIMIT = 3
 EMPTY_ONCE = "empty list (held open once)"
 # A board id no ATS can have, asked for at the start of each run.
 CANARY = "zzqx-no-such-board-7f3k"
+# Oracle's canary is a real site: Oracle's own careers site.
+ORACLE_CANARY = "eeho.fa.us2.oraclecloud.com/CX_45001"
 
 
 class LaneStopped(Exception):
@@ -545,7 +547,9 @@ def run_lanes(lanes: dict[str, Lane], work: dict[str, list], fn: Callable, budge
 # so no host sees more than one lane's pace. Greenhouse, Lever, Ashby,
 # SmartRecruiters, Workable, Rippling and Amazon answer every company from one
 # API host and keep a single lane.
-PER_HOST = frozenset({"workday", "oracle", "keka", "recruitee", "bamboohr", "eightfold",
+# Recruitee is not here: its tenants are separate hosts, but it rate-limits
+# them together (2026-11-03: 429s through two whole runs with 8 lanes).
+PER_HOST = frozenset({"workday", "oracle", "keka", "bamboohr", "eightfold",
                       "successfactors", "avature", "phenom"})
 
 
@@ -599,10 +603,11 @@ def canary_ok(lane: Lane) -> bool:
         status, body = lane.get(ats.list_url("amazon", "amazon"), patient=False)
         return status == 200 and '"hits"' in body
     if lane.name == "oracle":
-        # No such pod: the connection fails (checked 2026-11-02).
-        status, _body = lane.get(ats.oracle_search_url(f"{CANARY}.fa.us2.oraclecloud.com/CX_1", limit=1),
-                                 patient=False)
-        return status in (-1, 404)
+        # A made-up pod gave a different answer on GitHub's runners than here
+        # and skipped every Oracle board for a run (2026-11-03): ask a real,
+        # stable site instead and expect a normal answer.
+        status, body = lane.get(ats.oracle_search_url(ORACLE_CANARY, limit=1), patient=False)
+        return status == 200 and '"items"' in body
     status, body = lane.get(ats.list_url(lane.name, CANARY), patient=False)
     if lane.name == "bamboohr":
         # Redirected to bamboohr.com's home page (checked 2026-11-02).
