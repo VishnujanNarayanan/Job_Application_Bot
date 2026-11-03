@@ -286,9 +286,10 @@ ats_poll:
   # dictionary parser. Parse routing (scoring.parse_routing) applies as in
   # the main run.
   llm_providers: ["groq", "gemini-free"]
-  # Minutes for parse/score/build after the poll. 40 leaves room in the
-  # job's 58-minute limit for the ~10-minute poll and setup.
-  process_budget_minutes: 40
+  # Minutes for parse/score/build after the poll. Runs are every 2 hours, so
+  # the job may take ~110 minutes (workflow timeout 115); the weekday flow is
+  # ~1,400 jobs a day and a 48-minute run scored only ~100-130 (2026-11-03).
+  process_budget_minutes: 95
   # Descriptions fetched per run (one request each, Workday/Oracle/...):
   # postings not reached are fetched next run. The first sweep of the new
   # adapters spent 26 minutes here (2026-11-03) and the run was killed.
@@ -298,8 +299,11 @@ ats_poll:
   # lane, so a host still sees one request per delay_seconds.
   parallel_hosts: 8
   # No job is started after this many minutes from the run's start, so it
-  # saves and reports inside the workflow's 58-minute timeout.
-  run_deadline_minutes: 48
+  # saves and reports inside the workflow's 115-minute timeout.
+  run_deadline_minutes: 105
+  # Parses (the LLM call) run this many jobs ahead in worker threads, while
+  # scoring, saving and sending stay in order on the main thread.
+  parse_workers: 4
   # Postings dated more than this many days ago are skipped before parsing
   # (no LLM call): the score has no freshness term and ATS boards give no
   # applicant count, so a stale posting would otherwise match like a new

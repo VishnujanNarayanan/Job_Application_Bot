@@ -387,3 +387,36 @@ def test_company_name_for_workday_and_oracle_boards():
     assert pipe.company_name(poller.Board("oracle", "jpmc.fa.oraclecloud.com/CX_1001"), _p()) == "Jpmc"
     # A name learned from a portal job's apply link wins.
     assert pipe.company_name(poller.Board("workday", "ntrs/wd1/x", name="Northern Trust"), _p()) == "Northern Trust"
+
+
+# --- parallel parsing (2026-11-03) ----------------------------------------------
+
+def test_detached_copy_is_session_free_and_complete():
+    from sqlalchemy import inspect as sa_inspect
+
+    from src.state.models import AllJobs
+
+    row = AllJobs(job_id="ats:x-1", company="Acme", role="Data Engineer", site="ats:greenhouse",
+                  jd_text="Spark and Python", location="Bengaluru")
+    copy = pipe._detached(row)
+    assert copy is not row and sa_inspect(copy).transient
+    assert (copy.job_id, copy.role, copy.jd_text, copy.location) == (row.job_id, row.role, row.jd_text, row.location)
+
+
+def test_a_worker_thread_only_sees_the_free_providers():
+    """only_providers is a context variable, which a thread does not inherit:
+    the worker must set it itself, as _parse_ahead does."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from src.llm import client
+
+    def outside():
+        return client._allowed.get()
+
+    def inside():
+        with client.only_providers(["groq", "gemini-free"]):
+            return client._allowed.get()
+
+    with client.only_providers(["groq", "gemini-free"]), ThreadPoolExecutor(1) as pool:
+        assert pool.submit(outside).result() is None          # the trap: nothing restricted
+        assert pool.submit(inside).result() == frozenset({"groq", "gemini-free"})

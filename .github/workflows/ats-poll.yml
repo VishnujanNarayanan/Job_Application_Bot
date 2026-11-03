@@ -34,7 +34,9 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 58
+    # Runs every 2 hours; ats_poll.run_deadline_minutes (105) stops new jobs
+    # in time to save and report before this.
+    timeout-minutes: 115
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
