@@ -9,6 +9,8 @@ and needs no change to the router or the pipeline.
 
 from __future__ import annotations
 
+import threading
+
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -75,6 +77,10 @@ class ParseResult:
 
 
 _REGISTRY: dict[ParseMode, ParseStrategy] = {}
+# get_strategy registers the built-in parsers on first use; the ATS run calls
+# it from several worker threads at once, and two of them registering the
+# dictionary parser together crashed a run (2026-11-03). One lock for that.
+_REGISTRY_LOCK = threading.Lock()
 
 
 def register(strategy: ParseStrategy, *, replace: bool = False) -> ParseStrategy:
@@ -91,14 +97,16 @@ def get_strategy(mode: ParseMode) -> ParseStrategy:
     """The registered strategy for ``mode``. The two built-in modes register
     themselves on first use; any other unregistered mode is a KeyError."""
     if mode not in _REGISTRY:
-        if mode is ParseMode.LLM:
-            from src.parsing.llm import LLMParser
+        with _REGISTRY_LOCK:
+            if mode not in _REGISTRY:   # another thread may have registered it meanwhile
+                if mode is ParseMode.LLM:
+                    from src.parsing.llm import LLMParser
 
-            register(LLMParser())
-        elif mode is ParseMode.DICTIONARY:
-            from src.parsing.dictionary import DictionaryParser
+                    register(LLMParser())
+                elif mode is ParseMode.DICTIONARY:
+                    from src.parsing.dictionary import DictionaryParser
 
-            register(DictionaryParser())
+                    register(DictionaryParser())
     return _REGISTRY[mode]
 
 

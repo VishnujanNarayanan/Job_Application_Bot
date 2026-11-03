@@ -525,6 +525,12 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         # thread, and without it the paid provider would be reachable.
         workers = max(1, int(a.get("parse_workers", 1)))
         pool = ThreadPoolExecutor(max_workers=workers) if workers > 1 else None
+        if pool is not None:
+            # Built once here, not raced for by the first workers.
+            from src.parsing.modes import ParseMode, get_strategy
+
+            get_strategy(ParseMode.DICTIONARY)
+            get_strategy(ParseMode.LLM)
         ahead: dict[int, object] = {}
 
         def _parse_ahead(i: int) -> None:
@@ -564,7 +570,15 @@ def run(dry_run: bool, log, *, atses=None) -> int:
                         _parse_ahead(k)
             try:
                 if pool is not None:
-                    routed = ahead.pop(index).result()
+                    try:
+                        routed = ahead.pop(index).result()
+                    except (LLMBudgetError, LLMError):
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - a worker failure must not end the run
+                        log.warning("parse_worker_failed", job_id=job.job_id, error=str(exc)[:200])
+                        with only_providers(allowed_providers):
+                            routed = parse_job(job, profile=profile, rules=routing_rules,
+                                               scrape_window_hours=hours, llm_available=llm_available)
                 else:
                     with only_providers(allowed_providers):
                         routed = parse_job(job, profile=profile, rules=routing_rules,
