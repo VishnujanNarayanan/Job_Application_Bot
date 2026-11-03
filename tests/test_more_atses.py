@@ -16,7 +16,7 @@ class FakeHttp:
         self.answers, self.calls = list(answers), []
 
     def __call__(self, url, timeout=None, headers=None, json=None):
-        self.calls.append(url)
+        self.calls.append((url, json) if json is not None else url)
         status, body = self.answers.pop(0)
         return SimpleNamespace(status_code=status, text=body, headers={})
 
@@ -226,3 +226,99 @@ def test_keka_missing_tenant_is_gone_and_canary():
     assert poller.canary_ok(lane)
     lane, _ = _lane("keka", (200, KEKA_PAGE))
     assert not poller.canary_ok(lane)
+
+
+# --- SuccessFactors career sites (#160) --------------------------------------------
+
+def _sf_page(rows, total):
+    return json.dumps({"totalJobs": total, "jobSearchResult": [{"response": r} for r in rows]})
+
+
+def test_successfactors_reads_newest_india_postings_and_stops_at_a_week():
+    from datetime import timedelta
+    today = datetime.now(timezone.utc).strftime("%-m/%-d/%y")
+    old = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%-m/%-d/%y")
+    page0 = _sf_page([
+        {"id": "216316", "urlTitle": "Process-Associate", "unifiedStandardTitle": "Data Engineer",
+         "unifiedStandardStart": today, "jobLocationShort": ["Kolkata, IND-19, IND, 700091<br/>"],
+         "jobLocationCountry": ["India"]},
+        {"id": "9", "urlTitle": "X", "unifiedStandardTitle": "Banker", "unifiedStandardStart": today,
+         "jobLocationShort": ["Kwun Tong, HKG"]},
+        {"id": "179408", "urlTitle": "Senior-Technical-Architect", "unifiedStandardTitle": "Senior Technical Architect",
+         "unifiedStandardStart": today, "custCountryRegion": ["India"], "custprimecity": "Bangalore"},
+    ] + [{"id": str(100 + i), "urlTitle": "Y", "unifiedStandardTitle": "Old", "unifiedStandardStart": old,
+          "jobLocationCountry": ["India"]} for i in range(7)], 5000)
+    lane, http = _lane("successfactors", (200, page0))
+    res = poller.fetch_board(lane, poller.Board("successfactors", "careers.wipro.com"))
+    assert res.error is None and not res.complete and len(http.calls) == 1   # stopped: page all older than a week
+    ids = [p.posting_id for p in res.postings]
+    assert "216316" in ids and "179408" in ids and "9" not in ids            # Hong Kong dropped
+    p = res.postings[0]
+    assert p.url == "https://careers.wipro.com/job/Process-Associate/216316-en_US/"
+    assert ats.place(p) == "india" and ats.detail_url(p) == p.url
+    ats.parse_detail(p, '<span itemprop="title">Data Engineer</span>'
+                        '<span itemprop="description"><p>Build <b>Spark</b> pipelines.</p></span>'
+                        '<span itemprop="description"><p>Mandatory: Python</p></span>')
+    assert "Spark" in p.description and "Python" in p.description
+
+
+def test_successfactors_canary_is_skipped():
+    lane, _ = _lane("successfactors")
+    assert poller.canary_ok(lane)
+
+
+# --- Avature career portals (#160) --------------------------------------------------
+
+AV_PAGE = """
+<a href="https://jobs.siemens.com/en_US/externaljobs/JobDetail/528135" data-au="ag-a-10"> Data Engineer </a>
+<span>Thane</span>, <span>Maharashtra</span>, <span>India</span> &bull; Job ID: 528135
+<a href="https://jobs.siemens.com/en_US/externaljobs/JobDetail/528135" aria-label="Learn more"> Learn more </a>
+<a href="https://jobs.siemens.com/en_US/externaljobs/JobDetail/528116" data-au="ag-a-10"> Power Electronics Engineer </a>
+<span>Suzhou</span>, <span>China</span> &bull; Job ID: 528116
+"""
+
+
+def test_avature_list_keeps_india_and_reads_titles():
+    lane, http = _lane("avature", (200, AV_PAGE), (200, "<html>no results</html>"))
+    res = poller.fetch_board(lane, poller.Board("avature", "jobs.siemens.com/en_US/externaljobs"))
+    assert res.error is None and not res.complete
+    assert [(p.posting_id, p.title) for p in res.postings] == [("528135", "Data Engineer")]   # China dropped
+    assert http.calls[0] == "https://jobs.siemens.com/en_US/externaljobs/SearchJobs?jobOffset=0"
+    assert http.calls[1].endswith("jobOffset=10")
+    p = res.postings[0]
+    assert ats.place(p) == "india" and ats.detail_url(p) == p.url
+
+
+def test_avature_detail_from_json_ld_or_sections():
+    p = ats.Posting(ats="avature", board_id="b", posting_id="1", title="t", location="India", url="u")
+    ats.parse_detail(p, '<script type="application/ld+json">{"@type": "JobPosting", "datePosted": "2026-11-03",'
+                        ' "description": "<p>Build Spark pipelines</p>"}</script>')
+    assert p.description == "Build Spark pipelines" and p.posted_at.day == 3
+    q = ats.Posting(ats="avature", board_id="b", posting_id="2", title="t", location="India", url="u")
+    ats.parse_detail(q, '<span>Posted since</span> <span>03-Nov-2026</span>'
+                        '<div id="section1__content"><p>Python and SQL daily</p></div>'
+                        '<div class="x" id="section2__content">Apply</div>')
+    assert "Python and SQL" in q.description and q.posted_at.month == 11
+
+
+# --- Phenom career sites (#160) -----------------------------------------------------
+
+def _ph_page(ids, total):
+    return json.dumps({"refineSearch": {"status": 200, "totalHits": total, "data": {"jobs": [
+        {"jobId": str(i), "title": f"Data Engineer {i}", "location": "Chennai, IN-TN, India", "country": "India",
+         "postedDate": "2026-11-03T05:52:26.000+0000", "jobSeqNo": f"SEQ{i}", "type": "Full-Time"} for i in ids]}}})
+
+
+def test_phenom_pages_india_and_posts_for_detail():
+    lane, http = _lane("phenom", (200, _ph_page(range(100), 130)), (200, _ph_page(range(100, 130), 130)),
+                       (200, json.dumps({"jobDetail": {"data": {"job": {
+                           "description": "<p>Spark and Python</p>", "companyName": "NTT DATA"}}}})))
+    res = poller.fetch_board(lane, poller.Board("phenom", "careers.nttdata.com/en_global"))
+    assert res.error is None and res.complete and len(res.postings) == 130
+    assert http.calls[0][0] == "https://careers.nttdata.com/widgets"
+    assert http.calls[0][1]["selected_fields"] == {"country": ["India"]} and http.calls[1][1]["from"] == 100
+    p = res.postings[0]
+    assert ats.place(p) == "india" and p.url == "https://careers.nttdata.com/global/en/job/0" and p.ref == "SEQ0"
+    assert poller.fetch_detail(lane, p)
+    assert http.calls[2][1]["ddoKey"] == "jobDetail" and http.calls[2][1]["jobSeqNo"] == "SEQ0"
+    assert "Spark" in p.description and p.company == "NTT DATA"

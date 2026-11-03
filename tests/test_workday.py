@@ -146,3 +146,20 @@ def test_canary_accepts_workdays_unknown_tenant_answer():
     assert http.calls[0][0].startswith(f"https://{poller.CANARY}.wd5.myworkdayjobs.com/")
     lane, _ = _lane((200, '{"total": 5}'))
     assert not poller.canary_ok(lane)
+
+
+# --- myworkdaysite.com (Workday's second domain) --------------------------------------
+
+def test_myworkdaysite_links_and_urls():
+    url = "https://wd1.myworkdaysite.com/en-US/recruiting/wf/WellsFargoJobs/job/Bengaluru-India/X_R-1"
+    assert ats.board_from_url(url) == ("workday", "wf/site.wd1/WellsFargoJobs")   # "wf" is not a locale
+    assert ats.board_from_url("https://wd3.myworkdaysite.com/recruiting/avnet/External") == \
+        ("workday", "avnet/site.wd3/External")
+    assert ats.board_from_url("https://wd1.myworkdaysite.com/en-US/") is None
+    board = "wf/site.wd1/WellsFargoJobs"
+    assert ats.list_url("workday", board) == "https://wd1.myworkdaysite.com/wday/cxs/wf/WellsFargoJobs/jobs"
+    p = ats.parse_list("workday", board, json.dumps({"jobPostings": [_job(7)]}))[0]
+    assert p.url == "https://wd1.myworkdaysite.com/recruiting/wf/WellsFargoJobs/job/India-Bengaluru/Data-Engineer_JR7"
+    assert ats.detail_url(p) == ("https://wd1.myworkdaysite.com/wday/cxs/wf/WellsFargoJobs"
+                                 "/job/India-Bengaluru/Data-Engineer_JR7")
+    assert p.job_id == "workday-wf_site.wd1_WellsFargoJobs-JR7"

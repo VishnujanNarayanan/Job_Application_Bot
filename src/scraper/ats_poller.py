@@ -234,6 +234,12 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
             return _fetch_oracle(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "amazon":
             return _fetch_amazon(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "phenom":
+            return _fetch_phenom(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "avature":
+            return _fetch_avature(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "successfactors":
+            return _fetch_successfactors(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "keka":
             return _fetch_keka(lane, board, res)
         if board.ats == "smartrecruiters":
@@ -341,6 +347,69 @@ def _fetch_oracle(lane: Lane, board: Board, res: BoardResult, *, max_pages: int)
     return res
 
 
+def _fetch_phenom(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Phenom (#160): every India page (the search ignores date order)."""
+    import json
+
+    offset, total = 0, None
+    for _page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("phenom", board.board_id), body=ats.phenom_search(board.board_id, offset))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        data = json.loads(body)
+        total = total if total is not None else ats.phenom_total(data)
+        page = ats.parse_list("phenom", board.board_id, body)
+        res.postings += page
+        offset += len(page)
+        if not page or offset >= total:
+            break
+    else:
+        res.complete = False
+    return res
+
+
+def _fetch_avature(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Avature (#160): the search pages, newest first, 10 a page; India by the
+    location text in each result. Pages are capped, so never complete."""
+    seen: set[str] = set()
+    for page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("avature", board.board_id, offset=page * ats.AVATURE_PAGE))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        rows = [p for p in ats.parse_list("avature", board.board_id, body) if p.posting_id not in seen]
+        if not rows:
+            break
+        seen.update(p.posting_id for p in rows)
+        res.postings += [p for p in rows if ats.place(p) != "elsewhere"]
+    res.complete = False
+    return res
+
+
+def _fetch_successfactors(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """SuccessFactors career site (#160): the JSON search newest first, until
+    postings are older than a week or the page cap. Wipro alone lists 5,454
+    India jobs, so the full list is never read; the list is therefore never
+    complete (nothing is closed from it)."""
+    import json
+
+    oldest = datetime.now(timezone.utc) - timedelta(days=7)
+    for page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("successfactors", board.board_id), body=ats.sf_search_body(page))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        rows = ats.parse_list("successfactors", board.board_id, body)
+        res.postings += [p for p in rows if p.country == "IN" or ats.place(p) != "elsewhere"]
+        dated = [p.posted_at for p in rows if p.posted_at]
+        # Newest first: once a page reaches postings older than a week, stop.
+        if not rows or (dated and min(dated) < oldest) or (page + 1) * ats.SF_PAGE >= ats.sf_total(json.loads(body)):
+            break
+    res.complete = False
+    return res
+
+
 def _fetch_keka(lane: Lane, board: Board, res: BoardResult) -> BoardResult:
     """Keka (#160): the careers page for the org id, then the active jobs.
     A tenant that does not exist redirects to TenantNotFound.html."""
@@ -409,7 +478,10 @@ def fetch_detail(lane: Lane, posting: ats.Posting) -> bool:
     url = ats.detail_url(posting)
     if url is None:
         return True
-    status, body = lane.get(url)
+    if posting.ats == "phenom":   # the detail is a POST to the same endpoint
+        status, body, _ = lane.fetch(url, body=ats.phenom_detail_body(posting))
+    else:
+        status, body = lane.get(url)
     if status != 200:
         return False
     try:
@@ -450,12 +522,13 @@ def run_lanes(lanes: dict[str, Lane], work: dict[str, list], fn: Callable, budge
 # so no host sees more than one lane's pace. Greenhouse, Lever, Ashby,
 # SmartRecruiters, Workable, Rippling and Amazon answer every company from one
 # API host and keep a single lane.
-PER_HOST = frozenset({"workday", "oracle", "keka", "recruitee", "bamboohr", "eightfold"})
+PER_HOST = frozenset({"workday", "oracle", "keka", "recruitee", "bamboohr", "eightfold",
+                      "successfactors", "avature", "phenom"})
 
 
 def _host_key(item) -> str:
     """The host a board (or posting) is fetched from, as a stable key."""
-    if item.ats in ("workday", "oracle"):
+    if item.ats in ("workday", "oracle", "avature", "phenom"):
         return item.board_id.split("/", 1)[0].lower()
     return item.board_id.lower()
 
@@ -491,6 +564,9 @@ def canary_ok(lane: Lane) -> bool:
         board = f"{CANARY}/wd5/External"
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
+    if lane.name in ("successfactors", "avature", "phenom"):
+        # Employer-hosted sites: no shared "no such board" answer to ask for.
+        return True
     if lane.name == "keka":
         # Redirected to TenantNotFound.html, which names no org (2026-11-02).
         status, body = lane.get(ats.list_url("keka", CANARY), patient=False)
