@@ -31,6 +31,7 @@ Front, in order (each skip is recorded in ``ats_postings.skipped``):
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import re
 import sys
 import time
@@ -398,6 +399,13 @@ def _report_end_of_run(stats, *, new: int, backlog: int, matched: int, skipped: 
             log.error("telegram_summary_error", error=str(exc))
 
 
+def _detached(job):
+    """A session-free copy of an all_jobs row for a worker thread to read."""
+    from src.state.models import AllJobs
+
+    return AllJobs(**{c.key: getattr(job, c.key) for c in AllJobs.__table__.columns})
+
+
 def _safe_commit(session, log) -> bool:
     """Commit; on a dropped connection roll back and say so. The pool hands
     the next query a fresh connection (pool_pre_ping), so the run goes on."""
@@ -509,6 +517,25 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         allowed_providers = list(a.get("llm_providers") or ["groq", "gemini-free"])
         llm_available = True
         written = 0  # verdicts in `queue` already saved
+        # Parses run ahead in worker threads (the LLM call is most of a job's
+        # time; ~8 s each, 2026-11-03) while this thread scores, saves and
+        # sends in order. Workers get a detached copy of the row (no session,
+        # so nothing can lazy-load from another thread), and re-enter
+        # only_providers themselves: a context variable does not cross into a
+        # thread, and without it the paid provider would be reachable.
+        workers = max(1, int(a.get("parse_workers", 1)))
+        pool = ThreadPoolExecutor(max_workers=workers) if workers > 1 else None
+        ahead: dict[int, object] = {}
+
+        def _parse_ahead(i: int) -> None:
+            copy, avail = _detached(passing[i]), llm_available
+
+            def work():
+                with only_providers(allowed_providers):
+                    return parse_job(copy, profile=profile, rules=routing_rules,
+                                     scrape_window_hours=hours, llm_available=avail)
+            ahead[i] = pool.submit(work)
+
         for index, job in enumerate(passing):
             if time.monotonic() - started > budget or time.monotonic() - run_started > deadline:
                 not_reached = len(passing) - index  # no verdict: back next run
@@ -531,10 +558,17 @@ def run(dry_run: bool, log, *, atses=None) -> int:
             # dictionary parse is scored first and picks the route. The LLM may
             # only use the free providers in ats_poll.llm_providers; once they
             # are out of quota, the rest of this run uses the dictionary parse.
+            if pool is not None:
+                for k in range(index, min(index + workers, len(passing))):
+                    if k not in ahead:
+                        _parse_ahead(k)
             try:
-                with only_providers(allowed_providers):
-                    routed = parse_job(job, profile=profile, rules=routing_rules,
-                                       scrape_window_hours=hours, llm_available=llm_available)
+                if pool is not None:
+                    routed = ahead.pop(index).result()
+                else:
+                    with only_providers(allowed_providers):
+                        routed = parse_job(job, profile=profile, rules=routing_rules,
+                                           scrape_window_hours=hours, llm_available=llm_available)
             except LLMBudgetError as exc:
                 log.warning("ats_free_llm_exhausted", job_id=job.job_id, error=str(exc)[:200],
                             allowed=sorted(allowed_providers))
@@ -607,6 +641,8 @@ def run(dry_run: bool, log, *, atses=None) -> int:
                          score=result.final_score)
             matched += 1
 
+        if pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
         if written < len(queue):
             _write_not_applied(session, queue[written:], now, dry_run=dry_run)
         if not _safe_commit(session, log):
