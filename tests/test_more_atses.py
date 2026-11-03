@@ -322,3 +322,55 @@ def test_phenom_pages_india_and_posts_for_detail():
     assert poller.fetch_detail(lane, p)
     assert http.calls[2][1]["ddoKey"] == "jobDetail" and http.calls[2][1]["jobSeqNo"] == "SEQ0"
     assert "Spark" in p.description and p.company == "NTT DATA"
+
+
+# --- XML job feeds (#161) -----------------------------------------------------------
+
+FEED = """<?xml version="1.0" encoding="utf-8"?><source><publisher>Cognizant</publisher>
+<job><title><![CDATA[Data Engineer]]></title><date><![CDATA[Tue, 03 Nov 2026 05:06:46 GMT]]></date>
+<referencenumber><![CDATA[00069818612]]></referencenumber>
+<url><![CDATA[https://careers.cognizant.com/global-en/jobs/00069818612/data-engineer/]]></url>
+<company><![CDATA[Cognizant]]></company><city><![CDATA[Chennai]]></city><state><![CDATA[Tamil Nadu]]></state>
+<country><![CDATA[India]]></country><description><![CDATA[<p>Spark and <b>Python</b></p>]]></description></job>
+<job><title><![CDATA[Banker]]></title><date><![CDATA[Tue, 03 Nov 2026 04:00:00 GMT]]></date>
+<referencenumber><![CDATA[2]]></referencenumber><url><![CDATA[https://x/2]]></url><city><![CDATA[Dallas]]></city>
+<country><![CDATA[United States]]></country><description><![CDATA[x]]></description></job></source>"""
+
+
+def test_xmlfeed_reads_the_whole_feed_with_descriptions():
+    board = "careers.cognizant.com/global-en/jobs/xml/?rss=true"
+    lane, http = _lane("xmlfeed", (200, FEED))
+    res = poller.fetch_board(lane, poller.Board("xmlfeed", board))
+    assert res.error is None and res.complete and len(res.postings) == 2
+    assert http.calls == ["https://careers.cognizant.com/global-en/jobs/xml/?rss=true"]
+    p, q = res.postings
+    assert ats.place(p) == "india" and ats.place(q) == "elsewhere"
+    assert "Spark" in p.description and ats.detail_url(p) is None and p.posted_at.hour == 5
+    assert p.job_id == "xmlfeed-careers.cognizant.com_global-en_jobs_xml_rss_true-00069818612"   # URL-safe
+
+
+def test_xmlfeed_that_is_not_xml_is_an_error():
+    lane, _ = _lane("xmlfeed", (200, "<html>maintenance</html"))
+    assert poller.fetch_board(lane, poller.Board("xmlfeed", "x/feed")).error
+
+
+# --- Goldman Sachs (#161) ------------------------------------------------------------
+
+def test_goldman_graphql_pages_and_role_page_description():
+    page = json.dumps({"data": {"roleSearch": {"totalCount": 2, "items": [
+        {"roleId": "187879_GS_MID_CAREER", "jobTitle": "Data Engineer", "corporateTitle": "Associate",
+         "locations": [{"city": "Bengaluru", "state": "Karnataka", "country": "India"}],
+         "externalSource": {"sourceId": "187879"}},
+        {"roleId": "2", "jobTitle": "Trader", "locations": [{"city": "London", "country": "United Kingdom"}],
+         "externalSource": {"sourceId": "2"}}]}}})
+    lane, http = _lane("goldman", (200, page))
+    res = poller.fetch_board(lane, poller.Board("goldman", "higher.gs.com"))
+    assert res.error is None and res.complete and len(res.postings) == 2 and len(http.calls) == 1
+    url, body = http.calls[0]
+    assert url == "https://api-higher.gs.com/gateway/api/v1/graphql"
+    assert body["variables"]["searchQueryInput"]["filters"][0]["filters"][0]["filter"] == "India"
+    p = res.postings[0]
+    assert ats.place(p) == "india" and p.url == "https://higher.gs.com/roles/187879"
+    ats.parse_detail(p, '<script id="__NEXT_DATA__" type="application/json">'
+                        '{"props": {"role": {"descriptionHtml": "<p>Build <b>Python</b> services</p>"}}}</script>')
+    assert "Python" in p.description

@@ -29,7 +29,8 @@ from src.state.models import AllJobs
 
 ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
          "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon", "keka",
-         "successfactors", "avature", "phenom")
+         "successfactors", "avature", "phenom", "xmlfeed",
+         "goldman")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
@@ -62,7 +63,10 @@ class Posting:
     @property
     def job_id(self) -> str:
         # Workday board ids are tenant/wdN/site: no slashes in a job id.
-        return f"{self.ats}-{self.board_id.replace('/', '_')}-{self.posting_id}"
+        board = self.board_id.replace('/', '_')
+        if self.ats == "xmlfeed":   # a feed URL: no "?", "=" or "&" in a job id (it is used in URLs)
+            board = re.sub(r"[^A-Za-z0-9_.-]+", "_", self.board_id).strip("_")
+        return f"{self.ats}-{board}-{self.posting_id}"
 
 
 # --- Company names ----------------------------------------------------------------
@@ -108,6 +112,12 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
         return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
     if ats == "oracle":
         return oracle_search_url(board_id, offset=offset, location_id=country)
+    if ats == "goldman":
+        # #161: Goldman Sachs' own careers site (higher.gs.com), a GraphQL search.
+        return "https://api-higher.gs.com/gateway/api/v1/graphql"
+    if ats == "xmlfeed":
+        # #161: an employer's full XML job feed; the board id is its URL sans scheme.
+        return f"https://{board_id}"
     if ats == "phenom":
         # #160: Phenom career site ("host/lang"); the search is a POST (phenom_search).
         return f"https://{board_id.split('/', 1)[0]}/widgets"
@@ -589,6 +599,87 @@ def _phenom(board_id: str, data: dict) -> list[Posting]:
     return out
 
 
+# --- XML job feeds (#161) -----------------------------------------------------------
+# Some employers publish every open job as one Indeed-style XML feed
+# (Cognizant: careers.cognizant.com/global-en/jobs/xml/?rss=true, 2,100 jobs,
+# descriptions included). <job> elements with title, date, referencenumber /
+# requisitionid, url, company, city, state, country, description. Filters in
+# the URL are ignored by such feeds, so India is picked from <country>.
+
+def _xmlfeed(board_id: str, body: str) -> list[Posting]:
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
+
+    root = ET.fromstring(body.encode("utf-8"))
+
+    def text(el, *names):
+        for n in names:
+            v = el.findtext(n)
+            if v and v.strip():
+                return v.strip()
+        return ""
+
+    out = []
+    for j in root.iter("job"):
+        pid = text(j, "referencenumber", "requisitionid", "apijobid", "id")
+        if not pid:
+            continue
+        country = text(j, "country")
+        location = ", ".join(x for x in (text(j, "city"), text(j, "state"), country) if x)
+        try:
+            posted = parsedate_to_datetime(text(j, "date", "pubDate"))
+        except (TypeError, ValueError):
+            posted = None
+        url = text(j, "url", "link")
+        out.append(Posting(
+            ats="xmlfeed", board_id=board_id, posting_id=pid, title=text(j, "title"), location=location,
+            country=_country(country), posted_at=posted, url=url, apply_url=url,
+            description=html_to_text(text(j, "description")) or None, company=text(j, "company") or None,
+            employment_type=text(j, "jobtype") or None,
+        ))
+    return out
+
+
+# --- Goldman Sachs (#161) -----------------------------------------------------------
+# higher.gs.com: the page's own GraphQL query (GetRoles), India-filtered, 20 a
+# page; the role page /roles/{sourceId} embeds descriptionHtml in its Next.js
+# data. No posting date is exposed: first seen stands in for it.
+
+GOLDMAN_PAGE = 20
+_GS_QUERY = ("query GetRoles($searchQueryInput: RoleSearchQueryInput!) { roleSearch(searchQueryInput: "
+             "$searchQueryInput) { totalCount items { roleId corporateTitle jobTitle jobFunction locations "
+             "{ primary state country city } status division externalSource { sourceId } } } }")
+
+
+def goldman_search(page: int = 0) -> dict:
+    return {"operationName": "GetRoles", "query": _GS_QUERY, "variables": {"searchQueryInput": {
+        "page": {"pageSize": GOLDMAN_PAGE, "pageNumber": page},
+        "sort": {"sortStrategy": "POSTED_DATE", "sortOrder": "DESC"},
+        "filters": [{"filterCategoryType": "LOCATION", "filters": [{"filter": "India", "subFilters": []}]}],
+        "experiences": ["EARLY_CAREER", "PROFESSIONAL"], "searchTerm": ""}}}
+
+
+def goldman_total(data: dict) -> int:
+    return int((((data.get("data") or {}).get("roleSearch")) or {}).get("totalCount") or 0)
+
+
+def _goldman(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in (((data.get("data") or {}).get("roleSearch")) or {}).get("items") or []:
+        src = (j.get("externalSource") or {}).get("sourceId") or j.get("roleId")
+        if not src:
+            continue
+        locs = j.get("locations") or []
+        loc = " / ".join(", ".join(x for x in (l.get("city"), l.get("state"), l.get("country")) if x) for l in locs)
+        url = f"https://higher.gs.com/roles/{src}"
+        out.append(Posting(
+            ats="goldman", board_id=board_id, posting_id=str(src), title=(j.get("jobTitle") or "").strip(),
+            location=loc, country="IN" if any((l.get("country") or "") == "India" for l in locs) else None,
+            url=url, apply_url=url, company="Goldman Sachs", level=j.get("corporateTitle"),
+        ))
+    return out
+
+
 def sf_total(data: dict) -> int:
     return int(data.get("totalJobs") or 0)
 
@@ -621,7 +712,7 @@ def detail_url(posting: Posting) -> str | None:
     """Where the description is, for lists that leave it out; else None."""
     if posting.description is not None:
         return None
-    if posting.ats in ("successfactors", "avature"):
+    if posting.ats in ("successfactors", "avature", "goldman"):
         return posting.url
     if posting.ats == "phenom":   # POSTed with phenom_detail_body
         return list_url("phenom", posting.board_id)
@@ -854,12 +945,17 @@ _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
             "smartrecruiters": _smartrecruiters, "workday": _workday, "recruitee": _recruitee,
             "rippling": _rippling, "workable": _workable, "bamboohr": _bamboohr, "eightfold": _eightfold,
             "oracle": _oracle, "amazon": _amazon, "keka": _keka, "successfactors": _successfactors,
-            "phenom": _phenom}
+            "phenom": _phenom, "goldman": _goldman}
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
     if ats == "avature":   # an HTML search page
         return _avature(board_id, body)
+    if ats == "xmlfeed":   # an XML feed
+        try:
+            return _xmlfeed(board_id, body)
+        except Exception as exc:  # noqa: BLE001 - xml.etree's ParseError and kin
+            raise ValueError(f"xmlfeed/{board_id}: not a job feed") from exc
     """A board's postings from its list response. Raises ValueError when the
     body is not the expected JSON, so a changed API fails loudly per board."""
     try:
@@ -898,6 +994,11 @@ def parse_detail(posting: Posting, body: str) -> None:
     link SmartRecruiters only gives there."""
     if posting.ats == "successfactors":   # an HTML page, not JSON
         posting.description = _sf_description(body)
+        return
+    if posting.ats == "goldman":   # the role page's Next.js data
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', body, re.S)
+        found = re.search(r'"descriptionHtml"\s*:\s*("(?:[^"\\]|\\.)*")', m.group(1)) if m else None
+        posting.description = html_to_text(json.loads(found.group(1))) if found else None
         return
     if posting.ats == "avature":   # HTML: a JSON-LD JobPosting, or plain sections
         job = _json_ld_job(body)
