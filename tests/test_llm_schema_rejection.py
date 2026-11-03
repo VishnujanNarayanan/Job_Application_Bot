@@ -82,3 +82,12 @@ def test_a_rejection_does_not_retire_the_provider_for_the_run():
 
     assert rejecting.chat.completions.create.call_count == 2
     assert "primary" not in llm_client._DEAD_PROVIDERS
+
+
+def test_years_required_is_advertised_as_a_number_and_read_as_whole_years():
+    """Groq rejected a model's 3.0 against an integer schema (2026-11-02)."""
+    assert JDParsed.model_json_schema()["properties"]["years_required"]["type"] == "number"
+    base = dict(role_summary="Data role.", role_category="data", role_level="mid", location_type="remote")
+    assert JDParsed(years_required=3.0, **base).years_required == 3
+    assert JDParsed(years_required=4.6, **base).years_required == 5
+    assert JDParsed(years_required=2, **base).years_required == 2
