@@ -162,9 +162,20 @@ def test_oracle_site_without_india():
     assert res.error is None and res.complete and res.postings == [] and len(http.calls) == 1
 
 
-def test_oracle_canary():
-    lane, http = _lane("oracle", (-1, ""))
+def test_oracle_canary_asks_a_real_site():
+    lane, http = _lane("oracle", (200, json.dumps({"items": [{"TotalJobsCount": 5}]})))
     assert poller.canary_ok(lane)
+    assert "eeho.fa.us2.oraclecloud.com" in http.calls[0] and "siteNumber=CX_45001" in http.calls[0]
+    for bad in ((-1, ""), (503, ""), (200, "<html>maintenance</html>")):
+        lane, _ = _lane("oracle", bad)
+        assert not poller.canary_ok(lane)
+
+
+def test_recruitee_keeps_one_lane():
+    lanes = {}
+    work = poller.split_by_host({"recruitee": [poller.Board("recruitee", f"t{i}") for i in range(20)]},
+                                lanes, parallel=8, delay=0.5)
+    assert list(work) == ["recruitee"]   # rate-limited across tenants (2026-11-03)
 
 
 # --- Amazon's own site (#161) -----------------------------------------------------
