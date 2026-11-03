@@ -21,13 +21,13 @@ import html
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
 from src.state.models import AllJobs
 
-ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters")
+ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
@@ -54,7 +54,8 @@ class Posting:
 
     @property
     def job_id(self) -> str:
-        return f"{self.ats}-{self.board_id}-{self.posting_id}"
+        # Workday board ids are tenant/wdN/site: no slashes in a job id.
+        return f"{self.ats}-{self.board_id.replace('/', '_')}-{self.posting_id}"
 
 
 # --- Company names ----------------------------------------------------------------
@@ -93,7 +94,11 @@ def key(name: str) -> str:
 # --- URLs -------------------------------------------------------------------------
 
 def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int = 0) -> str:
-    """The endpoint that lists a board's open postings."""
+    """The endpoint that lists a board's open postings. Workday's is POSTed
+    (:func:`workday_search`)."""
+    if ats == "workday":
+        tenant, shard, site = workday_parts(board_id)
+        return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
     b = quote(board_id, safe="")
     if ats == "greenhouse":
         return f"https://boards-api.greenhouse.io/v1/boards/{b}/jobs"
@@ -105,6 +110,104 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
         url = f"https://api.smartrecruiters.com/v1/companies/{b}/postings?limit={SR_PAGE}&offset={offset}"
         return f"{url}&country={country}" if country else url
     raise ValueError(f"no adapter for {ats}")
+
+
+# --- Workday (#103) ---------------------------------------------------------------
+# A board is {tenant}.{wdN}.myworkdayjobs.com/{site}; its id here is
+# "tenant/wdN/site". The search is an unofficial JSON POST that returns 20
+# postings a page plus location facets; India is a facet value whose id
+# differs per tenant, so the first page (unfiltered) is read for it.
+
+WORKDAY_PAGE = 20
+
+
+def workday_parts(board_id: str) -> tuple[str, str, str]:
+    tenant, shard, site = board_id.split("/", 2)
+    return tenant, shard, site
+
+
+def workday_host(board_id: str) -> str:
+    tenant, shard, _site = workday_parts(board_id)
+    return f"https://{tenant}.{shard}.myworkdayjobs.com"
+
+
+def workday_search(offset: int = 0, facets: dict | None = None) -> dict:
+    return {"appliedFacets": facets or {}, "limit": WORKDAY_PAGE, "offset": offset, "searchText": ""}
+
+
+def workday_india_facets(data: dict) -> dict[str, list[str]]:
+    """{facet parameter: [ids]} that select India, from a search response.
+    A country-level value ("India") is used when there is one; otherwise every
+    site whose name is in India ("India, Bengaluru", "Pune"). Empty = the
+    board has no India postings."""
+    countries: dict[str, list[str]] = {}
+    sites: dict[str, list[str]] = {}
+
+    def walk(facet: dict, param: str | None) -> None:
+        param = facet.get("facetParameter") or param
+        for v in facet.get("values") or []:
+            if v.get("values"):
+                walk(v, param)
+                continue
+            name = (v.get("descriptor") or "").strip()
+            if not v.get("id") or not param:
+                continue
+            if name.lower() == "india":
+                countries.setdefault(param, []).append(v["id"])
+            elif in_india(name):
+                sites.setdefault(param, []).append(v["id"])
+
+    for f in data.get("facets") or []:
+        walk(f, None)
+    if countries:
+        # One country facet is enough; several would AND together.
+        param = next(iter(countries))
+        return {param: countries[param]}
+    if sites:
+        param = max(sites, key=lambda k: len(sites[k]))
+        return {param: sites[param]}
+    return {}
+
+
+_POSTED_DAYS = re.compile(r"(\d+)\+?\s+days?\s+ago", re.I)
+
+
+def _workday_posted(text: str | None, now: datetime) -> datetime | None:
+    """"Posted Today" / "Posted Yesterday" / "Posted 3 Days Ago" /
+    "Posted 30+ Days Ago" -> an approximate time; the detail's startDate
+    replaces it."""
+    t = (text or "").lower()
+    if "today" in t:
+        return now
+    if "yesterday" in t:
+        return now - timedelta(days=1)
+    m = _POSTED_DAYS.search(t)
+    if m:
+        return now - timedelta(days=int(m.group(1)) + (1 if "+" in t else 0))
+    return None
+
+
+def _workday(board_id: str, data: dict, now: datetime | None = None) -> list[Posting]:
+    """Postings of an India-filtered page: every one is in India (country IN),
+    even when its location says "3 Locations"."""
+    now = now or datetime.now(timezone.utc)
+    host = workday_host(board_id)
+    _tenant, _shard, site = workday_parts(board_id)
+    out = []
+    for j in data.get("jobPostings") or []:
+        path = j.get("externalPath") or ""
+        if not path:
+            continue
+        ref = (j.get("bulletFields") or [None])[0] or path.rsplit("_", 1)[-1]
+        loc = j.get("locationsText") or ""
+        out.append(Posting(
+            ats="workday", board_id=board_id, posting_id=str(ref), title=(j.get("title") or "").strip(),
+            location=loc, country="IN",
+            remote=True if re.search(r"\bremote\b", loc, re.I) else None,
+            posted_at=_workday_posted(j.get("postedOn"), now),
+            url=f"{host}/{site}{path}", apply_url=f"{host}/{site}{path}",
+        ))
+    return out
 
 
 # --- Boards from apply links (#158) -------------------------------------------------
@@ -176,6 +279,11 @@ def detail_url(posting: Posting) -> str | None:
     """Where the description is, for lists that leave it out; else None."""
     if posting.description is not None:
         return None
+    if posting.ats == "workday":
+        tenant, _shard, site = workday_parts(posting.board_id)
+        host = workday_host(posting.board_id)
+        path = (posting.url or "").split(f"/{site}", 1)[-1]
+        return f"{host}/wday/cxs/{tenant}/{site}{path}"
     b = quote(posting.board_id, safe="")
     if posting.ats == "greenhouse":
         return f"https://boards-api.greenhouse.io/v1/boards/{b}/jobs/{posting.posting_id}"
@@ -305,7 +413,7 @@ def _smartrecruiters(board_id: str, data: dict) -> list[Posting]:
 
 
 _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
-            "smartrecruiters": _smartrecruiters}
+            "smartrecruiters": _smartrecruiters, "workday": _workday}
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
@@ -351,6 +459,17 @@ def parse_detail(posting: Posting, body: str) -> None:
         posting.description = "\n\n".join(parts) or None
         posting.apply_url = data.get("applyUrl") or posting.apply_url
         posting.url = data.get("postingUrl") or posting.url
+    elif posting.ats == "workday":
+        info = data.get("jobPostingInfo") or {}
+        posting.description = html_to_text(info.get("jobDescription"))
+        # The real first-posted date, in place of "Posted 3 Days Ago".
+        posting.posted_at = _when(info.get("startDate")) or posting.posted_at
+        posting.employment_type = info.get("timeType") or posting.employment_type
+        posting.location = info.get("location") or posting.location
+        posting.apply_url = info.get("externalUrl") or posting.apply_url
+        country = (info.get("country") or {}).get("descriptor")
+        if country:
+            posting.country = _country(country)
 
 
 # --- Where a posting is -------------------------------------------------------------
