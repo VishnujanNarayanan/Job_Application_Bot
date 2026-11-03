@@ -420,3 +420,19 @@ def test_a_worker_thread_only_sees_the_free_providers():
     with client.only_providers(["groq", "gemini-free"]), ThreadPoolExecutor(1) as pool:
         assert pool.submit(outside).result() is None          # the trap: nothing restricted
         assert pool.submit(inside).result() == frozenset({"groq", "gemini-free"})
+
+
+def test_get_strategy_is_safe_to_call_from_many_threads_at_once():
+    """Two workers registering the dictionary parser together crashed the
+    2026-11-03 20:00 run ("a parser is already registered for dictionary")."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from src.parsing import modes
+
+    modes.reset_registry()
+    try:
+        with ThreadPoolExecutor(16) as pool:
+            got = list(pool.map(lambda _i: modes.get_strategy(modes.ParseMode.DICTIONARY), range(64)))
+        assert len({id(s) for s in got}) == 1
+    finally:
+        modes.reset_registry()
