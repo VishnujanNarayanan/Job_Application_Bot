@@ -344,3 +344,46 @@ def test_the_match_message_shows_an_ats_postings_age():
     job = SimpleNamespace(site="ats:lever", posted_at=datetime.now(timezone.utc) - timedelta(hours=5))
     assert _posted_line(job, SimpleNamespace(success_prob=1.5)) == "Posted: 5 h ago (x1.50)"
     assert _posted_line(SimpleNamespace(site="linkedin", posted_at=job.posted_at), None) is None
+
+
+# --- a dropped database connection mid-run (2026-11-02) ---------------------------
+
+def test_safe_commit_survives_a_dropped_connection():
+    from sqlalchemy.exc import OperationalError
+
+    class _Session:
+        def __init__(self, fail):
+            self.fail, self.rolled_back = fail, False
+
+        def commit(self):
+            if self.fail:
+                raise OperationalError("COMMIT", {}, Exception("server closed the connection unexpectedly"))
+
+        def rollback(self):
+            self.rolled_back = True
+
+    logged = []
+    log = SimpleNamespace(warning=lambda event, **kw: logged.append(event))
+    ok = _Session(fail=False)
+    assert pipe._safe_commit(ok, log) is True and not ok.rolled_back
+    bad = _Session(fail=True)
+    assert pipe._safe_commit(bad, log) is False and bad.rolled_back
+    assert logged == ["db_commit_failed_reconnecting"]
+
+
+def test_a_match_is_saved_before_its_message_is_sent():
+    """The commit that records a match comes before send_match_notification,
+    so a failed commit can never leave a sent-but-unrecorded match."""
+    import inspect
+
+    src = inspect.getsource(pipe.run)
+    assert src.index("_safe_commit(session, log)", src.index("session.add(built.applied)")) < \
+        src.index("send_match_notification(")
+
+
+def test_company_name_for_workday_and_oracle_boards():
+    assert pipe.company_name(poller.Board("workday", "accenture/wd103/AccentureCareers"), _p()) == "Accenture"
+    assert pipe.company_name(poller.Board("workday", "warner-bros/wd5/global"), _p()) == "Warner Bros"
+    assert pipe.company_name(poller.Board("oracle", "jpmc.fa.oraclecloud.com/CX_1001"), _p()) == "Jpmc"
+    # A name learned from a portal job's apply link wins.
+    assert pipe.company_name(poller.Board("workday", "ntrs/wd1/x", name="Northern Trust"), _p()) == "Northern Trust"

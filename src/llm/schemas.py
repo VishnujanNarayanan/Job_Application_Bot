@@ -283,8 +283,12 @@ class JDParsed(BaseModel):
     role_level: Literal["junior", "mid", "senior", "lead"] | None = Field(
         ..., description="Seniority tier: junior, mid, senior or lead; null if the ad doesn't say"
     )
+    # Advertised as a number: Groq validates tool arguments against the
+    # schema and rejected a model's "3.0" for an integer field (2026-11-02,
+    # 16 parses lost to the fallback). Rounded to a whole year on the way in.
     years_required: int = Field(
-        ..., ge=0, le=30, description="Years of experience demanded by the JD"
+        ..., ge=0, le=30, description="Years of experience demanded by the JD",
+        json_schema_extra={"type": "number"},
     )
     required_skills: list[SkillTerm] = Field(
         default_factory=list, description="Must-have skills extracted from JD"
@@ -296,6 +300,14 @@ class JDParsed(BaseModel):
         default_factory=list,
         description="Key responsibilities — informs bullet scoring in Layer 4",
     )
+
+    @field_validator("years_required", mode="before")
+    @classmethod
+    def _whole_years(cls, v):
+        """3.0 or 3.5 years from the model -> 3 / 4 (Python's round)."""
+        if isinstance(v, float):
+            return int(round(v))
+        return v
 
     @field_validator("role_level", mode="before")
     @classmethod

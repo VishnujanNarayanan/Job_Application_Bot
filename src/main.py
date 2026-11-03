@@ -330,6 +330,15 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
             log.info("boards_learned", **learned)
         except Exception as exc:  # noqa: BLE001
             log.warning("boards_learn_failed", error=str(exc))
+        # Share of this scrape from companies the ATS poll covers (#163).
+        ats_coverage = None
+        try:
+            from src.scraper.ats_poller import coverage
+
+            ats_coverage = coverage(session, raw_jobs)
+            log.info("ats_coverage", **ats_coverage)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ats_coverage_failed", error=str(exc))
 
         # --- Backlog: earlier jobs that never got a verdict, processed FIRST ---
         backlog = _load_backlog(
@@ -722,6 +731,7 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
             backlog=len(backlog),
             outcomes=outcomes,
             dry_run=dry_run,
+            coverage=ats_coverage,
         )
     except Exception as exc:
         log.error("telegram_summary_error", error=str(exc))

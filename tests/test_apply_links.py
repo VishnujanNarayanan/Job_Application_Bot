@@ -18,17 +18,22 @@ from src.scraper import ats_poller as poller
     ("https://job-boards.eu.greenhouse.io/bradken/jobs/4943118101", ("greenhouse", "bradken")),
     ("https://boards.greenhouse.io/embed/job_app?for=acme&token=123", ("greenhouse", "acme")),
     ("https://jobs.lever.co/cred/2f1c-aa/apply", ("lever", "cred")),
-    ("https://jobs.eu.lever.co/acme/123", ("lever", "acme")),
     ("https://jobs.ashbyhq.com/telus-digital/104b1b56/application", ("ashby", "telus-digital")),
+    ("https://jobs.ashbyhq.com/Anthos%20Capital/123", ("ashby", "Anthos Capital")),   # decoded
     ("https://jobs.smartrecruiters.com/NielsenIQ/744000158440229", ("smartrecruiters", "nielseniq")),
     ("https://wellsfargo.wd1.myworkdayjobs.com/en-US/WellsFargoJobs/job/Bengaluru/Engineer_R-1",
      ("workday", "wellsfargo/wd1/WellsFargoJobs")),
+    ("https://nvidia.wd5.myworkdayjobs.com/en-us/NVIDIAExternalCareerSite/job/x", ("workday", "nvidia/wd5/NVIDIAExternalCareerSite")),
+    ("https://pwc.wd3.myworkdayjobs.com/es/Global_Experienced_Careers", ("workday", "pwc/wd3/Global_Experienced_Careers")),
+    ("https://wf.wd1.myworkdayjobs.com/WF/job/y", ("workday", "wf/wd1/WF")),   # a 2-letter site, not a locale
     ("https://accenture.wd103.myworkdayjobs.com/AccentureCareers/job/Pune/X_R1",
      ("workday", "accenture/wd103/AccentureCareers")),
     ("https://acme.recruitee.com/o/backend-engineer", ("recruitee", "acme")),
     ("https://zeta.keka.com/careers/jobdetails/123", ("keka", "zeta")),
     ("https://razorpay.darwinbox.in/ms/candidate/careers/123", ("darwinbox", "razorpay")),
     ("https://apply.workable.com/acme/j/ABC123/", ("workable", "acme")),
+    ("https://career8.successfactors.com/career?company=AcmeP&career_job_req_id=1", ("successfactors", "AcmeP")),
+    ("https://careers-acme.icims.com/jobs/1234/engineer/job", ("icims", "careers-acme")),
 ])
 def test_board_from_url(url, expected):
     assert ats.board_from_url(url) == expected
@@ -39,6 +44,9 @@ def test_board_from_url(url, expected):
     "https://boards.greenhouse.io/embed/job_app?token=123",   # no board named
     "https://jobs.lever.co/", "https://www.myworkdayjobs.com/x",
     "https://www.keka.com/careers",
+    "https://jobs.eu.lever.co/acme/123",                   # EU API: no adapter
+    "https://career8.successfactors.com/career",          # no company
+    "https://www.icims.com/careers",
 ])
 def test_no_board(url):
     assert ats.board_from_url(url) is None

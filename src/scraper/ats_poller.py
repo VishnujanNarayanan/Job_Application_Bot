@@ -40,6 +40,7 @@ import difflib
 import re
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -226,6 +227,14 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
     try:
         if board.ats == "workday":
             return _fetch_workday(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "eightfold":
+            return _fetch_eightfold(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "oracle":
+            return _fetch_oracle(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "amazon":
+            return _fetch_amazon(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "keka":
+            return _fetch_keka(lane, board, res)
         if board.ats == "smartrecruiters":
             # India through the country filter, all pages. SmartRecruiters
             # boards can hold thousands of jobs, most of them elsewhere.
@@ -253,6 +262,9 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
             if status == 304 and board.etag:
                 res.not_modified = True
                 return res
+            # A BambooHR company that left redirects to bamboohr.com's home page.
+            if board.ats == "bamboohr" and status == 200 and not body.lstrip().startswith("{"):
+                status = 404
             if status != 200:
                 res.error = f"HTTP {status}"
                 return res
@@ -291,6 +303,99 @@ def _fetch_workday(lane: Lane, board: Board, res: BoardResult, *, max_pages: int
         page = ats.parse_list("workday", board.board_id, body)
         res.postings += page
         offset += ats.WORKDAY_PAGE
+        if offset >= total or not page:
+            break
+    else:
+        res.complete = False
+    return res
+
+
+def _fetch_oracle(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Oracle HCM (#160): one call for the India location id, then the
+    India-filtered pages of 25. No India facet = no India postings."""
+    import json
+
+    status, body, _ = lane.fetch(ats.oracle_search_url(board.board_id, limit=1))
+    if status != 200:
+        res.error = f"HTTP {status}"
+        return res
+    india = ats.oracle_india_location(json.loads(body))
+    if india is None:
+        return res
+    offset, total = 0, None
+    for _page in range(max_pages):
+        status, body, _ = lane.fetch(ats.oracle_search_url(board.board_id, offset=offset, location_id=india))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        data = json.loads(body)
+        total = total if total is not None else ats.oracle_total(data)
+        page = ats.parse_list("oracle", board.board_id, body)
+        res.postings += page
+        offset += ats.ORACLE_PAGE
+        if offset >= total or not page:
+            break
+    else:
+        res.complete = False
+    return res
+
+
+def _fetch_keka(lane: Lane, board: Board, res: BoardResult) -> BoardResult:
+    """Keka (#160): the careers page for the org id, then the active jobs.
+    A tenant that does not exist redirects to TenantNotFound.html."""
+    status, page, _ = lane.fetch(ats.list_url("keka", board.board_id))
+    if status != 200:
+        res.error = f"HTTP {status}"
+        return res
+    org = ats.keka_org_id(page)
+    if org is None:
+        res.error = "HTTP 404"
+        return res
+    status, body, _ = lane.fetch(ats.keka_jobs_url(board.board_id, org))
+    if status != 200:
+        res.error = f"HTTP {status}"
+        return res
+    res.postings = ats.parse_list("keka", board.board_id, body)
+    return res
+
+
+def _fetch_amazon(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Amazon's own site (#161): India, 100 a page until ``hits``."""
+    import json
+
+    offset, total = 0, None
+    for _page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("amazon", board.board_id, offset=offset))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        data = json.loads(body)
+        total = total if total is not None else int(data.get("hits") or 0)
+        page = ats.parse_list("amazon", board.board_id, body)
+        res.postings += page
+        offset += ats.AMAZON_PAGE
+        if offset >= total or not page:
+            break
+    else:
+        res.complete = False
+    return res
+
+
+def _fetch_eightfold(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Eightfold (#160): India-filtered pages of 10 until ``count``."""
+    import json
+
+    offset, total = 0, None
+    for _page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("eightfold", board.board_id, offset=offset))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        data = json.loads(body)
+        total = total if total is not None else int(data.get("count") or 0)
+        page = ats.parse_list("eightfold", board.board_id, body)
+        res.postings += page
+        offset += ats.EIGHTFOLD_PAGE
         if offset >= total or not page:
             break
     else:
@@ -348,7 +453,26 @@ def canary_ok(lane: Lane) -> bool:
         board = f"{CANARY}/wd5/External"
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
+    if lane.name == "keka":
+        # Redirected to TenantNotFound.html, which names no org (2026-11-02).
+        status, body = lane.get(ats.list_url("keka", CANARY), patient=False)
+        return status in (200, 404) and ats.keka_org_id(body) is None
+    if lane.name == "amazon":
+        # One board, no "no such board" answer: the search must just work.
+        status, body = lane.get(ats.list_url("amazon", "amazon"), patient=False)
+        return status == 200 and '"hits"' in body
+    if lane.name == "oracle":
+        # No such pod: the connection fails (checked 2026-11-02).
+        status, _body = lane.get(ats.oracle_search_url(f"{CANARY}.fa.us2.oraclecloud.com/CX_1", limit=1),
+                                 patient=False)
+        return status in (-1, 404)
     status, body = lane.get(ats.list_url(lane.name, CANARY), patient=False)
+    if lane.name == "bamboohr":
+        # Redirected to bamboohr.com's home page (checked 2026-11-02).
+        return status in (404, 200) and not body.lstrip().startswith("{")
+    if lane.name == "eightfold":
+        # No such subdomain: the connection fails (checked 2026-11-02).
+        return status in (-1, 404)
     if lane.name == "smartrecruiters":
         return status == 200 and ats.sr_total(body) == 0 and '"content":[]' in body.replace(" ", "")
     return status == 404
@@ -762,6 +886,37 @@ def learn_boards(session, jobs: list) -> dict[str, int]:
         session.execute(insert(AtsBoard).values(rows).on_conflict_do_nothing())
     stats["new"] = len(rows)
     return stats
+
+
+def coverage(session, jobs: list, *, top: int = 5) -> dict:
+    """How many of a portal run's jobs come from a company whose ATS board
+    the poll covers (#163): a polled board on a supported ATS that is not an
+    empty / no-API guess, matched by company key or named by the job's apply
+    link. The uncovered companies with most jobs are listed with the ATS
+    their apply link points to, when known, to show what to build next."""
+    from sqlalchemy import select
+
+    from src.state.models import AtsBoard
+
+    if not jobs:
+        return {"jobs": 0, "covered": 0, "pct": 0, "uncovered": []}
+    rows = session.execute(
+        select(AtsBoard.ats, AtsBoard.board_id, AtsBoard.company_key)
+        .where(AtsBoard.poll.is_(True), AtsBoard.ats.in_(list(ats.ATSES)),
+               AtsBoard.state.notin_(("empty", "no_api")))).all()
+    keys = {k for _a, _b, k in rows if k}
+    boards = {(a, b) for a, b, _k in rows}
+    covered, missing, via = 0, Counter(), {}
+    for job in jobs:
+        link = ats.board_from_url(getattr(job, "job_url_direct", None))
+        if (link and link in boards) or ats.key(job.company or "") in keys:
+            covered += 1
+            continue
+        missing[job.company or "?"] += 1
+        if link:
+            via[job.company or "?"] = link[0]
+    return {"jobs": len(jobs), "covered": covered, "pct": round(100 * covered / len(jobs)),
+            "uncovered": [(c, n, via.get(c)) for c, n in missing.most_common(top)]}
 
 
 def portal_jobs(session, now: datetime, days: int) -> list:

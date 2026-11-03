@@ -27,10 +27,14 @@ from urllib.parse import quote
 
 from src.state.models import AllJobs
 
-ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday")
+ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
+         "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon", "keka")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
+# Eightfold returns 10 postings a page.
+EIGHTFOLD_PAGE = 10
+AMAZON_PAGE = 100
 
 
 @dataclass
@@ -99,6 +103,15 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
     if ats == "workday":
         tenant, shard, site = workday_parts(board_id)
         return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
+    if ats == "oracle":
+        return oracle_search_url(board_id, offset=offset, location_id=country)
+    if ats == "keka":
+        # The careers page: it names the org id the jobs call needs (#160).
+        return f"https://{quote(board_id, safe='')}.keka.com/careers/"
+    if ats == "amazon":
+        # #161: Amazon's own site, one board ("amazon"), India only, newest first.
+        return (f"https://www.amazon.jobs/en/search.json?country=IND&result_limit={AMAZON_PAGE}"
+                f"&offset={offset}&sort=recent")
     b = quote(board_id, safe="")
     if ats == "greenhouse":
         return f"https://boards-api.greenhouse.io/v1/boards/{b}/jobs"
@@ -109,7 +122,105 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
     if ats == "smartrecruiters":
         url = f"https://api.smartrecruiters.com/v1/companies/{b}/postings?limit={SR_PAGE}&offset={offset}"
         return f"{url}&country={country}" if country else url
+    # #160: the next ATSes. Eightfold needs the company's web domain too;
+    # every board seen so far is {id}.com (hsbc, netapp, netflix, insight).
+    if ats == "recruitee":
+        return f"https://{b}.recruitee.com/api/offers"
+    if ats == "rippling":
+        return f"https://api.rippling.com/platform/api/ats/v1/board/{b}/jobs"
+    if ats == "workable":
+        return f"https://apply.workable.com/api/v1/widget/accounts/{b}"
+    if ats == "bamboohr":
+        return f"https://{b}.bamboohr.com/careers/list"
+    if ats == "eightfold":
+        return (f"https://{b}.eightfold.ai/api/apply/v2/jobs?domain={b}.com"
+                f"&location=India&num={EIGHTFOLD_PAGE}&start={offset}")
     raise ValueError(f"no adapter for {ats}")
+
+
+# --- Boards from apply links (#158) -------------------------------------------------
+# A LinkedIn / Naukri job's own apply link names the company's ATS board, so
+# every portal job can teach us a board. Hosts where the board id is a path
+# segment, and hosts where it is the subdomain.
+
+_PATH_HOSTS = {
+    "boards.greenhouse.io": "greenhouse", "job-boards.greenhouse.io": "greenhouse",
+    "boards.eu.greenhouse.io": "greenhouse", "job-boards.eu.greenhouse.io": "greenhouse",
+    # jobs.eu.lever.co boards live on Lever's EU API, which the adapter does
+    # not read: left out rather than polled as 404s.
+    "jobs.lever.co": "lever",
+    "jobs.ashbyhq.com": "ashby",
+    "jobs.smartrecruiters.com": "smartrecruiters", "careers.smartrecruiters.com": "smartrecruiters",
+    "apply.workable.com": "workable",
+    "ats.rippling.com": "rippling",
+}
+_SUBDOMAIN_HOSTS = {
+    "recruitee.com": "recruitee", "bamboohr.com": "bamboohr", "breezy.hr": "breezy",
+    "teamtailor.com": "teamtailor", "applytojob.com": "jazzhr", "darwinbox.in": "darwinbox",
+    "keka.com": "keka", "freshteam.com": "freshteam", "zohorecruit.com": "zoho_recruit",
+    "zohorecruit.in": "zoho_recruit", "eightfold.ai": "eightfold",
+}
+# Path segments that are pages of the ATS itself, not a board.
+_NOT_BOARDS = {"embed", "api", "v1", "jobs", "job_app", "o", "j", "careers", ""}
+_WORKDAY = re.compile(r"^(?P<tenant>[a-z0-9-]+)\.(?P<shard>wd\d+)\.myworkdayjobs\.com$")
+_LOCALE = re.compile(r"^[a-z]{2}(-[a-zA-Z]{2})?$")
+# Generic subdomains that are never a customer's board.
+_NOT_TENANTS = {"www", "api", "app", "careers", "jobs", "help", "support"}
+
+
+def board_from_url(url: str | None) -> tuple[str, str] | None:
+    """(ats, board_id) named by a job's apply link, or None. Workday's id is
+    ``tenant/wdN/site``; every other id is what ``list_url`` takes."""
+    from urllib.parse import parse_qs, urlsplit
+
+    if not url:
+        return None
+    try:
+        u = urlsplit(url.strip())
+    except ValueError:
+        return None
+    from urllib.parse import unquote
+
+    host = (u.hostname or "").lower()
+    # Decoded: "jobs.ashbyhq.com/Anthos%20Capital" is the board "Anthos Capital".
+    parts = [unquote(p) for p in u.path.split("/") if p]
+    if host in _PATH_HOSTS:
+        ats = _PATH_HOSTS[host]
+        # boards.greenhouse.io/embed/job_app?for=acme&token=...
+        if ats == "greenhouse" and parts[:1] == ["embed"]:
+            board = (parse_qs(u.query).get("for") or [""])[0]
+        else:
+            board = parts[0] if parts else ""
+        if board.lower() in _NOT_BOARDS:
+            return None
+        return ats, board.lower() if ats in ("smartrecruiters", "greenhouse") else board
+    # SuccessFactors: career{n}.successfactors.com/career?company=acme (#160).
+    if host.endswith((".successfactors.com", ".successfactors.eu")) and host.startswith("career"):
+        company = (parse_qs(u.query).get("company") or [""])[0].strip()
+        return ("successfactors", company) if company else None
+    # Oracle HCM Candidate Experience (#160):
+    # {pod}.fa.{region}.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/...
+    if host.endswith(".oraclecloud.com") and "sites" in parts:
+        i = parts.index("sites")
+        if i + 1 < len(parts) and "CandidateExperience" in parts:
+            return "oracle", f"{host}/{parts[i + 1]}"
+        return None
+    # iCIMS: the whole host is the board (careers-acme.icims.com) (#160).
+    if host.endswith(".icims.com"):
+        sub = host[: -len(".icims.com")]
+        return ("icims", sub) if sub and sub not in _NOT_TENANTS else None
+    m = _WORKDAY.match(host)
+    if m:
+        site = next((p for p in parts if not _LOCALE.match(p)), None)
+        if not site or site in ("wday", "job"):
+            return None
+        return "workday", f"{m['tenant']}/{m['shard']}/{site}"
+    for suffix, ats in _SUBDOMAIN_HOSTS.items():
+        if host.endswith("." + suffix):
+            tenant = host[: -len(suffix) - 1].split(".")[-1]
+            if tenant and tenant not in _NOT_TENANTS:
+                return ats, tenant
+    return None
 
 
 # --- Workday (#103) ---------------------------------------------------------------
@@ -210,75 +321,123 @@ def _workday(board_id: str, data: dict, now: datetime | None = None) -> list[Pos
     return out
 
 
-# --- Boards from apply links (#158) -------------------------------------------------
-# A LinkedIn / Naukri job's own apply link names the company's ATS board, so
-# every portal job can teach us a board. Hosts where the board id is a path
-# segment, and hosts where it is the subdomain.
+# --- Oracle HCM (#160) -------------------------------------------------------------
+# A board is a Candidate Experience site: {host}/{siteNumber}, e.g.
+# "jpmc.fa.oraclecloud.com/CX_1001". The public REST finder lists 25 a page;
+# India is a location facet id per site, read from an unfiltered first call.
 
-_PATH_HOSTS = {
-    "boards.greenhouse.io": "greenhouse", "job-boards.greenhouse.io": "greenhouse",
-    "boards.eu.greenhouse.io": "greenhouse", "job-boards.eu.greenhouse.io": "greenhouse",
-    "jobs.lever.co": "lever", "jobs.eu.lever.co": "lever",
-    "jobs.ashbyhq.com": "ashby",
-    "jobs.smartrecruiters.com": "smartrecruiters", "careers.smartrecruiters.com": "smartrecruiters",
-    "apply.workable.com": "workable",
-    "ats.rippling.com": "rippling",
-}
-_SUBDOMAIN_HOSTS = {
-    "recruitee.com": "recruitee", "bamboohr.com": "bamboohr", "breezy.hr": "breezy",
-    "teamtailor.com": "teamtailor", "applytojob.com": "jazzhr", "darwinbox.in": "darwinbox",
-    "keka.com": "keka", "freshteam.com": "freshteam", "zohorecruit.com": "zoho_recruit",
-    "zohorecruit.in": "zoho_recruit", "eightfold.ai": "eightfold",
-}
-# Path segments that are pages of the ATS itself, not a board.
-_NOT_BOARDS = {"embed", "api", "v1", "jobs", "job_app", "o", "j", "careers", ""}
-_WORKDAY = re.compile(r"^(?P<tenant>[a-z0-9-]+)\.(?P<shard>wd\d+)\.myworkdayjobs\.com$")
-_LOCALE = re.compile(r"^[a-z]{2}-[A-Z]{2}$")
-# Generic subdomains that are never a customer's board.
-_NOT_TENANTS = {"www", "api", "app", "careers", "jobs", "help", "support"}
+ORACLE_PAGE = 25
 
 
-def board_from_url(url: str | None) -> tuple[str, str] | None:
-    """(ats, board_id) named by a job's apply link, or None. Workday's id is
-    ``tenant/wdN/site``; every other id is what ``list_url`` takes."""
-    from urllib.parse import parse_qs, urlsplit
+def oracle_parts(board_id: str) -> tuple[str, str]:
+    host, site = board_id.split("/", 1)
+    return host, site
 
-    if not url:
-        return None
+
+def oracle_search_url(board_id: str, *, offset: int = 0, location_id: str | None = None,
+                      limit: int = ORACLE_PAGE) -> str:
+    host, site = oracle_parts(board_id)
+    finder = (f"findReqs;siteNumber={site},facetsList=LOCATIONS,limit={limit},offset={offset},"
+              f"sortBy=POSTING_DATES_DESC" + (f",locationId={location_id}" if location_id else ""))
+    return (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+            f"?onlyData=true&expand=requisitionList.secondaryLocations&finder={finder}")
+
+
+def oracle_india_location(data: dict) -> str | None:
+    """The site's location-facet id for India, or None (no India postings)."""
+    items = data.get("items") or [{}]
+    for f in items[0].get("locationsFacet") or []:
+        if (f.get("Name") or "").strip().lower() == "india":
+            return str(f["Id"])
+    return None
+
+
+def oracle_total(data: dict) -> int:
+    items = data.get("items") or [{}]
+    return int(items[0].get("TotalJobsCount") or 0)
+
+
+def _oracle(board_id: str, data: dict) -> list[Posting]:
+    host, site = oracle_parts(board_id)
+    items = data.get("items") or [{}]
+    out = []
+    for j in items[0].get("requisitionList") or []:
+        locs = [j.get("PrimaryLocation") or ""] + [x.get("Name") or "" for x in j.get("secondaryLocations") or []]
+        workplace = (j.get("WorkplaceType") or j.get("WorkplaceTypeCode") or "").lower()
+        url = f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}/job/{j['Id']}"
+        out.append(Posting(
+            ats="oracle", board_id=board_id, posting_id=str(j["Id"]), title=(j.get("Title") or "").strip(),
+            location=" / ".join(x for x in locs if x), country=_country(j.get("PrimaryLocationCountry")),
+            remote=True if "remote" in workplace else None, posted_at=_when(j.get("PostedDate")),
+            url=url, apply_url=url, employment_type=j.get("JobSchedule"),
+        ))
+    return out
+
+
+# --- Keka (#160) --------------------------------------------------------------------
+# Indian SMB/startup HR suite. The careers page names the org id; the active
+# jobs (with descriptions) come from careers/api/embedjobs/default/active/{id}.
+
+_KEKA_ORG = re.compile(r"/ats/documents/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+
+
+def keka_org_id(page: str) -> str | None:
+    m = _KEKA_ORG.search(page or "")
+    return m.group(1) if m else None
+
+
+def keka_jobs_url(board_id: str, org_id: str) -> str:
+    return f"https://{quote(board_id, safe='')}.keka.com/careers/api/embedjobs/default/active/{org_id}"
+
+
+def _keka(board_id: str, data: list) -> list[Posting]:
+    out = []
+    for j in data or []:
+        locs = j.get("jobLocations") or []
+        codes = {(x.get("countryCode") or "").upper() for x in locs}
+        loc = " / ".join(", ".join(x for x in (l.get("city"), l.get("state"), l.get("countryCode")) if x) for l in locs)
+        url = f"https://{board_id}.keka.com/careers/jobdetails/{j['id']}"
+        out.append(Posting(
+            ats="keka", board_id=board_id, posting_id=str(j["id"]), title=(j.get("title") or "").strip(),
+            location=loc, country="IN" if "IN" in codes else (sorted(codes)[0] if codes - {""} else None),
+            posted_at=_when(j.get("publishedOn")), url=url, apply_url=url,
+            description=html_to_text(j.get("description")),
+        ))
+    return out
+
+
+def _amazon_date(text: str | None) -> datetime | None:
     try:
-        u = urlsplit(url.strip())
+        return datetime.strptime(" ".join((text or "").split()), "%B %d, %Y").replace(tzinfo=timezone.utc)
     except ValueError:
         return None
-    host = (u.hostname or "").lower()
-    parts = [p for p in u.path.split("/") if p]
-    if host in _PATH_HOSTS:
-        ats = _PATH_HOSTS[host]
-        # boards.greenhouse.io/embed/job_app?for=acme&token=...
-        if ats == "greenhouse" and parts[:1] == ["embed"]:
-            board = (parse_qs(u.query).get("for") or [""])[0]
-        else:
-            board = parts[0] if parts else ""
-        if board.lower() in _NOT_BOARDS:
-            return None
-        return ats, board.lower() if ats in ("smartrecruiters", "greenhouse") else board
-    m = _WORKDAY.match(host)
-    if m:
-        site = next((p for p in parts if not _LOCALE.match(p)), None)
-        if not site or site in ("wday", "job"):
-            return None
-        return "workday", f"{m['tenant']}/{m['shard']}/{site}"
-    for suffix, ats in _SUBDOMAIN_HOSTS.items():
-        if host.endswith("." + suffix):
-            tenant = host[: -len(suffix) - 1].split(".")[-1]
-            if tenant and tenant not in _NOT_TENANTS:
-                return ats, tenant
-    return None
+
+
+def _amazon(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in data.get("jobs") or []:
+        parts = [html_to_text(j.get(k)) for k in ("description", "basic_qualifications", "preferred_qualifications")]
+        heads = ("", "## Basic qualifications\n\n", "## Preferred qualifications\n\n")
+        desc = "\n\n".join(h + t for h, t in zip(heads, parts) if t)
+        url = f"https://www.amazon.jobs{j.get('job_path') or ''}"
+        out.append(Posting(
+            ats="amazon", board_id=board_id, posting_id=str(j.get("id_icims") or j.get("id")),
+            title=(j.get("title") or "").strip(), location=j.get("normalized_location") or j.get("location") or "",
+            country=_country(j.get("country_code")), posted_at=_amazon_date(j.get("posted_date")),
+            url=url, apply_url=url, description=desc or None, company=j.get("company_name") or "Amazon",
+            employment_type=j.get("job_schedule_type"),
+        ))
+    return out
 
 
 def detail_url(posting: Posting) -> str | None:
     """Where the description is, for lists that leave it out; else None."""
     if posting.description is not None:
         return None
+    if posting.ats == "oracle":
+        host, site = oracle_parts(posting.board_id)
+        return (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
+                f'?expand=all&onlyData=true&finder=ById;Id="{posting.posting_id}",siteNumber={site}')
     if posting.ats == "workday":
         tenant, _shard, site = workday_parts(posting.board_id)
         host = workday_host(posting.board_id)
@@ -289,6 +448,14 @@ def detail_url(posting: Posting) -> str | None:
         return f"https://boards-api.greenhouse.io/v1/boards/{b}/jobs/{posting.posting_id}"
     if posting.ats == "smartrecruiters":
         return f"https://api.smartrecruiters.com/v1/companies/{b}/postings/{posting.posting_id}"
+    if posting.ats == "rippling":
+        return f"https://api.rippling.com/platform/api/ats/v1/board/{b}/jobs/{posting.posting_id}"
+    if posting.ats == "workable":
+        return f"https://apply.workable.com/api/v2/accounts/{b}/jobs/{posting.posting_id}"
+    if posting.ats == "bamboohr":
+        return f"https://{b}.bamboohr.com/careers/{posting.posting_id}/detail"
+    if posting.ats == "eightfold":
+        return f"https://{b}.eightfold.ai/api/apply/v2/jobs/{posting.posting_id}?domain={b}.com"
     return None
 
 
@@ -412,8 +579,90 @@ def _smartrecruiters(board_id: str, data: dict) -> list[Posting]:
     return out
 
 
+def _recruitee(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in data.get("offers") or []:
+        locs = j.get("locations") or []
+        codes = {(x.get("country_code") or "").upper() for x in locs}
+        desc = "\n\n".join(t for t in (html_to_text(j.get("description")), html_to_text(j.get("requirements"))) if t)
+        out.append(Posting(
+            ats="recruitee", board_id=board_id, posting_id=str(j["id"]), title=(j.get("title") or "").strip(),
+            location=j.get("location") or " / ".join(x.get("name") or "" for x in locs),
+            country="IN" if "IN" in codes else _country(j.get("country_code") or j.get("country")),
+            remote=bool(j.get("remote")) or None,
+            posted_at=_when((j.get("published_at") or j.get("created_at") or "").replace(" UTC", "+00:00")),
+            url=j.get("careers_url"), apply_url=j.get("careers_apply_url") or j.get("careers_url"),
+            description=desc or None, company=j.get("company_name"),
+            employment_type=j.get("employment_type_code"),
+        ))
+    return out
+
+
+def _rippling(board_id: str, data: list) -> list[Posting]:
+    out = []
+    for j in data or []:
+        loc = (j.get("workLocation") or {}).get("label") or ""
+        out.append(Posting(
+            ats="rippling", board_id=board_id, posting_id=str(j["uuid"]), title=(j.get("name") or "").strip(),
+            location=loc, remote=True if re.search(r"\bremote\b", loc, re.I) else None,
+            url=j.get("url"), apply_url=j.get("url"),
+        ))
+    return out
+
+
+def _workable(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in data.get("jobs") or []:
+        locs = j.get("locations") or []
+        codes = {(x.get("countryCode") or "").upper() for x in locs}
+        loc = ", ".join(x for x in (j.get("city"), j.get("state"), j.get("country")) if x)
+        out.append(Posting(
+            ats="workable", board_id=board_id, posting_id=str(j["shortcode"]), title=(j.get("title") or "").strip(),
+            location=loc, country="IN" if "IN" in codes else _country(j.get("country")),
+            remote=True if j.get("telecommuting") else None,
+            posted_at=_when(j.get("published_on")),
+            url=j.get("url"), apply_url=j.get("application_url") or j.get("url"),
+            employment_type=j.get("employment_type"),
+        ))
+    return out
+
+
+def _bamboohr(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in data.get("result") or []:
+        loc = j.get("location") or {}
+        ats_loc = j.get("atsLocation") or {}
+        place_text = ", ".join(x for x in (loc.get("city") or ats_loc.get("city"), loc.get("state") or ats_loc.get("state"),
+                                            ats_loc.get("country")) if x)
+        out.append(Posting(
+            ats="bamboohr", board_id=board_id, posting_id=str(j["id"]), title=(j.get("jobOpeningName") or "").strip(),
+            location=place_text, country=_country(ats_loc.get("country")) if ats_loc.get("country") else None,
+            remote=True if j.get("isRemote") else None,
+            url=f"https://{board_id}.bamboohr.com/careers/{j['id']}",
+            apply_url=f"https://{board_id}.bamboohr.com/careers/{j['id']}",
+            employment_type=j.get("employmentType"),
+        ))
+    return out
+
+
+def _eightfold(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in data.get("positions") or []:
+        locs = j.get("locations") or [j.get("location") or ""]
+        out.append(Posting(
+            ats="eightfold", board_id=board_id, posting_id=str(j["id"]),
+            title=(j.get("posting_name") or j.get("name") or "").strip(), location=" / ".join(x for x in locs if x),
+            remote=True if (j.get("work_location_option") or "").lower() == "remote" else None,
+            posted_at=_when(j.get("t_create")),
+            url=j.get("canonicalPositionUrl"), apply_url=j.get("canonicalPositionUrl"),
+        ))
+    return out
+
+
 _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
-            "smartrecruiters": _smartrecruiters, "workday": _workday}
+            "smartrecruiters": _smartrecruiters, "workday": _workday, "recruitee": _recruitee,
+            "rippling": _rippling, "workable": _workable, "bamboohr": _bamboohr, "eightfold": _eightfold,
+            "oracle": _oracle, "amazon": _amazon, "keka": _keka}
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
@@ -423,7 +672,7 @@ def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
         data = json.loads(body)
     except ValueError as exc:
         raise ValueError(f"{ats}/{board_id}: not JSON") from exc
-    expected = list if ats == "lever" else dict
+    expected = list if ats in ("lever", "rippling", "keka") else dict
     if not isinstance(data, expected):
         raise ValueError(f"{ats}/{board_id}: unexpected {type(data).__name__}")
     return _PARSERS[ats](board_id, data)
@@ -459,6 +708,42 @@ def parse_detail(posting: Posting, body: str) -> None:
         posting.description = "\n\n".join(parts) or None
         posting.apply_url = data.get("applyUrl") or posting.apply_url
         posting.url = data.get("postingUrl") or posting.url
+    elif posting.ats == "rippling":
+        d = data.get("description") or {}
+        posting.description = "\n\n".join(t for t in (html_to_text(d.get("role")), html_to_text(d.get("company"))) if t) or None
+        posting.posted_at = _when(data.get("createdOn")) or posting.posted_at
+        posting.employment_type = (data.get("employmentType") or {}).get("id") or posting.employment_type
+        locs = data.get("workLocations") or []
+        if locs and not posting.location:
+            posting.location = " / ".join(locs)
+    elif posting.ats == "workable":
+        posting.description = "\n\n".join(
+            t for t in (html_to_text(data.get("description")), html_to_text(data.get("requirements"))) if t) or None
+        posting.posted_at = _when(data.get("published")) or posting.posted_at
+        if data.get("remote"):
+            posting.remote = True
+    elif posting.ats == "bamboohr":
+        job = (data.get("result") or {}).get("jobOpening") or {}
+        posting.description = html_to_text(job.get("description"))
+        posting.posted_at = _when(job.get("datePosted")) or posting.posted_at
+        country = ((job.get("atsLocation") or {}).get("country"))
+        if country:
+            posting.country = _country(country)
+        # "India - Salaried" says where the role is when the location does not.
+        if in_india(job.get("employmentStatusLabel")):
+            posting.country = "IN"
+    elif posting.ats == "oracle":
+        job = (data.get("items") or [{}])[0]
+        parts = [html_to_text(job.get(k)) for k in
+                 ("ExternalDescriptionStr", "ExternalResponsibilitiesStr", "ExternalQualificationsStr")]
+        posting.description = "\n\n".join(t for t in parts if t) or html_to_text(job.get("ShortDescriptionStr"))
+        posting.posted_at = _when(job.get("ExternalPostedStartDate")) or posting.posted_at
+        posting.employment_type = job.get("JobSchedule") or posting.employment_type
+        if job.get("PrimaryLocationCountry"):
+            posting.country = _country(job.get("PrimaryLocationCountry"))
+    elif posting.ats == "eightfold":
+        posting.description = html_to_text(data.get("job_description"))
+        posting.apply_url = data.get("apply_redirect_url") or posting.apply_url
     elif posting.ats == "workday":
         info = data.get("jobPostingInfo") or {}
         posting.description = html_to_text(info.get("jobDescription"))

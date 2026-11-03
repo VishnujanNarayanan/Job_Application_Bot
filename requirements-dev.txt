@@ -7,3 +7,4 @@ pytest==8.3.4
 pytest-asyncio==0.24.0
 # moto: mocks boto3 in the unit tests
 moto[s3,cloudwatch,logs]==5.0.22
+duckdb==2.0.0  # tools.ats_commoncrawl --parquet (#159)

@@ -399,6 +399,7 @@ def run_summary_text(
     backlog: int = 0,
     outcomes: dict[str, int] | None = None,
     dry_run: bool = True,
+    coverage: dict | None = None,
 ) -> str:
     """The end-of-run Telegram message: every job accounted for.
 
@@ -416,6 +417,13 @@ def run_summary_text(
     rows = _outcome_lines(outcomes)
     if rows:
         lines += [""] + rows
+    if coverage and coverage.get("jobs"):
+        # #163: how much of what the portals found the ATS poll would have.
+        lines += ["", f"ATS coverage: {coverage['covered']}/{coverage['jobs']} "
+                      f"({coverage['pct']}%) from companies we poll"]
+        top = [f"{c} ({n}{', ' + a if a else ''})" for c, n, a in coverage.get("uncovered") or []]
+        if top:
+            lines.append("Not covered: " + ", ".join(top))
     return "\n".join(lines)
 
 
@@ -427,6 +435,7 @@ def send_dry_run_summary(
     backlog: int = 0,
     outcomes: dict[str, int] | None = None,
     dry_run: bool = True,
+    coverage: dict | None = None,
 ) -> None:
     """Send the run summary (see ``run_summary_text``) to Telegram.
 
@@ -437,6 +446,6 @@ def send_dry_run_summary(
     """
     text = run_summary_text(
         scraped=scraped, skipped=skipped, applied=applied,
-        backlog=backlog, outcomes=outcomes, dry_run=dry_run,
+        backlog=backlog, outcomes=outcomes, dry_run=dry_run, coverage=coverage,
     )
     asyncio.run(_send(text))
