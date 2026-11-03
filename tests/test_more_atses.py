@@ -352,3 +352,25 @@ def test_xmlfeed_reads_the_whole_feed_with_descriptions():
 def test_xmlfeed_that_is_not_xml_is_an_error():
     lane, _ = _lane("xmlfeed", (200, "<html>maintenance</html"))
     assert poller.fetch_board(lane, poller.Board("xmlfeed", "x/feed")).error
+
+
+# --- Goldman Sachs (#161) ------------------------------------------------------------
+
+def test_goldman_graphql_pages_and_role_page_description():
+    page = json.dumps({"data": {"roleSearch": {"totalCount": 2, "items": [
+        {"roleId": "187879_GS_MID_CAREER", "jobTitle": "Data Engineer", "corporateTitle": "Associate",
+         "locations": [{"city": "Bengaluru", "state": "Karnataka", "country": "India"}],
+         "externalSource": {"sourceId": "187879"}},
+        {"roleId": "2", "jobTitle": "Trader", "locations": [{"city": "London", "country": "United Kingdom"}],
+         "externalSource": {"sourceId": "2"}}]}}})
+    lane, http = _lane("goldman", (200, page))
+    res = poller.fetch_board(lane, poller.Board("goldman", "higher.gs.com"))
+    assert res.error is None and res.complete and len(res.postings) == 2 and len(http.calls) == 1
+    url, body = http.calls[0]
+    assert url == "https://api-higher.gs.com/gateway/api/v1/graphql"
+    assert body["variables"]["searchQueryInput"]["filters"][0]["filters"][0]["filter"] == "India"
+    p = res.postings[0]
+    assert ats.place(p) == "india" and p.url == "https://higher.gs.com/roles/187879"
+    ats.parse_detail(p, '<script id="__NEXT_DATA__" type="application/json">'
+                        '{"props": {"role": {"descriptionHtml": "<p>Build <b>Python</b> services</p>"}}}</script>')
+    assert "Python" in p.description

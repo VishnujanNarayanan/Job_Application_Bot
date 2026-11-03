@@ -234,6 +234,8 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
             return _fetch_oracle(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "amazon":
             return _fetch_amazon(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "goldman":
+            return _fetch_goldman(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "phenom":
             return _fetch_phenom(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "avature":
@@ -341,6 +343,27 @@ def _fetch_oracle(lane: Lane, board: Board, res: BoardResult, *, max_pages: int)
         res.postings += page
         offset += ats.ORACLE_PAGE
         if offset >= total or not page:
+            break
+    else:
+        res.complete = False
+    return res
+
+
+def _fetch_goldman(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Goldman Sachs (#161): India-filtered GraphQL pages until totalCount."""
+    import json
+
+    total = None
+    for page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("goldman", board.board_id), body=ats.goldman_search(page))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        data = json.loads(body)
+        total = total if total is not None else ats.goldman_total(data)
+        rows = ats.parse_list("goldman", board.board_id, body)
+        res.postings += rows
+        if not rows or len(res.postings) >= total:
             break
     else:
         res.complete = False
@@ -564,7 +587,7 @@ def canary_ok(lane: Lane) -> bool:
         board = f"{CANARY}/wd5/External"
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
-    if lane.name in ("successfactors", "avature", "phenom", "xmlfeed"):
+    if lane.name in ("successfactors", "avature", "phenom", "xmlfeed", "goldman"):
         # Employer-hosted sites: no shared "no such board" answer to ask for.
         return True
     if lane.name == "keka":

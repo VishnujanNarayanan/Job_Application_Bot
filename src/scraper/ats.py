@@ -29,7 +29,8 @@ from src.state.models import AllJobs
 
 ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
          "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon", "keka",
-         "successfactors", "avature", "phenom", "xmlfeed")
+         "successfactors", "avature", "phenom", "xmlfeed",
+         "goldman")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
@@ -111,6 +112,9 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
         return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
     if ats == "oracle":
         return oracle_search_url(board_id, offset=offset, location_id=country)
+    if ats == "goldman":
+        # #161: Goldman Sachs' own careers site (higher.gs.com), a GraphQL search.
+        return "https://api-higher.gs.com/gateway/api/v1/graphql"
     if ats == "xmlfeed":
         # #161: an employer's full XML job feed; the board id is its URL sans scheme.
         return f"https://{board_id}"
@@ -636,6 +640,46 @@ def _xmlfeed(board_id: str, body: str) -> list[Posting]:
     return out
 
 
+# --- Goldman Sachs (#161) -----------------------------------------------------------
+# higher.gs.com: the page's own GraphQL query (GetRoles), India-filtered, 20 a
+# page; the role page /roles/{sourceId} embeds descriptionHtml in its Next.js
+# data. No posting date is exposed: first seen stands in for it.
+
+GOLDMAN_PAGE = 20
+_GS_QUERY = ("query GetRoles($searchQueryInput: RoleSearchQueryInput!) { roleSearch(searchQueryInput: "
+             "$searchQueryInput) { totalCount items { roleId corporateTitle jobTitle jobFunction locations "
+             "{ primary state country city } status division externalSource { sourceId } } } }")
+
+
+def goldman_search(page: int = 0) -> dict:
+    return {"operationName": "GetRoles", "query": _GS_QUERY, "variables": {"searchQueryInput": {
+        "page": {"pageSize": GOLDMAN_PAGE, "pageNumber": page},
+        "sort": {"sortStrategy": "POSTED_DATE", "sortOrder": "DESC"},
+        "filters": [{"filterCategoryType": "LOCATION", "filters": [{"filter": "India", "subFilters": []}]}],
+        "experiences": ["EARLY_CAREER", "PROFESSIONAL"], "searchTerm": ""}}}
+
+
+def goldman_total(data: dict) -> int:
+    return int((((data.get("data") or {}).get("roleSearch")) or {}).get("totalCount") or 0)
+
+
+def _goldman(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for j in (((data.get("data") or {}).get("roleSearch")) or {}).get("items") or []:
+        src = (j.get("externalSource") or {}).get("sourceId") or j.get("roleId")
+        if not src:
+            continue
+        locs = j.get("locations") or []
+        loc = " / ".join(", ".join(x for x in (l.get("city"), l.get("state"), l.get("country")) if x) for l in locs)
+        url = f"https://higher.gs.com/roles/{src}"
+        out.append(Posting(
+            ats="goldman", board_id=board_id, posting_id=str(src), title=(j.get("jobTitle") or "").strip(),
+            location=loc, country="IN" if any((l.get("country") or "") == "India" for l in locs) else None,
+            url=url, apply_url=url, company="Goldman Sachs", level=j.get("corporateTitle"),
+        ))
+    return out
+
+
 def sf_total(data: dict) -> int:
     return int(data.get("totalJobs") or 0)
 
@@ -668,7 +712,7 @@ def detail_url(posting: Posting) -> str | None:
     """Where the description is, for lists that leave it out; else None."""
     if posting.description is not None:
         return None
-    if posting.ats in ("successfactors", "avature"):
+    if posting.ats in ("successfactors", "avature", "goldman"):
         return posting.url
     if posting.ats == "phenom":   # POSTed with phenom_detail_body
         return list_url("phenom", posting.board_id)
@@ -901,7 +945,7 @@ _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
             "smartrecruiters": _smartrecruiters, "workday": _workday, "recruitee": _recruitee,
             "rippling": _rippling, "workable": _workable, "bamboohr": _bamboohr, "eightfold": _eightfold,
             "oracle": _oracle, "amazon": _amazon, "keka": _keka, "successfactors": _successfactors,
-            "phenom": _phenom}
+            "phenom": _phenom, "goldman": _goldman}
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
@@ -950,6 +994,11 @@ def parse_detail(posting: Posting, body: str) -> None:
     link SmartRecruiters only gives there."""
     if posting.ats == "successfactors":   # an HTML page, not JSON
         posting.description = _sf_description(body)
+        return
+    if posting.ats == "goldman":   # the role page's Next.js data
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', body, re.S)
+        found = re.search(r'"descriptionHtml"\s*:\s*("(?:[^"\\]|\\.)*")', m.group(1)) if m else None
+        posting.description = html_to_text(json.loads(found.group(1))) if found else None
         return
     if posting.ats == "avature":   # HTML: a JSON-LD JobPosting, or plain sections
         job = _json_ld_job(body)
