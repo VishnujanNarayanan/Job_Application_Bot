@@ -29,7 +29,7 @@ from src.state.models import AllJobs
 
 ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
          "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon", "keka",
-         "successfactors")
+         "successfactors", "avature")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
@@ -106,6 +106,9 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
         return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
     if ats == "oracle":
         return oracle_search_url(board_id, offset=offset, location_id=country)
+    if ats == "avature":
+        # #160: Avature career portal ("host/locale/portal"), 10 a page.
+        return f"https://{board_id}/SearchJobs?jobOffset={offset}"
     if ats == "successfactors":
         # The career site's JSON job search (POST, sf_search_body).
         return f"https://{board_id}/services/recruiting/v1/jobs"
@@ -489,6 +492,46 @@ def _successfactors(board_id: str, data: dict) -> list[Posting]:
     return out
 
 
+# --- Avature career portals (#160) --------------------------------------------------
+# usijobs.deloitte.com/en_US/careersUSI, jobs.siemens.com/en_US/externaljobs.
+# The search page is HTML: each result links to JobDetail/[slug/]{id}, and the
+# text up to the next result holds the title and location. The job page
+# carries a JSON-LD JobPosting (description, datePosted, address).
+
+AVATURE_PAGE = 10
+_AV_LINK = re.compile(r'href="(https?://[^"]+?/JobDetail/(?:[^"/]+/)?(\d+))"[^>]*>(.*?)</a>', re.S)
+
+
+def _avature(board_id: str, page: str) -> list[Posting]:
+    out, seen = [], set()
+    matches = list(_AV_LINK.finditer(page))
+    for i, m in enumerate(matches):
+        url, pid, label = m.group(1), m.group(2), html.unescape(re.sub(r"<[^>]+>", " ", m.group(3))).strip()
+        if pid in seen or not label or label.lower() in ("learn more", "apply", "view job"):
+            continue
+        seen.add(pid)
+        end = next((n.start() for n in matches[i + 1:] if n.group(2) != pid), m.end() + 4000)
+        block = html.unescape(re.sub(r"<[^>]+>", " | ", page[m.end():end]))
+        block = re.sub(r"(\s*\|\s*)+", " | ", block).strip(" |")
+        out.append(Posting(
+            ats="avature", board_id=board_id, posting_id=pid, title=" ".join(label.split()),
+            location=block[:300], country="IN" if in_india(block) else None, url=url, apply_url=url,
+        ))
+    return out
+
+
+def _json_ld_job(page: str) -> dict:
+    for m in re.finditer(r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>', page, re.S):
+        try:
+            data = json.loads(m.group(1))
+        except ValueError:
+            continue
+        for d in data if isinstance(data, list) else [data]:
+            if isinstance(d, dict) and d.get("@type") == "JobPosting":
+                return d
+    return {}
+
+
 def sf_total(data: dict) -> int:
     return int(data.get("totalJobs") or 0)
 
@@ -521,7 +564,7 @@ def detail_url(posting: Posting) -> str | None:
     """Where the description is, for lists that leave it out; else None."""
     if posting.description is not None:
         return None
-    if posting.ats == "successfactors":
+    if posting.ats in ("successfactors", "avature"):
         return posting.url
     if posting.ats == "oracle":
         host, site = oracle_parts(posting.board_id)
@@ -755,6 +798,8 @@ _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
+    if ats == "avature":   # an HTML search page
+        return _avature(board_id, body)
     """A board's postings from its list response. Raises ValueError when the
     body is not the expected JSON, so a changed API fails loudly per board."""
     try:
@@ -793,6 +838,24 @@ def parse_detail(posting: Posting, body: str) -> None:
     link SmartRecruiters only gives there."""
     if posting.ats == "successfactors":   # an HTML page, not JSON
         posting.description = _sf_description(body)
+        return
+    if posting.ats == "avature":   # HTML: a JSON-LD JobPosting, or plain sections
+        job = _json_ld_job(body)
+        if job:
+            posting.description = html_to_text(job.get("description"))
+            posting.posted_at = _when(job.get("datePosted")) or posting.posted_at
+            posting.employment_type = job.get("employmentType") or posting.employment_type
+            return
+        # No JSON-LD (Siemens): the description is the second content section,
+        # the date a "Posted since 03-Nov-2026" field.
+        m = re.search(r'id="section1__content"[^>]*>(.*?)(?:<div[^>]+id="section2__content"|Apply\s*</a>|$)', body, re.S)
+        posting.description = html_to_text(m.group(1)) if m else None
+        d = re.search(r"Posted since\s*(?:<[^>]+>\s*)*(\d{1,2}-[A-Za-z]{3}-\d{4})", body)
+        if d:
+            try:
+                posting.posted_at = datetime.strptime(d.group(1), "%d-%b-%Y").replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
         return
     data = json.loads(body)
     if posting.ats == "greenhouse":

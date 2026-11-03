@@ -265,3 +265,37 @@ def test_successfactors_reads_newest_india_postings_and_stops_at_a_week():
 def test_successfactors_canary_is_skipped():
     lane, _ = _lane("successfactors")
     assert poller.canary_ok(lane)
+
+
+# --- Avature career portals (#160) --------------------------------------------------
+
+AV_PAGE = """
+<a href="https://jobs.siemens.com/en_US/externaljobs/JobDetail/528135" data-au="ag-a-10"> Data Engineer </a>
+<span>Thane</span>, <span>Maharashtra</span>, <span>India</span> &bull; Job ID: 528135
+<a href="https://jobs.siemens.com/en_US/externaljobs/JobDetail/528135" aria-label="Learn more"> Learn more </a>
+<a href="https://jobs.siemens.com/en_US/externaljobs/JobDetail/528116" data-au="ag-a-10"> Power Electronics Engineer </a>
+<span>Suzhou</span>, <span>China</span> &bull; Job ID: 528116
+"""
+
+
+def test_avature_list_keeps_india_and_reads_titles():
+    lane, http = _lane("avature", (200, AV_PAGE), (200, "<html>no results</html>"))
+    res = poller.fetch_board(lane, poller.Board("avature", "jobs.siemens.com/en_US/externaljobs"))
+    assert res.error is None and not res.complete
+    assert [(p.posting_id, p.title) for p in res.postings] == [("528135", "Data Engineer")]   # China dropped
+    assert http.calls[0] == "https://jobs.siemens.com/en_US/externaljobs/SearchJobs?jobOffset=0"
+    assert http.calls[1].endswith("jobOffset=10")
+    p = res.postings[0]
+    assert ats.place(p) == "india" and ats.detail_url(p) == p.url
+
+
+def test_avature_detail_from_json_ld_or_sections():
+    p = ats.Posting(ats="avature", board_id="b", posting_id="1", title="t", location="India", url="u")
+    ats.parse_detail(p, '<script type="application/ld+json">{"@type": "JobPosting", "datePosted": "2026-11-03",'
+                        ' "description": "<p>Build Spark pipelines</p>"}</script>')
+    assert p.description == "Build Spark pipelines" and p.posted_at.day == 3
+    q = ats.Posting(ats="avature", board_id="b", posting_id="2", title="t", location="India", url="u")
+    ats.parse_detail(q, '<span>Posted since</span> <span>03-Nov-2026</span>'
+                        '<div id="section1__content"><p>Python and SQL daily</p></div>'
+                        '<div class="x" id="section2__content">Apply</div>')
+    assert "Python and SQL" in q.description and q.posted_at.month == 11

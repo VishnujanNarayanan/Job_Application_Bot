@@ -234,6 +234,8 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
             return _fetch_oracle(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "amazon":
             return _fetch_amazon(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "avature":
+            return _fetch_avature(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "successfactors":
             return _fetch_successfactors(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "keka":
@@ -340,6 +342,24 @@ def _fetch_oracle(lane: Lane, board: Board, res: BoardResult, *, max_pages: int)
             break
     else:
         res.complete = False
+    return res
+
+
+def _fetch_avature(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Avature (#160): the search pages, newest first, 10 a page; India by the
+    location text in each result. Pages are capped, so never complete."""
+    seen: set[str] = set()
+    for page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("avature", board.board_id, offset=page * ats.AVATURE_PAGE))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        rows = [p for p in ats.parse_list("avature", board.board_id, body) if p.posting_id not in seen]
+        if not rows:
+            break
+        seen.update(p.posting_id for p in rows)
+        res.postings += [p for p in rows if ats.place(p) != "elsewhere"]
+    res.complete = False
     return res
 
 
@@ -475,12 +495,13 @@ def run_lanes(lanes: dict[str, Lane], work: dict[str, list], fn: Callable, budge
 # so no host sees more than one lane's pace. Greenhouse, Lever, Ashby,
 # SmartRecruiters, Workable, Rippling and Amazon answer every company from one
 # API host and keep a single lane.
-PER_HOST = frozenset({"workday", "oracle", "keka", "recruitee", "bamboohr", "eightfold"})
+PER_HOST = frozenset({"workday", "oracle", "keka", "recruitee", "bamboohr", "eightfold",
+                      "successfactors", "avature"})
 
 
 def _host_key(item) -> str:
     """The host a board (or posting) is fetched from, as a stable key."""
-    if item.ats in ("workday", "oracle"):
+    if item.ats in ("workday", "oracle", "avature"):
         return item.board_id.split("/", 1)[0].lower()
     return item.board_id.lower()
 
@@ -516,7 +537,7 @@ def canary_ok(lane: Lane) -> bool:
         board = f"{CANARY}/wd5/External"
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
-    if lane.name == "successfactors":
+    if lane.name in ("successfactors", "avature"):
         # Employer-hosted sites: no shared "no such board" answer to ask for.
         return True
     if lane.name == "keka":
