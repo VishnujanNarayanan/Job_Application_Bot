@@ -492,3 +492,4 @@ def test_linkedin_retry_is_mounted_on_each_scraper_session(monkeypatch) -> None:
     retries = LinkedIn().session.get_adapter("https://www.linkedin.com").max_retries
     assert retries.total == 3
     assert 429 in retries.status_forcelist
+
