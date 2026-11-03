@@ -293,7 +293,15 @@ def company_name(board: ats_poller.Board, p: ats.Posting) -> str:
     name = board.name or p.company
     if name:
         return name
-    words = re.split(r"[-_.\s]+", board.board_id)
+    ident = board.board_id
+    # Workday "accenture/wd103/AccentureCareers" -> its tenant, "Accenture";
+    # Oracle "jpmc.fa.oraclecloud.com/CX_1001" -> its pod, the best there is
+    # until ats_boards.company is filled for it.
+    if board.ats == "workday":
+        ident = ats.workday_parts(ident)[0]
+    elif board.ats == "oracle":
+        ident = ats.oracle_parts(ident)[0].split(".")[0]
+    words = re.split(r"[-_.\s/]+", ident)
     return " ".join(w[:1].upper() + w[1:] for w in words if w) or board.board_id
 
 
@@ -347,6 +355,23 @@ def _report_end_of_run(stats, *, new: int, backlog: int, matched: int, skipped: 
                                  backlog=backlog, outcomes=outcomes, dry_run=dry_run)
         except Exception as exc:
             log.error("telegram_summary_error", error=str(exc))
+
+
+def _safe_commit(session, log) -> bool:
+    """Commit; on a dropped connection roll back and say so. The pool hands
+    the next query a fresh connection (pool_pre_ping), so the run goes on."""
+    from sqlalchemy.exc import DBAPIError
+
+    try:
+        session.commit()
+        return True
+    except DBAPIError as exc:
+        log.warning("db_commit_failed_reconnecting", error=str(exc)[:200])
+        try:
+            session.rollback()
+        except DBAPIError:
+            pass
+        return False
 
 
 def run(dry_run: bool, log, *, atses=None) -> int:
@@ -438,12 +463,22 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         # must never be reachable from this run.
         allowed_providers = list(a.get("llm_providers") or ["groq", "gemini-free"])
         llm_available = True
+        written = 0  # verdicts in `queue` already saved
         for index, job in enumerate(passing):
             if time.monotonic() - started > budget:
                 not_reached = len(passing) - index  # no verdict: back next run
                 log.warning("time_budget_reached", not_reached=not_reached)
                 break
-            session.commit()  # no transaction open across the slow calls
+            # Save the verdicts so far, then commit: no transaction stays open
+            # across the slow calls, and a dropped connection costs at most
+            # the job in hand (it comes back next run), not the whole run's
+            # verdicts (Neon closed the socket 2.5 h into a run, 2026-11-02).
+            if written < len(queue):
+                _write_not_applied(session, queue[written:], now, dry_run=dry_run)
+            if _safe_commit(session, log):
+                written = len(queue)
+            else:
+                del queue[written:]   # unsaved verdicts: those jobs come back next run
             log.info("job_started", n=index + 1, of=len(passing), job_id=job.job_id,
                      company=job.company, role=job.role, source=job.site)
             # Layer 3, routed exactly as in the main run (#71, #100): the free
@@ -501,7 +536,17 @@ def run(dry_run: bool, log, *, atses=None) -> int:
                 continue
             session.add(built.applied)
             job.outcome, job.outcome_at = "matched", now
-            session.flush()
+            # Saved BEFORE the message goes out: a commit that fails leaves the
+            # job unsent and unrecorded (it comes back next run), never sent
+            # but unrecorded (which would send it again).
+            if written < len(queue):
+                _write_not_applied(session, queue[written:], now, dry_run=dry_run)
+            if not _safe_commit(session, log):
+                del queue[written:]
+                not_reached += 1
+                skipped += 1
+                continue
+            written = len(queue)
             if not dry_run:
                 resume = for_notification(job.job_id, session)
                 try:
@@ -516,8 +561,10 @@ def run(dry_run: bool, log, *, atses=None) -> int:
                          score=result.final_score)
             matched += 1
 
-        _write_not_applied(session, queue, now, dry_run=dry_run)
-        session.commit()
+        if written < len(queue):
+            _write_not_applied(session, queue[written:], now, dry_run=dry_run)
+        if not _safe_commit(session, log):
+            del queue[written:]
 
     outcomes: dict[str, int] = {}
     for _job, reason, _d, _s in queue:
