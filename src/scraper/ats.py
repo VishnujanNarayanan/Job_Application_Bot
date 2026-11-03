@@ -29,7 +29,7 @@ from src.state.models import AllJobs
 
 ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
          "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon", "keka",
-         "successfactors", "avature")
+         "successfactors", "avature", "phenom")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
@@ -56,6 +56,8 @@ class Posting:
     company: str | None = None
     employment_type: str | None = None
     level: str | None = None
+    # An ATS-side key the detail call needs besides the posting id (Phenom's jobSeqNo).
+    ref: str | None = None
 
     @property
     def job_id(self) -> str:
@@ -106,6 +108,9 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
         return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
     if ats == "oracle":
         return oracle_search_url(board_id, offset=offset, location_id=country)
+    if ats == "phenom":
+        # #160: Phenom career site ("host/lang"); the search is a POST (phenom_search).
+        return f"https://{board_id.split('/', 1)[0]}/widgets"
     if ats == "avature":
         # #160: Avature career portal ("host/locale/portal"), 10 a page.
         return f"https://{board_id}/SearchJobs?jobOffset={offset}"
@@ -532,6 +537,58 @@ def _json_ld_job(page: str) -> dict:
     return {}
 
 
+# --- Phenom career sites (#160) -----------------------------------------------------
+# careers.nttdata.com and similar. Board id "host/lang" (lang e.g. en_global;
+# its country part is the site's "country"). The widgets endpoint answers a
+# refineSearch (India via selected_fields) and a jobDetail (by jobSeqNo). The
+# search ignores date sorting, so every India page is read each poll.
+
+PHENOM_PAGE = 100
+
+
+def _phenom_parts(board_id: str) -> tuple[str, str, str]:
+    host, _, lang = board_id.partition("/")
+    lang = lang or "en_global"
+    return host, lang, lang.split("_", 1)[-1]
+
+
+def phenom_search(board_id: str, offset: int = 0) -> dict:
+    _host, lang, country = _phenom_parts(board_id)
+    return {"lang": lang, "deviceType": "desktop", "country": country, "pageName": "search-results",
+            "ddoKey": "refineSearch", "sortBy": "Most recent", "subsearch": "", "from": offset, "jobs": True,
+            "counts": True, "all_fields": ["country"], "size": PHENOM_PAGE, "clearAll": False,
+            "jdsource": "facets", "isSliderEnable": False, "pageId": "page20", "siteType": "external",
+            "keywords": "", "global": True, "selected_fields": {"country": ["India"]}, "locationData": {}}
+
+
+def phenom_detail_body(posting: Posting) -> dict:
+    _host, lang, country = _phenom_parts(posting.board_id)
+    return {"lang": lang, "deviceType": "desktop", "country": country, "pageName": "job",
+            "ddoKey": "jobDetail", "jobSeqNo": posting.ref, "siteType": "external"}
+
+
+def phenom_total(data: dict) -> int:
+    return int((data.get("refineSearch") or {}).get("totalHits") or 0)
+
+
+def _phenom(board_id: str, data: dict) -> list[Posting]:
+    host, lang, country = _phenom_parts(board_id)
+    language = lang.split("_", 1)[0]
+    out = []
+    for j in ((data.get("refineSearch") or {}).get("data") or {}).get("jobs") or []:
+        if not j.get("jobId"):
+            continue
+        url = f"https://{host}/{country}/{language}/job/{j['jobId']}"
+        out.append(Posting(
+            ats="phenom", board_id=board_id, posting_id=str(j["jobId"]), title=(j.get("title") or "").strip(),
+            location=j.get("location") or j.get("cityStateCountry") or "",
+            country="IN" if (j.get("country") or "").lower() == "india" else _country(j.get("country")),
+            posted_at=_when(str(j.get("postedDate") or "").replace("+0000", "+00:00")),
+            url=url, apply_url=j.get("applyUrl") or url, employment_type=j.get("type"), ref=j.get("jobSeqNo"),
+        ))
+    return out
+
+
 def sf_total(data: dict) -> int:
     return int(data.get("totalJobs") or 0)
 
@@ -566,6 +623,8 @@ def detail_url(posting: Posting) -> str | None:
         return None
     if posting.ats in ("successfactors", "avature"):
         return posting.url
+    if posting.ats == "phenom":   # POSTed with phenom_detail_body
+        return list_url("phenom", posting.board_id)
     if posting.ats == "oracle":
         host, site = oracle_parts(posting.board_id)
         return (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
@@ -794,7 +853,8 @@ def _eightfold(board_id: str, data: dict) -> list[Posting]:
 _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
             "smartrecruiters": _smartrecruiters, "workday": _workday, "recruitee": _recruitee,
             "rippling": _rippling, "workable": _workable, "bamboohr": _bamboohr, "eightfold": _eightfold,
-            "oracle": _oracle, "amazon": _amazon, "keka": _keka, "successfactors": _successfactors}
+            "oracle": _oracle, "amazon": _amazon, "keka": _keka, "successfactors": _successfactors,
+            "phenom": _phenom}
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
@@ -900,6 +960,11 @@ def parse_detail(posting: Posting, body: str) -> None:
         # "India - Salaried" says where the role is when the location does not.
         if in_india(job.get("employmentStatusLabel")):
             posting.country = "IN"
+    elif posting.ats == "phenom":
+        job = ((data.get("jobDetail") or {}).get("data") or {}).get("job") or {}
+        posting.description = html_to_text(job.get("description"))
+        posting.company = job.get("companyName") or posting.company
+        posting.posted_at = _when(str(job.get("postedDate") or "").replace("+0000", "+00:00")) or posting.posted_at
     elif posting.ats == "oracle":
         job = (data.get("items") or [{}])[0]
         parts = [html_to_text(job.get(k)) for k in

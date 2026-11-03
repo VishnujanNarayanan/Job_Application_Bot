@@ -16,7 +16,7 @@ class FakeHttp:
         self.answers, self.calls = list(answers), []
 
     def __call__(self, url, timeout=None, headers=None, json=None):
-        self.calls.append(url)
+        self.calls.append((url, json) if json is not None else url)
         status, body = self.answers.pop(0)
         return SimpleNamespace(status_code=status, text=body, headers={})
 
@@ -299,3 +299,26 @@ def test_avature_detail_from_json_ld_or_sections():
                         '<div id="section1__content"><p>Python and SQL daily</p></div>'
                         '<div class="x" id="section2__content">Apply</div>')
     assert "Python and SQL" in q.description and q.posted_at.month == 11
+
+
+# --- Phenom career sites (#160) -----------------------------------------------------
+
+def _ph_page(ids, total):
+    return json.dumps({"refineSearch": {"status": 200, "totalHits": total, "data": {"jobs": [
+        {"jobId": str(i), "title": f"Data Engineer {i}", "location": "Chennai, IN-TN, India", "country": "India",
+         "postedDate": "2026-11-03T05:52:26.000+0000", "jobSeqNo": f"SEQ{i}", "type": "Full-Time"} for i in ids]}}})
+
+
+def test_phenom_pages_india_and_posts_for_detail():
+    lane, http = _lane("phenom", (200, _ph_page(range(100), 130)), (200, _ph_page(range(100, 130), 130)),
+                       (200, json.dumps({"jobDetail": {"data": {"job": {
+                           "description": "<p>Spark and Python</p>", "companyName": "NTT DATA"}}}})))
+    res = poller.fetch_board(lane, poller.Board("phenom", "careers.nttdata.com/en_global"))
+    assert res.error is None and res.complete and len(res.postings) == 130
+    assert http.calls[0][0] == "https://careers.nttdata.com/widgets"
+    assert http.calls[0][1]["selected_fields"] == {"country": ["India"]} and http.calls[1][1]["from"] == 100
+    p = res.postings[0]
+    assert ats.place(p) == "india" and p.url == "https://careers.nttdata.com/global/en/job/0" and p.ref == "SEQ0"
+    assert poller.fetch_detail(lane, p)
+    assert http.calls[2][1]["ddoKey"] == "jobDetail" and http.calls[2][1]["jobSeqNo"] == "SEQ0"
+    assert "Spark" in p.description and p.company == "NTT DATA"

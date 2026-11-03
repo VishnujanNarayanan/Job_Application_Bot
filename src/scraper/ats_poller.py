@@ -234,6 +234,8 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
             return _fetch_oracle(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "amazon":
             return _fetch_amazon(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "phenom":
+            return _fetch_phenom(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "avature":
             return _fetch_avature(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "successfactors":
@@ -339,6 +341,28 @@ def _fetch_oracle(lane: Lane, board: Board, res: BoardResult, *, max_pages: int)
         res.postings += page
         offset += ats.ORACLE_PAGE
         if offset >= total or not page:
+            break
+    else:
+        res.complete = False
+    return res
+
+
+def _fetch_phenom(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """Phenom (#160): every India page (the search ignores date order)."""
+    import json
+
+    offset, total = 0, None
+    for _page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("phenom", board.board_id), body=ats.phenom_search(board.board_id, offset))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        data = json.loads(body)
+        total = total if total is not None else ats.phenom_total(data)
+        page = ats.parse_list("phenom", board.board_id, body)
+        res.postings += page
+        offset += len(page)
+        if not page or offset >= total:
             break
     else:
         res.complete = False
@@ -454,7 +478,10 @@ def fetch_detail(lane: Lane, posting: ats.Posting) -> bool:
     url = ats.detail_url(posting)
     if url is None:
         return True
-    status, body = lane.get(url)
+    if posting.ats == "phenom":   # the detail is a POST to the same endpoint
+        status, body, _ = lane.fetch(url, body=ats.phenom_detail_body(posting))
+    else:
+        status, body = lane.get(url)
     if status != 200:
         return False
     try:
@@ -496,12 +523,12 @@ def run_lanes(lanes: dict[str, Lane], work: dict[str, list], fn: Callable, budge
 # SmartRecruiters, Workable, Rippling and Amazon answer every company from one
 # API host and keep a single lane.
 PER_HOST = frozenset({"workday", "oracle", "keka", "recruitee", "bamboohr", "eightfold",
-                      "successfactors", "avature"})
+                      "successfactors", "avature", "phenom"})
 
 
 def _host_key(item) -> str:
     """The host a board (or posting) is fetched from, as a stable key."""
-    if item.ats in ("workday", "oracle", "avature"):
+    if item.ats in ("workday", "oracle", "avature", "phenom"):
         return item.board_id.split("/", 1)[0].lower()
     return item.board_id.lower()
 
@@ -537,7 +564,7 @@ def canary_ok(lane: Lane) -> bool:
         board = f"{CANARY}/wd5/External"
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
-    if lane.name in ("successfactors", "avature"):
+    if lane.name in ("successfactors", "avature", "phenom"):
         # Employer-hosted sites: no shared "no such board" answer to ask for.
         return True
     if lane.name == "keka":
