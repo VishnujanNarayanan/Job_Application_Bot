@@ -304,7 +304,9 @@ INDIA_CODE = re.compile(r"\bIND\b")
 # Philippine "NCR" (Metro Manila) and Indiana.
 NOT_INDIA = re.compile(r"\bph\b|philippines|indiana", re.I)
 # Remote that names a region India is part of.
-OPEN_REGION = re.compile(r"india|apac|asia|anywhere|global|worldwide|world-wide|international", re.I)
+# Whole words: "Indianapolis, IN" and "Evansville, INDIANA" are not India
+# (coverage check, 2026-11-01); "World Wide - Remote" is open.
+OPEN_REGION = re.compile(r"\b(india|apac|asia|anywhere|global|worldwide|world[- ]wide|international)\b", re.I)
 # Remote that names no region at all.
 NO_REGION = re.compile(r"^[\s,;/()|-]*((fully|100%)?\s*remote|anywhere|wfh|work from home)?[\s,;/()|-]*$", re.I)
 # A location that does not say where: decided from the description instead.

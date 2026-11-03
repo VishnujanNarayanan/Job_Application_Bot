@@ -115,6 +115,12 @@ def test_list_urls():
     ("Multiple Locations", None, None, "unknown"),
     ("", None, None, "unknown"),
     ("Hybrid", None, True, "remote_open"),
+    ("World Wide - Remote", None, True, "remote_open"),
+    ("Remote -- World Wide", None, True, "remote_open"),
+    ("Indianapolis, IN, United States", None, True, "remote_locked"),  # not "india"
+    ("Evansville, INDIANA, United States", None, True, "remote_locked"),
+    ("Indianapolis, IN, United States", None, None, "elsewhere"),
+    ("Remote - Asia Pacific", None, True, "remote_open"),
 ])
 def test_place(location, country, remote, expected):
     p = ats.Posting(ats="lever", board_id="acme", posting_id="1", title="x",
