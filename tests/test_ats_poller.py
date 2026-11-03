@@ -479,3 +479,26 @@ def test_fetch_details_stops_starting_at_its_budget(monkeypatch):
     lanes = {"greenhouse": poller.Lane("greenhouse", 0.0, sleep=lambda _s: None, get=FakeGet())}
     got = poller.fetch_details(posts, lanes, budget_s=10)
     assert 0 < len(got) < 5 and set(got) == {f"greenhouse-b-{i}" for i in calls}
+
+
+# --- per-host lanes -----------------------------------------------------------------
+
+def test_split_by_host_spreads_per_host_atses_and_keeps_shared_ones():
+    lanes = {}
+    boards = [poller.Board("workday", f"t{i}/wd5/Ext") for i in range(40)] + \
+             [poller.Board("workday", "t0/wd5/Other")] + \
+             [poller.Board("greenhouse", f"g{i}") for i in range(10)]
+    work = poller.split_by_host({"workday": boards[:41], "greenhouse": boards[41:]}, lanes,
+                                parallel=8, delay=0.5)
+    assert work["greenhouse"] == boards[41:]                       # shared API host: one lane
+    wd = {k: v for k, v in work.items() if k.startswith("workday#")}
+    assert 2 <= len(wd) <= 8 and sum(len(v) for v in wd.values()) == 41
+    # One tenant's two sites share a lane, in their original order.
+    home = [k for k, v in wd.items() if boards[0] in v][0]
+    assert boards[40] in wd[home] and wd[home].index(boards[0]) < wd[home].index(boards[40])
+    assert all(lanes[k].name == "workday" and lanes[k].delay == 0.5 for k in wd)
+
+
+def test_split_by_host_with_one_lane_changes_nothing():
+    work = {"workday": [poller.Board("workday", "a/wd1/x")]}
+    assert poller.split_by_host(work, {}, parallel=1, delay=0.5) is work

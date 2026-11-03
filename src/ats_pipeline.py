@@ -243,7 +243,8 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     session.commit()
     log.info("ats_poll_started", due=len(boards))
     results = ats_poller.fetch_lists(boards, lanes, budget_s=60 * float(a.get("time_budget_minutes", 10)),
-                                     sr_max_pages=int(a.get("sr_max_pages", 30)), delay=delay, stats=stats)
+                                     sr_max_pages=int(a.get("sr_max_pages", 30)), delay=delay, stats=stats,
+                                     parallel=int(a.get("parallel_hosts", 1)))
 
     candidates: list[tuple[ats.Posting, ats_poller.Board]] = []
     ledger = ats_poller.Ledger.load(session, [r.board for r in results], now, tier_hours)
@@ -287,7 +288,8 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
 
     # F: descriptions, for the lists that leave them out.
     fetched = ats_poller.fetch_details([p for p, _b in fresh], lanes, delay=delay,
-                                       budget_s=60 * float(a.get("detail_budget_minutes", 8)))
+                                       budget_s=60 * float(a.get("detail_budget_minutes", 8)),
+                                       parallel=int(a.get("parallel_hosts", 1)))
     stats.details_deferred = sum(1 for p, _b in fresh if p.job_id not in fetched)
 
     jobs = []
