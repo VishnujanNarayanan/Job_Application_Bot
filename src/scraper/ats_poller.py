@@ -40,6 +40,7 @@ import difflib
 import re
 import threading
 import time
+import zlib
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -444,6 +445,43 @@ def run_lanes(lanes: dict[str, Lane], work: dict[str, list], fn: Callable, budge
     return [pair for name in work for pair in out[name]]
 
 
+# ATSes whose every company is on its own host (tenant subdomain or pod): their
+# boards can be read in parallel lanes, each company always on the same lane,
+# so no host sees more than one lane's pace. Greenhouse, Lever, Ashby,
+# SmartRecruiters, Workable, Rippling and Amazon answer every company from one
+# API host and keep a single lane.
+PER_HOST = frozenset({"workday", "oracle", "keka", "recruitee", "bamboohr", "eightfold"})
+
+
+def _host_key(item) -> str:
+    """The host a board (or posting) is fetched from, as a stable key."""
+    if item.ats in ("workday", "oracle"):
+        return item.board_id.split("/", 1)[0].lower()
+    return item.board_id.lower()
+
+
+def split_by_host(work: dict[str, list], lanes: dict[str, Lane], *, parallel: int, delay: float) -> dict[str, list]:
+    """Spread each PER_HOST ATS's items over up to ``parallel`` lanes
+    ("workday#0", ...), keyed by host so one company is never read by two
+    lanes at once. Order within a lane is kept (hot boards first). The first
+    sweep of 539 Workday and 224 Oracle tenants through one lane each spent
+    26 minutes on descriptions alone (2026-11-03)."""
+    if parallel <= 1:
+        return work
+    out: dict[str, list] = {}
+    for name, items in work.items():
+        if name not in PER_HOST:
+            out[name] = items
+            continue
+        pace = lanes[name].delay if name in lanes else delay
+        for item in items:
+            key = f"{name}#{zlib.crc32(_host_key(item).encode()) % parallel}"
+            out.setdefault(key, []).append(item)
+            if key not in lanes:
+                lanes[key] = Lane(name, pace)
+    return out
+
+
 def canary_ok(lane: Lane) -> bool:
     """Ask for a board that cannot exist. Greenhouse, Lever and Ashby answer
     404; SmartRecruiters answers 200 with nothing found (checked 2026-10-17).
@@ -479,7 +517,7 @@ def canary_ok(lane: Lane) -> bool:
 
 
 def fetch_lists(boards: list[Board], lanes: dict[str, Lane], *, budget_s: float,
-                sr_max_pages: int = 30, delay: float = 1.0, stats=None) -> list[BoardResult]:
+                sr_max_pages: int = 30, delay: float = 1.0, stats=None, parallel: int = 1) -> list[BoardResult]:
     """Each ATS's boards; an ATS whose canary fails is skipped for the run
     (its boards stay due)."""
     by_ats: dict[str, list] = {}
@@ -492,12 +530,13 @@ def fetch_lists(boards: list[Board], lanes: dict[str, Lane], *, budget_s: float,
             if stats is not None:
                 stats.atses_skipped.append(name)
             del by_ats[name]
-    pairs = run_lanes(lanes, by_ats, lambda lane, b: fetch_board(lane, b, sr_max_pages=sr_max_pages), budget_s)
+    work = split_by_host(by_ats, lanes, parallel=parallel, delay=delay)
+    pairs = run_lanes(lanes, work, lambda lane, b: fetch_board(lane, b, sr_max_pages=sr_max_pages), budget_s)
     return [res for _b, res in pairs]
 
 
 def fetch_details(postings: list[ats.Posting], lanes: dict[str, Lane], *, delay: float = 1.0,
-                  budget_s: float | None = None) -> dict[str, bool]:
+                  budget_s: float | None = None, parallel: int = 1) -> dict[str, bool]:
     """job_id -> whether the description was fetched. A posting the lanes did
     not reach within ``budget_s`` is absent (the caller forgets it, so the
     next run fetches it): the first sweep of big Workday tenants spent 26
@@ -507,6 +546,7 @@ def fetch_details(postings: list[ats.Posting], lanes: dict[str, Lane], *, delay:
         work.setdefault(p.ats, []).append(p)
     for name in work:
         lanes.setdefault(name, Lane(name, delay))
+    work = split_by_host(work, lanes, parallel=parallel, delay=delay)
     return {p.job_id: ok for p, ok in run_lanes(lanes, work, fetch_detail, budget_s)}
 
 
