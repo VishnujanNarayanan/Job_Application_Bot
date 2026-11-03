@@ -28,7 +28,8 @@ from urllib.parse import quote
 from src.state.models import AllJobs
 
 ATSES = ("greenhouse", "lever", "ashby", "smartrecruiters", "workday",
-         "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon", "keka")
+         "recruitee", "rippling", "workable", "bamboohr", "eightfold", "oracle", "amazon", "keka",
+         "successfactors")
 
 # SmartRecruiters pages hold at most 100 postings.
 SR_PAGE = 100
@@ -105,6 +106,9 @@ def list_url(ats: str, board_id: str, *, country: str | None = None, offset: int
         return f"{workday_host(board_id)}/wday/cxs/{tenant}/{site}/jobs"
     if ats == "oracle":
         return oracle_search_url(board_id, offset=offset, location_id=country)
+    if ats == "successfactors":
+        # The career site's JSON job search (POST, sf_search_body).
+        return f"https://{board_id}/services/recruiting/v1/jobs"
     if ats == "keka":
         # The careers page: it names the org id the jobs call needs (#160).
         return f"https://{quote(board_id, safe='')}.keka.com/careers/"
@@ -163,6 +167,7 @@ _SUBDOMAIN_HOSTS = {
 # Path segments that are pages of the ATS itself, not a board.
 _NOT_BOARDS = {"embed", "api", "v1", "jobs", "job_app", "o", "j", "careers", ""}
 _WORKDAY = re.compile(r"^(?P<tenant>[a-z0-9-]+)\.(?P<shard>wd\d+)\.myworkdayjobs\.com$")
+_WORKDAY_SITE = re.compile(r"^(?P<shard>wd\d+)\.myworkdaysite\.com$")
 _LOCALE = re.compile(r"^[a-z]{2}(-[a-zA-Z]{2})?$")
 # Generic subdomains that are never a customer's board.
 _NOT_TENANTS = {"www", "api", "app", "careers", "jobs", "help", "support"}
@@ -209,6 +214,15 @@ def board_from_url(url: str | None) -> tuple[str, str] | None:
     if host.endswith(".icims.com"):
         sub = host[: -len(".icims.com")]
         return ("icims", sub) if sub and sub not in _NOT_TENANTS else None
+    m = _WORKDAY_SITE.match(host)
+    if m:
+        # [locale/]recruiting/{tenant}/{site}/...: read after "recruiting", so a
+        # two-letter tenant ("wf") is not mistaken for a locale.
+        if "recruiting" in parts:
+            i = parts.index("recruiting")
+            if i + 2 < len(parts):
+                return "workday", f"{parts[i + 1].lower()}/{SITE_SHARD}{m['shard']}/{parts[i + 2]}"
+        return None
     m = _WORKDAY.match(host)
     if m:
         site = next((p for p in parts if not _LOCALE.match(p)), None)
@@ -237,9 +251,25 @@ def workday_parts(board_id: str) -> tuple[str, str, str]:
     return tenant, shard, site
 
 
+# Workday's second domain: wd1.myworkdaysite.com/recruiting/{tenant}/{site}
+# (Wells Fargo, Avnet, ...). Same API; its board ids carry the shard as
+# "site.wd1" ("wf/site.wd1/WellsFargoJobs").
+SITE_SHARD = "site."
+
+
 def workday_host(board_id: str) -> str:
     tenant, shard, _site = workday_parts(board_id)
+    if shard.startswith(SITE_SHARD):
+        return f"https://{shard[len(SITE_SHARD):]}.myworkdaysite.com"
     return f"https://{tenant}.{shard}.myworkdayjobs.com"
+
+
+def workday_public_base(board_id: str) -> str:
+    """Where a site's postings live for a person (job links)."""
+    tenant, shard, site = workday_parts(board_id)
+    if shard.startswith(SITE_SHARD):
+        return f"{workday_host(board_id)}/recruiting/{tenant}/{site}"
+    return f"{workday_host(board_id)}/{site}"
 
 
 def workday_search(offset: int = 0, facets: dict | None = None) -> dict:
@@ -316,7 +346,7 @@ def _workday(board_id: str, data: dict, now: datetime | None = None) -> list[Pos
             location=loc, country="IN",
             remote=True if re.search(r"\bremote\b", loc, re.I) else None,
             posted_at=_workday_posted(j.get("postedOn"), now),
-            url=f"{host}/{site}{path}", apply_url=f"{host}/{site}{path}",
+            url=f"{workday_public_base(board_id)}{path}", apply_url=f"{workday_public_base(board_id)}{path}",
         ))
     return out
 
@@ -406,6 +436,63 @@ def _keka(board_id: str, data: list) -> list[Posting]:
     return out
 
 
+# --- SuccessFactors career sites (#160) ---------------------------------------------
+# SAP SuccessFactors "Career Site Builder" sites on the employer's own domain
+# (careers.wipro.com, careers.hcltech.com, jobs.standardchartered.com). The
+# board id is that host. The site's JSON search (newest first, 10 a page)
+# lists postings; where the location lives differs by site (jobLocationCountry,
+# custCountryRegion, ...), so every location-like field is read. The job page
+# /job/{urlTitle}/{id}-en_US/ carries the description in itemprop="description".
+
+SF_PAGE = 10
+_SF_LOCATION_KEYS = ("jobLocationShort", "jobLocationCountry", "jobLocationState", "sfstd_jobLocation_obj",
+                     "custCountryRegion", "custprimecity", "city", "country", "location")
+
+
+def sf_search_body(page: int = 0) -> dict:
+    return {"locale": "en_US", "pageNumber": page, "sortBy": "date", "keywords": "", "location": "",
+            "facetFilters": {}, "brand": "", "skills": [], "categoryId": 0, "alertId": "", "rcmCandidateId": ""}
+
+
+def _sf_date(text: str | None) -> datetime | None:
+    """"11/3/26" (m/d/yy) -> a date."""
+    try:
+        return datetime.strptime((text or "").strip(), "%m/%d/%y").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _sf_strings(v) -> list[str]:
+    if isinstance(v, str):
+        return [v]
+    if isinstance(v, list):
+        return [x for x in v if isinstance(x, str)]
+    return []
+
+
+def _successfactors(board_id: str, data: dict) -> list[Posting]:
+    out = []
+    for item in data.get("jobSearchResult") or []:
+        j = item.get("response") or {}
+        if not j.get("id"):
+            continue
+        texts = [re.sub(r"<[^>]+>", " ", t).strip() for k in _SF_LOCATION_KEYS for t in _sf_strings(j.get(k))]
+        location = " / ".join(dict.fromkeys(t for t in texts if t))
+        url_title = j.get("urlTitle") or j.get("unifiedUrlTitle") or "job"
+        url = f"https://{board_id}/job/{url_title}/{j['id']}-en_US/"
+        out.append(Posting(
+            ats="successfactors", board_id=board_id, posting_id=str(j["id"]),
+            title=(j.get("unifiedStandardTitle") or url_title.replace("-", " ")).strip(), location=location,
+            country="IN" if in_india(location) else None, posted_at=_sf_date(j.get("unifiedStandardStart")),
+            url=url, apply_url=url,
+        ))
+    return out
+
+
+def sf_total(data: dict) -> int:
+    return int(data.get("totalJobs") or 0)
+
+
 def _amazon_date(text: str | None) -> datetime | None:
     try:
         return datetime.strptime(" ".join((text or "").split()), "%B %d, %Y").replace(tzinfo=timezone.utc)
@@ -434,6 +521,8 @@ def detail_url(posting: Posting) -> str | None:
     """Where the description is, for lists that leave it out; else None."""
     if posting.description is not None:
         return None
+    if posting.ats == "successfactors":
+        return posting.url
     if posting.ats == "oracle":
         host, site = oracle_parts(posting.board_id)
         return (f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
@@ -662,7 +751,7 @@ def _eightfold(board_id: str, data: dict) -> list[Posting]:
 _PARSERS = {"greenhouse": _greenhouse, "lever": _lever, "ashby": _ashby,
             "smartrecruiters": _smartrecruiters, "workday": _workday, "recruitee": _recruitee,
             "rippling": _rippling, "workable": _workable, "bamboohr": _bamboohr, "eightfold": _eightfold,
-            "oracle": _oracle, "amazon": _amazon, "keka": _keka}
+            "oracle": _oracle, "amazon": _amazon, "keka": _keka, "successfactors": _successfactors}
 
 
 def parse_list(ats: str, board_id: str, body: str) -> list[Posting]:
@@ -686,9 +775,25 @@ def sr_total(body: str) -> int:
         return 0
 
 
+def _sf_description(page: str) -> str | None:
+    """The itemprop="description" blocks of a SuccessFactors job page."""
+    parts = []
+    for m in re.finditer(r'itemprop="description"[^>]*>', page):
+        start = m.end()
+        nxt = page.find('itemprop="', start)
+        chunk = page[start:nxt if nxt > 0 else start + 20000]
+        text = html_to_text(chunk)
+        if text and text.strip():
+            parts.append(text.strip())
+    return "\n\n".join(parts) or None
+
+
 def parse_detail(posting: Posting, body: str) -> None:
     """Fill ``posting`` from its detail response: description, and the apply
     link SmartRecruiters only gives there."""
+    if posting.ats == "successfactors":   # an HTML page, not JSON
+        posting.description = _sf_description(body)
+        return
     data = json.loads(body)
     if posting.ats == "greenhouse":
         posting.description = html_to_text(data.get("content"))

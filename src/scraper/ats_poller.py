@@ -234,6 +234,8 @@ def fetch_board(lane: Lane, board: Board, *, sr_max_pages: int = 30) -> BoardRes
             return _fetch_oracle(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "amazon":
             return _fetch_amazon(lane, board, res, max_pages=sr_max_pages)
+        if board.ats == "successfactors":
+            return _fetch_successfactors(lane, board, res, max_pages=sr_max_pages)
         if board.ats == "keka":
             return _fetch_keka(lane, board, res)
         if board.ats == "smartrecruiters":
@@ -338,6 +340,29 @@ def _fetch_oracle(lane: Lane, board: Board, res: BoardResult, *, max_pages: int)
             break
     else:
         res.complete = False
+    return res
+
+
+def _fetch_successfactors(lane: Lane, board: Board, res: BoardResult, *, max_pages: int) -> BoardResult:
+    """SuccessFactors career site (#160): the JSON search newest first, until
+    postings are older than a week or the page cap. Wipro alone lists 5,454
+    India jobs, so the full list is never read; the list is therefore never
+    complete (nothing is closed from it)."""
+    import json
+
+    oldest = datetime.now(timezone.utc) - timedelta(days=7)
+    for page in range(max_pages):
+        status, body, _ = lane.fetch(ats.list_url("successfactors", board.board_id), body=ats.sf_search_body(page))
+        if status != 200:
+            res.error = f"HTTP {status}"
+            return res
+        rows = ats.parse_list("successfactors", board.board_id, body)
+        res.postings += [p for p in rows if p.country == "IN" or ats.place(p) != "elsewhere"]
+        dated = [p.posted_at for p in rows if p.posted_at]
+        # Newest first: once a page reaches postings older than a week, stop.
+        if not rows or (dated and min(dated) < oldest) or (page + 1) * ats.SF_PAGE >= ats.sf_total(json.loads(body)):
+            break
+    res.complete = False
     return res
 
 
@@ -491,6 +516,9 @@ def canary_ok(lane: Lane) -> bool:
         board = f"{CANARY}/wd5/External"
         status, _body, _ = lane.fetch(ats.list_url("workday", board), patient=False, body=ats.workday_search())
         return status in (404, 422)
+    if lane.name == "successfactors":
+        # Employer-hosted sites: no shared "no such board" answer to ask for.
+        return True
     if lane.name == "keka":
         # Redirected to TenantNotFound.html, which names no org (2026-11-02).
         status, body = lane.get(ats.list_url("keka", CANARY), patient=False)

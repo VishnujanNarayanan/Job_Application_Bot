@@ -226,3 +226,42 @@ def test_keka_missing_tenant_is_gone_and_canary():
     assert poller.canary_ok(lane)
     lane, _ = _lane("keka", (200, KEKA_PAGE))
     assert not poller.canary_ok(lane)
+
+
+# --- SuccessFactors career sites (#160) --------------------------------------------
+
+def _sf_page(rows, total):
+    return json.dumps({"totalJobs": total, "jobSearchResult": [{"response": r} for r in rows]})
+
+
+def test_successfactors_reads_newest_india_postings_and_stops_at_a_week():
+    from datetime import timedelta
+    today = datetime.now(timezone.utc).strftime("%-m/%-d/%y")
+    old = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%-m/%-d/%y")
+    page0 = _sf_page([
+        {"id": "216316", "urlTitle": "Process-Associate", "unifiedStandardTitle": "Data Engineer",
+         "unifiedStandardStart": today, "jobLocationShort": ["Kolkata, IND-19, IND, 700091<br/>"],
+         "jobLocationCountry": ["India"]},
+        {"id": "9", "urlTitle": "X", "unifiedStandardTitle": "Banker", "unifiedStandardStart": today,
+         "jobLocationShort": ["Kwun Tong, HKG"]},
+        {"id": "179408", "urlTitle": "Senior-Technical-Architect", "unifiedStandardTitle": "Senior Technical Architect",
+         "unifiedStandardStart": today, "custCountryRegion": ["India"], "custprimecity": "Bangalore"},
+    ] + [{"id": str(100 + i), "urlTitle": "Y", "unifiedStandardTitle": "Old", "unifiedStandardStart": old,
+          "jobLocationCountry": ["India"]} for i in range(7)], 5000)
+    lane, http = _lane("successfactors", (200, page0))
+    res = poller.fetch_board(lane, poller.Board("successfactors", "careers.wipro.com"))
+    assert res.error is None and not res.complete and len(http.calls) == 1   # stopped: page all older than a week
+    ids = [p.posting_id for p in res.postings]
+    assert "216316" in ids and "179408" in ids and "9" not in ids            # Hong Kong dropped
+    p = res.postings[0]
+    assert p.url == "https://careers.wipro.com/job/Process-Associate/216316-en_US/"
+    assert ats.place(p) == "india" and ats.detail_url(p) == p.url
+    ats.parse_detail(p, '<span itemprop="title">Data Engineer</span>'
+                        '<span itemprop="description"><p>Build <b>Spark</b> pipelines.</p></span>'
+                        '<span itemprop="description"><p>Mandatory: Python</p></span>')
+    assert "Spark" in p.description and "Python" in p.description
+
+
+def test_successfactors_canary_is_skipped():
+    lane, _ = _lane("successfactors")
+    assert poller.canary_ok(lane)

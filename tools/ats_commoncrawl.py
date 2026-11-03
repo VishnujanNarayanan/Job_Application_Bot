@@ -182,7 +182,7 @@ SURT_PREFIXES = (
     "com,ashbyhq,jobs)/",
     "com,smartrecruiters,jobs)/", "com,smartrecruiters,careers)/",
     "com,workable,apply)/", "com,rippling,ats)/",
-    "com,myworkdayjobs,",
+    "com,myworkdayjobs,", "com,myworkdaysite,",
     "com,recruitee,", "com,bamboohr,", "hr,breezy,", "com,teamtailor,", "com,applytojob,",
     "in,darwinbox,", "com,keka,", "com,freshteam,", "com,zohorecruit,", "in,zohorecruit,",
     "ai,eightfold,", "com,icims,", "com,successfactors,", "eu,successfactors,",
