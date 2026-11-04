@@ -767,6 +767,12 @@ class Ledger:
         first_poll = board.polled_at is None or not known
         send, kept = [], set()
         for p in res.postings:
+            # A list can name one posting twice (a paged search reshuffling
+            # between pages: HCLTech, 2026-11-04). Handle it once, or a
+            # stranded PENDING posting is re-sent once per copy and the second
+            # insert of its job fails the run.
+            if p.posting_id in kept:
+                continue
             reason = classify(p)
             if reason == DROP:
                 continue

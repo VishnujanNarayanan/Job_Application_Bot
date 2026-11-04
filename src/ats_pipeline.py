@@ -476,7 +476,10 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         jobs = collect(session, cfg, atses=atses, now=now, stats=stats, log=log)
         backlog = _backlog(session, now, int(a.get("backlog_days", 2)), {j.job_id for j in jobs})
         closed = ats_poller.closed_job_ids(session, [j.job_id for j in backlog])
-        raw = backlog + jobs
+        # One row per job: a job can come back both from the backlog and as a
+        # re-sent stranded posting, and two instances of one job id in a batch
+        # fail the insert (2026-11-04).
+        raw = list({j.job_id: j for j in reversed(backlog + jobs)}.values())[::-1]
         started = time.monotonic()  # the processing budget starts after the poll
 
         existing = filters.existing_job_ids(session, [j.job_id for j in raw])
