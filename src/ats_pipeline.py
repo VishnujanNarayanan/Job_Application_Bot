@@ -300,12 +300,21 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
             stats.no_description += 1
             ats_poller.forget(session, p)
             continue
-        reason = decide(p, rules)  # G
-        if reason:
-            stats.skip(reason.split("=")[0])
-            ats_poller.mark_skipped(session, p, reason)
-            continue
-        jobs.append(ats.to_job(p, company=company_name(board, p)))
+        # One malformed posting must never end the run (a list where a string
+        # was expected stopped every run for six hours, 2026-11-04): log it,
+        # forget it so the next poll retries, and carry on.
+        try:
+            reason = decide(p, rules)  # G
+            if reason:
+                stats.skip(reason.split("=")[0])
+                ats_poller.mark_skipped(session, p, reason)
+                continue
+            jobs.append(ats.to_job(p, company=company_name(board, p)))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ats_posting_failed", ats=p.ats, board=p.board_id, posting=p.posting_id,
+                        error=f"{type(exc).__name__}: {exc}"[:200])
+            stats.postings_failed += 1
+            ats_poller.forget(session, p)
     pruned = ats_poller.prune(session, now=now, days=int(a.get("closed_retention_days", 60)))
     session.commit()
     log_db_size(session, log, warn_mb=float(a.get("db_size_warn_mb", 300)))

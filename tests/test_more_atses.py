@@ -385,3 +385,17 @@ def test_goldman_graphql_pages_and_role_page_description():
     ats.parse_detail(p, '<script id="__NEXT_DATA__" type="application/json">'
                         '{"props": {"role": {"descriptionHtml": "<p>Build <b>Python</b> services</p>"}}}</script>')
     assert "Python" in p.description
+
+
+def test_employment_type_accepts_a_json_ld_list():
+    """A JSON-LD employmentType list crashed every ATS run for six hours (2026-11-04)."""
+    assert ats.employment_type(["FULL_TIME"]) == "fulltime"
+    assert ats.employment_type(("PART_TIME", None)) == "parttime"
+    assert ats.employment_type(None) is None and ats.employment_type([]) is None
+    p = ats.Posting(ats="avature", board_id="b", posting_id="1", title="Data Engineer", location="Bengaluru, India",
+                    url="u", description="Spark")
+    ats.parse_detail(p, '<script type="application/ld+json">{"@type": "JobPosting", "datePosted": "2026-11-03",'
+                        ' "employmentType": ["FULL_TIME"], "description": "<p>Spark</p>"}</script>')
+    assert p.employment_type == "FULL_TIME"
+    job = ats.to_job(p, company="Deloitte")
+    assert job.job_type == "fulltime"
