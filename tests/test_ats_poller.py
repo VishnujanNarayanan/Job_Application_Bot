@@ -502,3 +502,38 @@ def test_split_by_host_spreads_per_host_atses_and_keeps_shared_ones():
 def test_split_by_host_with_one_lane_changes_nothing():
     work = {"workday": [poller.Board("workday", "a/wd1/x")]}
     assert poller.split_by_host(work, {}, parallel=1, delay=0.5) is work
+
+
+def test_a_posting_listed_twice_is_handled_once():
+    """A paged search reshuffling between pages listed one HCLTech posting
+    twice; as a stranded PENDING posting it was re-sent per copy and the
+    second insert failed the run (2026-11-04)."""
+    known = {"a": poller.Known(NOW - timedelta(hours=2), None, None, None, poller.PENDING)}
+    ledger, sent, stats = _record(_board(polled_at=NOW - timedelta(hours=1)),
+                                  [_posting("a"), _posting("b"), _posting("a"), _posting("b")], known=known)
+    assert sorted(sent) == ["a", "b"] and stats.requeued == 1
+    assert [r["posting_id"] for r in ledger.inserts] == ["b"]
+
+
+def test_upsert_scraped_inserts_a_repeated_job_id_once():
+    from src.main import _upsert_scraped
+    from src.state.models import AllJobs
+
+    class _Session:
+        def __init__(self):
+            self.added = []
+
+        def scalars(self, _stmt):
+            return []
+
+        def add(self, obj):
+            self.added.append(obj)
+
+        def flush(self):
+            pass
+
+    session = _Session()
+    a1 = AllJobs(job_id="ats-x-1", company="A", role="R", site="ats:x", location="old")
+    a2 = AllJobs(job_id="ats-x-1", company="A", role="R", site="ats:x", location="new")
+    out = _upsert_scraped(session, [a1, a2])
+    assert session.added == [a1] and out == [a1, a1] and a1.location == "new"

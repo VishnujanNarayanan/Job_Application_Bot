@@ -870,6 +870,9 @@ def _upsert_scraped(session, jobs: list) -> list:
         if row is None:
             session.add(job)
             out.append(job)
+            # A second instance of this job id later in the batch refreshes
+            # this one instead of inserting a duplicate.
+            present[job.job_id] = job
             continue
         for field in _SCRAPED_FIELDS:
             value = getattr(job, field)
