@@ -1005,7 +1005,7 @@ def parse_detail(posting: Posting, body: str) -> None:
         if job:
             posting.description = html_to_text(job.get("description"))
             posting.posted_at = _when(job.get("datePosted")) or posting.posted_at
-            posting.employment_type = job.get("employmentType") or posting.employment_type
+            posting.employment_type = _as_text(job.get("employmentType")) or posting.employment_type
             return
         # No JSON-LD (Siemens): the description is the second content section,
         # the date a "Posted since 03-Nov-2026" field.
@@ -1161,8 +1161,23 @@ _TYPES = (
 )
 
 
-def employment_type(raw: str | None) -> str | None:
-    """An ATS employment type in JobSpy's words, or None when not stated."""
+def _as_text(raw) -> str | None:
+    """An ATS field as text: JSON-LD allows a list ("employmentType":
+    ["FULL_TIME"]), and a list reaching a regex crashed every ATS run for six
+    hours (2026-11-04)."""
+    if raw is None:
+        return None
+    if isinstance(raw, (list, tuple)):
+        raw = ", ".join(str(x) for x in raw if x is not None)
+    text = str(raw).strip()
+    return text or None
+
+
+def employment_type(raw) -> str | None:
+    """An ATS employment type in JobSpy's words, or None when not stated.
+    Schema.org spells them FULL_TIME / PART_TIME."""
+    raw = _as_text(raw)
+    raw = raw.replace("_", " ") if raw else raw
     for pattern, value in _TYPES:
         if raw and pattern.search(raw):
             return value
@@ -1236,6 +1251,6 @@ def to_job(p: Posting, company: str | None = None) -> AllJobs:
         job_url_direct=p.apply_url or p.url,
         posted_at=p.posted_at,
         jd_text=p.description,
-        job_type=employment_type(p.employment_type) or p.employment_type,
+        job_type=employment_type(p.employment_type) or _as_text(p.employment_type),
         job_level=p.level,
     )
