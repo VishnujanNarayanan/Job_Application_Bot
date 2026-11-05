@@ -550,6 +550,7 @@ terms:
   "argo cd": {label: approve, term: Argo CD}
   "argo workflows": {label: approve, means: [Argo], term: Argo Workflows}
   "argocd": {label: approve, term: ArgoCD}
+  "argparse": {label: approve, term: argparse}
   "argus": {label: approve, means: [Argus Safety], term: Argus}
   "argus safety": {label: approve, term: Argus Safety}
   "arima": {label: approve, term: ARIMA}
@@ -585,7 +586,7 @@ terms:
   "async/await": {label: approve, means: [asynchronous programming], term: async/await}
   "async/concurrent programming": {label: approve, means: [asynchronous programming, concurrency], term: async/concurrent programming}
   "asynchronous event processing": {label: approve, means: [event-driven, asynchronous programming], term: asynchronous event processing}
-  "asynchronous processing": {label: approve, term: asynchronous processing}
+  "asynchronous processing": {label: approve, means: [asynchronous programming], term: asynchronous processing}
   "asynchronous programming": {label: approve, term: asynchronous programming}
   "asynchronous workflows": {label: approve, means: [asynchronous programming], term: asynchronous workflows}
   "asyncio": {label: approve, term: asyncio}
@@ -1289,7 +1290,7 @@ terms:
   "cloud security posture management": {label: approve, means: [CSPM], term: cloud security posture management}
   "cloud services": {label: reject, term: cloud services}
   "cloud software": {label: reject, term: cloud software}
-  "cloud sql": {label: approve, term: Cloud SQL}
+  "cloud sql": {label: sense, note: 'Google Cloud SQL, not ''a cloud SQL database''', term: Cloud SQL}
   "cloud storage": {label: approve, term: Cloud Storage}
   "cloud systems": {label: reject, term: Cloud Systems}
   "cloud teams": {label: reject, term: cloud teams}
@@ -1710,7 +1711,7 @@ terms:
   "data center operations": {label: domain, term: data center operations}
   "data center supply chain": {label: domain, term: Data center supply chain}
   "data cleaning": {label: approve, term: data cleaning}
-  "data cleansing": {label: approve, term: data cleansing}
+  "data cleansing": {label: approve, means: [data cleaning], term: data cleansing}
   "data cloud": {label: approve, means: [Salesforce Data Cloud], term: Data Cloud}
   "data collection": {label: approve, term: data collection}
   "data communication": {label: reject, term: Data Communication}
@@ -1779,7 +1780,7 @@ terms:
   "data pipeline operations": {label: approve, means: [Data pipelines], term: Data Pipeline Operations}
   "data pipelines": {label: approve, term: Data pipelines}
   "data prep": {label: approve, means: [data preparation], term: data prep}
-  "data preparation": {label: approve, term: data preparation}
+  "data preparation": {label: approve, means: [Data preprocessing], term: data preparation}
   "data preprocessing": {label: approve, term: Data preprocessing}
   "data privacy": {label: domain, note: Industry, term: data privacy}
   "data processing": {label: approve, term: data processing}
@@ -2329,6 +2330,7 @@ terms:
   "esb": {label: approve, term: ESB}
   "escalation handling": {label: soft, term: escalation handling}
   "esd": {label: domain, term: ESD}
+  "eslint": {label: approve, term: ESLint}
   "especially in managing": {label: reject, term: especially in managing}
   "essbase": {label: approve, term: Essbase}
   "etc": {label: reject, term: etc}
@@ -2387,7 +2389,7 @@ terms:
   "excel macros": {label: approve, means: [macros, Microsoft Excel], term: Excel Macros}
   "excellent communication skills": {label: soft, term: Excellent communication skills}
   "excellent organizational and project management skills": {label: soft, term: excellent organizational and project management skills}
-  "exception handling": {label: approve, term: exception handling}
+  "exception handling": {label: approve, means: [Error handling], term: exception handling}
   "execute modes": {label: reject, term: Execute modes}
   "execution algorithms": {label: domain, term: execution algorithms}
   "executive presence": {label: soft, term: Executive Presence}
@@ -2424,6 +2426,7 @@ terms:
   "exploratory analysis": {label: approve, means: [Exploratory data analysis], term: exploratory analysis}
   "exploratory data analysis": {label: approve, term: Exploratory data analysis}
   "exploratory testing": {label: approve, term: exploratory testing}
+  "expo": {label: approve, term: Expo}
   "exposure to langchain": {label: approve, means: [LangChain], term: Exposure to LangChain}
   "exposure to synthetic dataset generation": {label: approve, means: [synthetic data generation], term: exposure to synthetic dataset generation}
   "express": {label: sense, means: [Express.js], note: 'Express.js, not ''express interest''', term: Express}
@@ -2618,6 +2621,7 @@ terms:
   "full-stack": {label: domain, note: Field of work, term: full-stack}
   "full-stack development": {label: domain, note: Field of work, term: Full-stack development}
   "full-stack software development": {label: domain, term: full-stack software development}
+  "full-text search": {label: approve, term: full-text search}
   "fullstack": {label: domain, note: Field of work, term: fullstack}
   "fullstack java enterprise": {label: approve, means: [Java], term: Fullstack Java Enterprise}
   "fullstack mern": {label: approve, means: [MongoDB, Express.js, React, Node.js], term: Fullstack MERN}
@@ -2628,6 +2632,7 @@ terms:
   "functional integration": {label: reject, term: functional integration}
   "functional interfaces": {label: approve, term: Functional Interfaces}
   "functional programming": {label: approve, term: Functional programming}
+  "functional reactive programming (frp)": {label: approve, term: Functional Reactive Programming (FRP)}
   "functional testing": {label: approve, term: functional testing}
   "functions": {label: sense, note: Azure / Cloud / AWS Step Functions only, term: Functions}
   "fund accounting": {label: domain, term: Fund Accounting}
@@ -2719,6 +2724,7 @@ terms:
   "github copilot": {label: approve, term: GitHub Copilot}
   "github enterprise": {label: approve, means: [GitHub], term: GitHub Enterprise}
   "github flow": {label: approve, term: GitHub Flow}
+  "github pages": {label: approve, term: GitHub Pages}
   "github runners": {label: approve, means: [GitHub Actions], term: GitHub runners}
   "github/gitlab": {label: approve, means: [GitHub, GitLab], term: GitHub/GitLab}
   "gitlab": {label: approve, term: GitLab}
@@ -2973,6 +2979,7 @@ terms:
   "hypervisors": {label: approve, means: [virtualization], term: hypervisors}
   "hypothesis testing": {label: approve, term: hypothesis testing}
   "hypothesis validation": {label: approve, means: [hypothesis testing], term: Hypothesis validation}
+  "i18n": {label: approve, term: i18n}
   "iaas": {label: approve, term: IaaS}
   "iac": {label: approve, term: IaC}
   "iac development": {label: approve, means: [Infrastructure as Code], term: IaC development}
@@ -3009,6 +3016,7 @@ terms:
   "iics": {label: approve, means: [Informatica], term: IICS}
   "iis": {label: approve, term: IIS}
   "image": {label: reject, term: image}
+  "image preprocessing": {label: approve, term: image preprocessing}
   "image uploads": {label: approve, means: [File upload handling], term: image uploads}
   "imaging technologies": {label: domain, term: imaging technologies}
   "implementation": {label: reject, term: Implementation}
@@ -3241,6 +3249,7 @@ terms:
   "json": {label: approve, term: JSON}
   "json properties": {label: approve, means: [JSON], term: JSON properties}
   "json serialization": {label: approve, term: JSON serialization}
+  "json-ld": {label: approve, term: JSON-LD}
   "jsp": {label: approve, term: JSP}
   "jssp": {label: reject, term: JSSP}
   "jules": {label: sense, note: 'Google Jules coding agent, not a name', term: Jules}
@@ -3284,6 +3293,7 @@ terms:
   "kiss principles": {label: reject, term: KISS principles}
   "kmeans": {label: approve, means: [clustering], term: KMeans}
   "kms": {label: approve, term: KMS}
+  "knn": {label: approve, term: KNN}
   "knockoutjs": {label: approve, term: KnockoutJS}
   "knowledge": {label: reject, term: knowledge}
   "knowledge base development": {label: approve, means: [knowledge bases], term: Knowledge Base Development}
@@ -3334,6 +3344,7 @@ terms:
   "lambda": {label: sense, note: 'AWS Lambda, not a lambda expression in maths', term: Lambda}
   "lambda mart": {label: approve, means: [learning to rank], term: Lambda MART}
   "lambdas": {label: sense, means: [Lambda], note: AWS Lambda functions, term: Lambdas}
+  "laminar": {label: approve, term: Laminar}
   "langchain": {label: approve, term: LangChain}
   "langchain / langgraph": {label: approve, means: [LangChain, LangGraph], term: LangChain / LangGraph}
   "langchain4j": {label: approve, term: LangChain4j}
@@ -3440,9 +3451,9 @@ terms:
   "llamaindex": {label: approve, term: LlamaIndex}
   "llm": {label: approve, means: [Large Language Models], term: LLM}
   "llm / generative ai": {label: approve, means: [Large Language Models], term: LLM / Generative AI}
-  "llm apis": {label: approve, term: LLM APIs}
+  "llm apis": {label: approve, means: [Large Language Models], term: LLM APIs}
   "llm application development": {label: approve, means: [LLM applications], term: LLM application development}
-  "llm applications": {label: approve, term: LLM applications}
+  "llm applications": {label: approve, means: [Large Language Models], term: LLM applications}
   "llm cost optimization": {label: approve, term: LLM cost optimization}
   "llm deployment": {label: approve, term: LLM deployment}
   "llm evaluation": {label: approve, term: LLM evaluation}
@@ -3450,7 +3461,7 @@ terms:
   "llm frameworks": {label: reject, term: LLM frameworks}
   "llm functions": {label: approve, means: [function calling], term: LLM functions}
   "llm gateway": {label: approve, term: LLM Gateway}
-  "llm integration": {label: approve, term: LLM integration}
+  "llm integration": {label: approve, means: [Large Language Models], term: LLM integration}
   "llm integrations": {label: approve, means: [LLM integration], term: LLM integrations}
   "llm knowledge": {label: approve, means: [Large Language Models], term: LLM Knowledge}
   "llm optimizer": {label: reject, term: LLM Optimizer}
@@ -3527,7 +3538,7 @@ terms:
   "maay": {label: soft, term: Maay}
   "machine learning": {label: domain, note: Field of work, term: Machine Learning}
   "machine learning & ai": {label: domain, term: Machine Learning & AI}
-  "machine learning (ml)": {label: domain, note: Field of work, term: Machine Learning (ML)}
+  "machine learning (ml)": {label: domain, term: Machine Learning (ML)}
   "machine learning algorithms": {label: domain, note: Field of work, term: machine learning algorithms}
   "machine learning analytics workflows": {label: domain, term: machine learning analytics workflows}
   "machine learning approaches and algorithms": {label: domain, term: Machine learning approaches and algorithms}
@@ -3782,6 +3793,7 @@ terms:
   "mobsf": {label: approve, means: [MobSF], term: MObSF}
   "mocha": {label: approve, term: Mocha}
   "mochajs": {label: approve, means: [Mocha], term: MochaJS}
+  "mocking": {label: approve, term: mocking}
   "mockito": {label: approve, term: Mockito}
   "mockmvc": {label: approve, term: MockMvc}
   "modbus": {label: approve, term: Modbus}
@@ -3815,7 +3827,7 @@ terms:
   "model serving": {label: approve, term: Model Serving}
   "model training": {label: approve, term: model training}
   "model training and scoring at scale": {label: approve, means: [model training], term: model training and scoring at scale}
-  "model validation": {label: approve, term: model validation}
+  "model validation": {label: approve, means: [model evaluation], term: model validation}
   "model versioning": {label: approve, term: model versioning}
   "model-driven apps": {label: approve, means: [Power Apps], term: Model-Driven Apps}
   "model-driven power apps": {label: approve, means: [Power Apps], term: Model-Driven Power Apps}
@@ -3972,6 +3984,7 @@ terms:
   "nemo guardrails": {label: approve, means: [guardrails], term: NeMo Guardrails}
   "neo4j": {label: approve, term: Neo4j}
   "neo4j enterprise": {label: approve, means: [Neo4j], term: Neo4j Enterprise}
+  "neon": {label: approve, term: Neon}
   "neptune db": {label: approve, means: [Amazon Neptune], term: Neptune DB}
   "nessus": {label: approve, term: Nessus}
   "nestjs": {label: approve, term: NestJS}
@@ -4290,6 +4303,7 @@ terms:
   "other search technologies": {label: reject, term: other search technologies}
   "other version control tool": {label: approve, means: [Version Control], term: other version control tool}
   "outbound campaigns": {label: domain, term: Outbound campaigns}
+  "outlier detection": {label: approve, term: outlier detection}
   "outlook": {label: sense, note: 'Microsoft Outlook, not ''outlook''', term: Outlook}
   "output parsing": {label: approve, means: [structured output], term: output parsing}
   "outreach": {label: sense, note: Outreach (sales platform), term: Outreach}
@@ -4533,11 +4547,11 @@ terms:
   "precision": {label: reject, term: precision}
   "precision/recall": {label: approve, means: [model evaluation], term: Precision/Recall}
   "predicting long-tailed": {label: reject, term: predicting long-tailed}
-  "predictive analytics": {label: approve, term: predictive analytics}
+  "predictive analytics": {label: approve, means: [Predictive modeling], term: predictive analytics}
   "predictive maintenance": {label: approve, term: predictive maintenance}
   "predictive modeling": {label: approve, term: Predictive modeling}
-  "predictive modelling": {label: approve, term: predictive modelling}
-  "predictive models": {label: approve, term: predictive models}
+  "predictive modelling": {label: approve, means: [Predictive modeling], term: predictive modelling}
+  "predictive models": {label: approve, means: [Predictive modeling], term: predictive models}
   "predictive statistical ml models": {label: approve, means: [Predictive modeling], term: predictive statistical ML models}
   "prefect": {label: sense, note: Prefect (orchestrator), term: Prefect}
   "prescriptive analytics": {label: domain, term: prescriptive analytics}
@@ -4638,7 +4652,7 @@ terms:
   "promotional planning": {label: domain, term: promotional planning}
   "prompt": {label: reject, term: prompt}
   "prompt defense": {label: approve, means: [prompt injection], term: prompt defense}
-  "prompt design": {label: approve, term: prompt design}
+  "prompt design": {label: approve, means: [Prompt Engineering], term: prompt design}
   "prompt engineering": {label: approve, term: Prompt Engineering}
   "prompt engineering for qe": {label: approve, means: [Prompt Engineering], term: Prompt Engineering for QE}
   "prompt flow": {label: approve, means: [Azure AI Foundry], term: prompt flow}
@@ -4653,7 +4667,7 @@ terms:
   "prompt-based tools": {label: reject, term: prompt-based tools}
   "prompt-injection prevention": {label: approve, means: [prompt injection], term: prompt-injection prevention}
   "promptfoo": {label: approve, term: Promptfoo}
-  "prompting": {label: approve, term: prompting}
+  "prompting": {label: approve, means: [Prompt Engineering], term: prompting}
   "prop firm": {label: domain, term: prop firm}
   "property & casualty   insurance": {label: domain, term: Property & Casualty   Insurance}
   "property restoration": {label: domain, term: property restoration}
@@ -4699,6 +4713,7 @@ terms:
   "pydantic/request validation": {label: approve, means: [Pydantic, Request validation], term: Pydantic/request validation}
   "pyfluent": {label: approve, term: PyFluent}
   "pyfoam": {label: approve, term: PyFOAM}
+  "pypdf": {label: approve, term: pypdf}
   "pypdf / pdf text extraction": {label: approve, term: pypdf / PDF text extraction}
   "pypi": {label: approve, term: PyPI}
   "pyspark": {label: approve, term: PySpark}
@@ -4751,8 +4766,8 @@ terms:
   "quality-management": {label: domain, term: quality-management}
   "qualtrics": {label: approve, term: Qualtrics}
   "quantisation": {label: approve, means: [quantization], term: quantisation}
-  "quantitative analysis": {label: approve, term: quantitative analysis}
-  "quantitative analytics": {label: approve, term: quantitative analytics}
+  "quantitative analysis": {label: approve, means: [Quantitative finance / trading strategy research], term: quantitative analysis}
+  "quantitative analytics": {label: approve, means: [Quantitative finance / trading strategy research], term: quantitative analytics}
   "quantitative methods": {label: domain, term: quantitative methods}
   "quantitative research": {label: domain, term: quantitative research}
   "quantization": {label: approve, term: quantization}
@@ -4794,6 +4809,7 @@ terms:
   "raml": {label: approve, term: RAML}
   "rancher": {label: sense, note: Rancher (Kubernetes), term: Rancher}
   "rancher fleet": {label: approve, means: [Rancher], term: Rancher Fleet}
+  "random forest": {label: approve, term: Random Forest}
   "random forests": {label: approve, term: random forests}
   "ranking": {label: approve, term: ranking}
   "ranking evaluation": {label: approve, term: ranking evaluation}
@@ -4809,7 +4825,7 @@ terms:
   "rbac in azure": {label: approve, means: [RBAC, Azure], term: RBAC in Azure}
   "rbac/permission models": {label: approve, means: [RBAC], term: RBAC/permission models}
   "rbi model risk management guidelines": {label: domain, term: RBI Model Risk Management guidelines}
-  "rca": {label: approve, term: RCA}
+  "rca": {label: approve, means: [Root Cause Analysis], term: RCA}
   "rclone": {label: approve, term: rclone}
   "rdbms": {label: approve, means: [relational databases], term: RDBMS}
   "rdf": {label: approve, term: RDF}
@@ -4882,6 +4898,7 @@ terms:
   "regression test automation": {label: approve, means: [Regression testing, test automation], term: regression test automation}
   "regression testing": {label: approve, term: Regression testing}
   "regular expressions": {label: approve, term: regular expressions}
+  "regularization": {label: approve, term: regularization}
   "regulated": {label: reject, term: regulated}
   "regulated data": {label: domain, term: regulated data}
   "regulated industries": {label: domain, term: regulated industries}
@@ -5058,7 +5075,7 @@ terms:
   "rollouts": {label: reject, term: rollouts}
   "rom": {label: sense, note: reduced-order modeling, term: ROM}
   "root cause analysis": {label: approve, term: Root Cause Analysis}
-  "root-cause analysis": {label: approve, term: root-cause analysis}
+  "root-cause analysis": {label: approve, means: [Root Cause Analysis], term: root-cause analysis}
   "rosa/openshift": {label: approve, means: [OpenShift], term: ROSA/OpenShift}
   "rosa/paas": {label: approve, means: [OpenShift], term: ROSA/PaaS}
   "roslyn": {label: approve, term: Roslyn}
@@ -5177,6 +5194,7 @@ terms:
   "sawtooth": {label: approve, term: Sawtooth}
   "sbom": {label: approve, term: SBOM}
   "sboms": {label: approve, means: [SBOM], term: SBOMs}
+  "sbt": {label: approve, term: sbt}
   "scada": {label: approve, term: SCADA}
   "scala": {label: approve, term: Scala}
   "scala/java": {label: approve, means: [Scala, Java], term: Scala/Java}
@@ -5467,6 +5485,7 @@ terms:
   "social": {label: reject, term: social}
   "social outreach": {label: domain, term: Social outreach}
   "socket programming": {label: approve, term: socket programming}
+  "socket.io": {label: approve, term: Socket.IO}
   "sockets": {label: approve, means: [socket programming], term: sockets}
   "sod": {label: domain, term: SoD}
   "soda": {label: sense, note: Soda data quality tool, term: Soda}
@@ -5496,7 +5515,7 @@ terms:
   "software programming language": {label: reject, term: software programming language}
   "software qa": {label: domain, term: Software QA}
   "software quality": {label: reject, term: software quality}
-  "software testing": {label: approve, term: software testing}
+  "software testing": {label: approve, means: [Testing], term: software testing}
   "software testing methodologies": {label: approve, means: [software testing], term: software testing methodologies}
   "software testing principles": {label: approve, means: [software testing], term: software testing principles}
   "software-in-the-loop": {label: approve, term: software-in-the-loop}
@@ -5600,7 +5619,7 @@ terms:
   "sql server integration": {label: approve, means: [SSIS], term: SQL Server Integration}
   "sql server integration services": {label: approve, means: [SSIS], term: SQL Server Integration Services}
   "sql server management studio": {label: approve, means: [SQL Server], term: SQL Server Management Studio}
-  "sql warehouse": {label: approve, means: [Databricks], term: SQL Warehouse}
+  "sql warehouse": {label: reject, note: generic phrase; Databricks SQL warehouses are named as such, term: SQL Warehouse}
   "sql window functions": {label: approve, term: SQL window functions}
   "sql/nosql": {label: approve, means: [SQL, NoSQL], term: SQL/NoSQL}
   "sql/orm": {label: approve, means: [SQL, ORM], term: SQL/ORM}
@@ -5646,7 +5665,7 @@ terms:
   "statistical and analytical techniques": {label: approve, means: [Statistical analysis], term: statistical and analytical techniques}
   "statistical concepts": {label: approve, means: [Statistical analysis], term: Statistical concepts}
   "statistical knowledge": {label: approve, means: [Statistical analysis], term: statistical knowledge}
-  "statistical methods": {label: approve, term: statistical methods}
+  "statistical methods": {label: approve, means: [Statistical analysis], term: statistical methods}
   "statistical modeling": {label: approve, term: Statistical modeling}
   "statistical modelling": {label: approve, term: statistical modelling}
   "statistical models": {label: approve, means: [Statistical modeling], term: statistical models}
@@ -5711,7 +5730,7 @@ terms:
   "structured query language": {label: approve, means: [SQL], term: Structured Query Language}
   "structured streaming": {label: approve, means: [Spark Streaming], term: Structured Streaming}
   "struts": {label: approve, term: Struts}
-  "stun": {label: approve, means: [WebRTC], term: STUN}
+  "stun": {label: sense, means: [WebRTC], note: the STUN protocol (WebRTC), term: STUN}
   "styled components": {label: approve, term: Styled Components}
   "subscription business models": {label: domain, term: subscription business models}
   "subscription consumer apps": {label: domain, term: subscription consumer apps}
@@ -5927,6 +5946,7 @@ terms:
   "token theft": {label: approve, means: [application security], term: token theft}
   "token usage": {label: approve, means: [LLM cost optimization], term: token usage}
   "token-driven theming": {label: approve, means: [Design tokens and type scale], term: token-driven theming}
+  "tokenisation": {label: approve, means: [Tokenization], term: tokenisation}
   "tokenization": {label: approve, term: Tokenization}
   "tomcat": {label: approve, term: Tomcat}
   "tool": {label: reject, term: tool}
@@ -5991,7 +6011,7 @@ terms:
   "tts": {label: approve, term: TTS}
   "tuning": {label: reject, term: tuning}
   "turborepo": {label: approve, term: Turborepo}
-  "turn": {label: approve, means: [WebRTC], term: TURN}
+  "turn": {label: sense, means: [WebRTC], note: 'the TURN protocol (WebRTC), not ''turn''', term: TURN}
   "twilio": {label: approve, term: Twilio}
   "type hints": {label: approve, term: type hints}
   "type safety": {label: approve, means: [type hints], term: type safety}
@@ -6073,6 +6093,7 @@ terms:
   "user-centered design": {label: approve, means: [UX], term: user-centered design}
   "uses ai development tools": {label: approve, means: [AI coding tools], term: uses AI development tools}
   "usfda cfrs": {label: domain, term: USFDA CFRs}
+  "uvicorn": {label: approve, term: uvicorn}
   "ux": {label: approve, term: UX}
   "ux design": {label: approve, means: [UX], term: UX design}
   "ux standards": {label: approve, means: [UX], term: UX standards}
@@ -6084,7 +6105,7 @@ terms:
   "validation checks": {label: approve, means: [data validation], term: validation checks}
   "validation concepts": {label: reject, term: validation concepts}
   "validation processes": {label: approve, means: [data validation], term: validation processes}
-  "validation rules": {label: approve, means: [Salesforce], term: validation rules}
+  "validation rules": {label: reject, note: generic; not Salesforce on its own, term: validation rules}
   "validation techniques": {label: approve, means: [model validation], term: validation techniques}
   "valikey": {label: approve, means: [Valkey], term: Valikey}
   "valkey": {label: approve, term: Valkey}
@@ -6141,6 +6162,7 @@ terms:
   "video processing": {label: approve, term: video processing}
   "views": {label: reject, term: views}
   "viper": {label: approve, term: VIPER}
+  "virtual environments": {label: approve, term: virtual environments}
   "virtual machine orchestration": {label: approve, means: [virtualization], term: virtual machine orchestration}
   "virtual machines": {label: approve, term: virtual machines}
   "virtualization": {label: approve, term: virtualization}
@@ -6235,6 +6257,7 @@ terms:
   "web scraping": {label: approve, term: web scraping}
   "web security": {label: domain, note: Field of work, term: web security}
   "web services": {label: approve, term: web services}
+  "web storage api": {label: approve, term: Web Storage API}
   "web technologies": {label: reject, term: web technologies}
   "web testing": {label: approve, means: [UI testing], term: Web testing}
   "web/visual design": {label: domain, term: Web/Visual Design}

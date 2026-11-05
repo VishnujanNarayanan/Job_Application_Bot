@@ -141,6 +141,10 @@ def build(raw: dict[str, tuple[Entry, bool]]) -> Registry:
             folded[k] = (e, by_operator)
     aliases: dict[str, set[str]] = {}
     for e, _op in raw.values():
+        # Only an approved term proves a skill in a profile line: "Word",
+        # "backup", "TURN" are ordinary words there.
+        if e.label != APPROVE:
+            continue
         for skill in e.means or (e.term,):
             aliases.setdefault(skill.casefold(), {skill}).add(e.term)
     return Registry(exact, {k: e for k, (e, _op) in folded.items()},

@@ -120,14 +120,35 @@ def hit(tok: str, text: str) -> bool:
         return False
     if _boundary_re(t).search(text):
         return True
-    words = [w for w in t.split() if len(w) > 3 and w not in _STOP]
-    if len(words) >= 3:
-        matched = sum(1 for w in words if _boundary_re(w).search(text))
-        if matched / len(words) >= 0.6:
-            # The fallback was tuned for hand-written checklist prose, not for
-            # LLM-parsed required_skills. A long parsed phrase can register here
-            # without really being covered, so leave a trail when it fires.
-            log.debug("keyword_prose_match", token=tok, matched=matched, of=len(words))
+    words = [w for w in t.split() if len(w) > 3 and w not in _STOP and w not in _ASK_WORDS]
+    if len(words) >= 3 and _all_near(words, text):
+        # Every content word, close together (#189). It used to take 60% of
+        # them anywhere in the text, so "Google Workspace APIs" matched a line
+        # naming Google and GitHub REST APIs, and "AWS, Azure, or GCP cloud
+        # environments" matched "production environments".
+        log.debug("keyword_prose_match", token=tok, words=len(words))
+        return True
+    return False
+
+
+#: Words of the request, not of the skill ("experience with distributed systems
+#: at scale" asks for distributed systems at scale).
+_ASK_WORDS = frozenset("""experience experienced knowledge strong proficiency proficient understanding
+familiarity familiar ability working hands skills skill solid good excellent deep demonstrated proven
+exposure""".split())
+
+#: How close a prose qualification's words must sit in the text.
+_PROSE_WINDOW = 8
+
+
+def _all_near(words: list[str], text: str) -> bool:
+    """Every word of ``words`` (as a whole word) within ``_PROSE_WINDOW`` words
+    of the others, in any order."""
+    toks = text.split()
+    need = set(words)
+    for i in range(len(toks)):
+        window = {w.strip(".,;:()") for w in toks[i:i + _PROSE_WINDOW + len(need)]}
+        if need <= window:
             return True
     return False
 
@@ -187,6 +208,13 @@ def phrase_key(phrase: str) -> str:
     return _key_words(norm(phrase).split())
 
 
+#: Glue words that must not be joined into a key with their neighbours: the
+#: compact key runs words together, so "so a" became "soa" (= SOA) and
+#: "database's so" became "sso" (= SSO), which matched skills and produced
+#: garbled bolds ("s so", "so a"). #189.
+_GLUE = frozenset("a an s so of to in on at by or as is it be the and for with".split())
+
+
 @lru_cache(maxsize=8192)
 def _ngram_keys(norm_text: str) -> frozenset[str]:
     words = norm_text.split()
@@ -195,6 +223,7 @@ def _ngram_keys(norm_text: str) -> frozenset[str]:
         for i in range(len(words))
         for n in range(1, _MAX_NGRAM + 1)
         if i + n <= len(words)
+        and (n == 1 or not any(w in _GLUE or len(w) == 1 for w in words[i:i + n]))
     )
 
 
