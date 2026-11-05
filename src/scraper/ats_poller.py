@@ -733,6 +733,8 @@ class PollStats:
     details_deferred: int = 0
     # Postings that could not be turned into jobs (logged, retried next run).
     postings_failed: int = 0
+    # Later copies of a requisition already seen on another board (#186).
+    repeat_requisitions: int = 0
 
     def skip(self, reason: str) -> None:
         self.skipped[reason] = self.skipped.get(reason, 0) + 1
