@@ -618,7 +618,7 @@ scoring:
                   Cloud, Testing, monitoring, Optimization, APIs, API, databases, automation,
                   deployment, documentation, design, backend, frontend, infrastructure,
                   architecture, modeling, evaluation, research, production, cloud, web,
-                  web applications, BI, Sales]
+                  web applications, BI, Sales, SDLC, STLC, OOP, UI, UX, UI/UX, TDD, BDD, SOLID principles]
         # Soft skills the rules miss.
         generic: [Teams, English, Hindi, Client, e.g, etc]
         # A phrase starting with one of these is a product: "Azure Data Factory".
