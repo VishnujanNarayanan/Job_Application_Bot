@@ -190,7 +190,11 @@ def skill_terms() -> tuple[str, ...]:
 
     if not enabled() or not (settings.scoring.get("registry") or {}).get("as_dictionary", False):
         return ()
-    return tuple(e.term for e in load().exact.values() if e.label in (APPROVE, SENSE))
+    # A term mapped to other skills ("on AWS" -> AWS, "Proficiency in Python"
+    # -> Python) is a spelling seen in past matches: it maps, but is not read
+    # out of adverts as a name of its own; its skills are.
+    return tuple(e.term for e in load().exact.values() if e.label in (APPROVE, SENSE)
+                 and (not e.means or [m.casefold() for m in e.means] == [e.term.casefold()]))
 
 
 def named_keys(terms) -> set[str]:

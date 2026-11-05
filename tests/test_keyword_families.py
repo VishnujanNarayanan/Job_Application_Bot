@@ -83,7 +83,8 @@ def test_a_family_never_covers_a_member(member, family_text):
     (".NET", "Reported the net profit."),     # a leading dot is load-bearing
     ("SAS", "Styled with Sass."),             # "ss" is not a plural
     ("Java", "Wrote JavaScript."),
-    ("SQL", "Tuned PostgreSQL."),
+    ("PostgreSQL", "Wrote SQL queries."),   # one way only: SQL never proves PostgreSQL (#191)
+    ("SQL", "Ran NoSQL stores."),
     ("Go", "Built in Django."),
     ("communication", "Communicated results to the desk."),   # word form, not spelling (#30)
 ])
@@ -140,3 +141,29 @@ def test_gap_skills_keep_the_leading_dot_of_dotnet():
 
     bullets = (kw.norm("Trained a small neural net in NumPy."),)
     assert _compute_gap_skills([".NET", ".NET Core"], [], bullets) == [".NET", ".NET Core"]
+
+
+# --- #191: allowed swaps, one way --------------------------------------------------
+
+@pytest.mark.parametrize("tok,text", [
+    ("SQL", "Tuned PostgreSQL."),
+    ("SQL", "Queried events with Spark SQL."),
+    ("AI-assisted development", "Built it with Claude Code and Cursor."),
+    ("tool calling", "Exposed the API as an MCP server."),
+    ("infrastructure automation", "Provisioned it with Terraform."),
+    ("semantic search", "Ranked passages by vector search in pgvector."),
+    ("exception handling", "Added error handling and logging."),
+    ("predictive modelling", "Predictive modeling of churn."),
+    ("grounding", "Kept answers grounded in retrieved documents."),
+])
+def test_allowed_swaps(tok, text):
+    assert _m(tok, text)
+
+
+@pytest.mark.parametrize("tok,text", [
+    ("SQL", "Stored sessions in MongoDB."),
+    ("Claude Code", "Practised AI-assisted development."),
+    ("workflow orchestration", "Scheduled jobs with cron."),
+])
+def test_swaps_never_allowed(tok, text):
+    assert not _m(tok, text)

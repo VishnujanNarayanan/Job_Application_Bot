@@ -370,6 +370,16 @@ def is_gated(norm_text: str, terms: tuple[str, ...] = ()) -> bool:
     return any(hit(t, norm_text) for t in terms)
 
 
+def _proven_by_gated(token: str, terms: tuple[str, ...] = ()) -> bool:
+    """Is ``token`` a skill the gated tools prove ("AI-assisted development",
+    whose family lists Claude Code, Cursor, Copilot; #191)? The AI-tooling
+    line answers that ask, so it is credited with it."""
+    from src.scorer.keywords import match_keys, phrase_key
+
+    keys = match_keys(token)
+    return any(phrase_key(t) in keys for t in (terms or gated_terms()))
+
+
 def jd_wants_gated(keywords: tuple[Keyword, ...], terms: tuple[str, ...] = ()) -> bool:
     """Did the ADVERT name one of the gated terms? Checked against the checklist,
     not the body: the checklist is what the advert asks a candidate to have."""
@@ -787,7 +797,8 @@ def select_entry_bullets(
         for b in remaining:
             if _gated(b):
                 hits_of[b.id] = {AI_TOOLING_ASK} | {
-                    t for t in hits_of[b.id] if is_gated(norm(t), g_terms)
+                    t for t in hits_of[b.id]
+                    if is_gated(norm(t), g_terms) or _proven_by_gated(t, g_terms)
                 }
     canon_of = {
         b.id: canonical_covered(b.norm_text, block.checklist) for b in remaining

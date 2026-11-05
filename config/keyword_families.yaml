@@ -218,3 +218,52 @@ families:
     variants: [Python development, Python programming]   # 11
   - head: model deployment
     variants: [deploying models, deployed models, deployed model]   # 22
+
+  # --- #191: allowed swaps, read by hand from every past gap skill (2026-11-05) --
+  # members prove the head one way only: a PostgreSQL bullet proves "SQL", a
+  # bullet saying "SQL" never proves PostgreSQL. Gap counts are past matches
+  # the head was a gap in.
+  - head: SQL                          # writing SQL is what these databases are used through
+    members: [PostgreSQL, Postgres, MySQL, SQLite, SQL Server, MariaDB, T-SQL, PL/SQL, Spark SQL]
+  - head: database management          # 86
+    members: [PostgreSQL, Postgres, MySQL, SQLite, SQL Server, MongoDB, Redis, relational databases]
+  - head: AI-assisted development      # 149
+    variants: [AI-assisted software development, AI-assisted engineering, AI-assisted coding, AI coding tools]
+    members: [Claude Code, Cursor, GitHub Copilot, OpenAI Codex]
+  - head: tool calling                 # 132 (+ function calling 63, tool use 29)
+    variants: [function calling, tool use, tool/function calling]
+    members: [MCP, Model Context Protocol]
+  - head: grounding                    # 135: an LLM's answers grounded in retrieved sources
+    members: [RAG, retrieval-augmented generation, retrieval augmented generation]
+  - head: infrastructure automation    # 35
+    members: [Infrastructure as Code, IaC, Terraform, Ansible, Pulumi, CloudFormation]
+  - head: deployment automation        # 38 (+ automated deployment 17)
+    variants: [automated deployment, automated deployments]
+    members: [CI/CD, GitHub Actions, GitLab CI, Jenkins, Argo CD]
+  - head: data transformation          # 70
+    members: [ETL, ELT, ETL/ELT, dbt, pandas]
+  - head: semantic search              # 39
+    members: [vector search, vector database, FAISS, pgvector, Pinecone, Weaviate, Qdrant, Chroma, Milvus]
+  - head: access management            # 51
+    variants: [identity and access management]
+    members: [IAM, AWS IAM, RBAC, role-based access control, authentication and authorization]
+  - head: API security                 # 24
+    members: [API key authentication, OAuth, JWT, OWASP, OWASP Top 10]
+  - head: data extraction              # 34
+    members: [web scraping, PDF text extraction, information extraction, entity extraction]
+  - head: asynchronous processing      # 14
+    variants: [async processing, asynchronous programming]
+    members: [asyncio, background jobs, job queues, Celery, BullMQ, message queues]
+  - head: model development            # 36
+    members: [model training, fine-tuning, model fine-tuning]
+  - head: model validation             # 19
+    members: [model evaluation, cross-validation]
+  - head: data preprocessing           # data preparation 40: the same work
+    variants: [data preparation, data prep]
+  - head: error handling               # exception handling 34: the same work
+    variants: [exception handling]
+  - head: prompt engineering           # prompting 58, prompt design 16
+    variants: [prompting, prompt design]
+  - head: workflow orchestration       # 35; none in the profile, true in general
+    variants: [data orchestration, pipeline orchestration]
+    members: [Airflow, Prefect, Dagster, Luigi, Argo Workflows, Step Functions, Temporal]

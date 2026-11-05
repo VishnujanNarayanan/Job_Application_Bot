@@ -79,7 +79,7 @@ terms:
   "activities": {label: sense, note: Android Activities, term: Activities}
   "activity/history systems": {label: reject, term: activity/history systems}
   "actuarial methods": {label: domain, term: actuarial methods}
-  "ad": {label: approve, means: [Active Directory], term: AD}
+  "ad": {label: sense, means: [Active Directory], note: 'Active Directory, in capitals; never "ad" (an advert)', term: AD}
   "ad fs": {label: approve, means: [ADFS], term: AD FS}
   "ad-monetized": {label: domain, term: ad-monetized}
   "ad-platform apis": {label: reject, term: ad-platform APIs}
@@ -1365,7 +1365,7 @@ terms:
   "codex": {label: sense, note: OpenAI Codex, term: Codex}
   "coding": {label: reject, term: coding}
   "coding agents": {label: approve, means: [AI coding tools], term: coding agents}
-  "coding standards": {label: approve, term: coding standards}
+  "coding standards": {label: reject, note: a general expectation, not a skill, term: coding standards}
   "coe": {label: reject, term: CoE}
   "coefficient analysis": {label: approve, means: [regression analysis], term: coefficient analysis}
   "cognigy": {label: approve, term: Cognigy}
@@ -1966,7 +1966,7 @@ terms:
   "deploying ai systems in production": {label: approve, means: [LLM deployment], term: deploying AI systems in production}
   "deploying llms": {label: approve, means: [LLM deployment], term: deploying LLMs}
   "deploying models": {label: approve, term: deploying models}
-  "deployment": {label: sense, note: software deployment, term: deployment}
+  "deployment": {label: reject, note: a generic activity; the skill is CI/CD or deployment automation, term: deployment}
   "deployment automation": {label: approve, term: deployment automation}
   "deployment considerations": {label: reject, term: deployment considerations}
   "deployment gates": {label: approve, means: [CI/CD], term: deployment gates}
@@ -3403,7 +3403,7 @@ terms:
   "life-sciences technology": {label: domain, term: life-sciences technology}
   "lifecycle management": {label: reject, term: lifecycle management}
   "lifesphere": {label: approve, term: LifeSphere}
-  "lift": {label: approve, means: [model evaluation], term: Lift}
+  "lift": {label: sense, means: [model evaluation], note: 'lift as a model metric; never "lift" (raise)', term: Lift}
   "light weight": {label: reject, term: Light Weight}
   "lightgbm": {label: approve, term: LightGBM}
   "lighthouse": {label: sense, note: Google Lighthouse, term: Lighthouse}
@@ -3515,7 +3515,7 @@ terms:
   "lookml": {label: approve, term: LookML}
   "lora": {label: approve, term: LoRA}
   "los": {label: reject, note: Not a known skill, term: LOS}
-  "low latency": {label: approve, term: low latency}
+  "low latency": {label: reject, note: a quality of a system, not a skill, term: low latency}
   "low latency messaging": {label: approve, means: [messaging systems], term: low latency messaging}
   "low latency trading": {label: domain, term: low latency trading}
   "low level system programming": {label: approve, means: [systems programming], term: low level system programming}
@@ -4141,7 +4141,7 @@ terms:
   "omnia": {label: reject, term: Omnia}
   "oms": {label: domain, term: OMS}
   "on aws": {label: approve, means: [AWS], term: on AWS}
-  "on-call": {label: approve, term: on-call}
+  "on-call": {label: reject, note: a working condition, term: on-call}
   "on-call rotation": {label: approve, means: [on-call], term: on-call rotation}
   "on-chain data": {label: domain, term: on-chain data}
   "on-premises": {label: reject, term: on-premises}
@@ -5522,7 +5522,7 @@ terms:
   "solace": {label: approve, term: Solace}
   "solana": {label: approve, term: Solana}
   "solana geyser plugins": {label: approve, means: [Solana], term: Solana Geyser plugins}
-  "solid": {label: approve, means: [SOLID principles], term: SOLID}
+  "solid": {label: sense, means: [SOLID principles], note: 'SOLID principles, in capitals; never "solid experience"', term: SOLID}
   "solid principles": {label: approve, term: SOLID principles}
   "solr": {label: approve, term: Solr}
   "solution": {label: reject, term: Solution}

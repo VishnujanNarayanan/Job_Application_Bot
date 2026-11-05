@@ -187,6 +187,30 @@ def _plural_to_singular(word: str) -> str:
     return word[:-1]
 
 
+def _word_form(word: str) -> str:
+    """Fold a word's form so its variants share one key (#189): "grounded",
+    "grounding" and "ground"; "modelling", "modeling" and "model"; "caching"
+    and "cache"; "processing" and "process"; "optimise" and "optimize". The
+    same fold runs on both sides (advert token and every resume window), so
+    the result is never compared with real text. Short words (names such as
+    Node, Rust, Make) and short stems ("Spring", "string") are left alone."""
+    if len(word) < 5 or not word.isalpha():
+        return word
+    for end in ("isation", "ise", "ised", "ising"):
+        if word.endswith(end):
+            word = word[: -len(end)] + end.replace("is", "iz", 1)
+            break
+    for end in ("ing", "ed"):
+        if word.endswith(end) and len(word) - len(end) >= 4:
+            word = word[: -len(end)]
+            break
+    if word.endswith("e") and len(word) >= 5:
+        word = word[:-1]
+    if len(word) >= 5 and word[-1] == word[-2] and word[-1] not in "aeiou":
+        word = word[:-1]
+    return word
+
+
 def _key_words(words: Sequence[str]) -> str:
     """Fold already-normalised words to the compact matching key."""
     out = []
@@ -199,7 +223,7 @@ def _key_words(words: Sequence[str]) -> str:
         w = _JS_SUFFIX.sub("", w) or w
         out.append(w)
     if out:
-        out[-1] = _plural_to_singular(out[-1])
+        out[-1] = _word_form(_plural_to_singular(out[-1]))
     return "".join(out)
 
 
@@ -288,7 +312,24 @@ def matches(tok: str, norm_text: str) -> bool:
         return False
     from src.state import registry
 
-    return registry.shown_in_profile(tok, norm_text) is not False
+    if registry.shown_in_profile(tok, norm_text) is not False:
+        return True
+    # A sense skill proven by a specific tool its family lists ("grounding" by
+    # a RAG bullet): the tool is the evidence of the skill sense (#191).
+    return not _member_keys(tok).isdisjoint(_ngram_keys(norm_text))
+
+
+@lru_cache(maxsize=8192)
+def _member_keys(tok: str) -> frozenset[str]:
+    """Keys of the specific skills that prove ``tok`` one way (family members),
+    without its own spellings."""
+    index, forms, members = _families()
+    own = {phrase_key(tok)}
+    out: set[str] = set()
+    for i in index.get(phrase_key(tok), ()):
+        own |= forms[i]
+        out |= members[i]
+    return frozenset(out - own)
 
 
 def _family_span(norm_text: str, keys: frozenset[str]) -> tuple[int, int] | None:
@@ -450,6 +491,9 @@ class Keyword:
     #: What one match counts for in weighted_count's "how many matched" half:
     #: 1, except in a short advert (:func:`short_ad_scale`).
     unit: float = 1.0
+    #: Set on a comparable tool standing in for this advert ask (#191,
+    #: src/scorer/comparable.py): "S3" standing in for "Google Cloud Storage".
+    stands_for: str | None = None
 
     def __post_init__(self) -> None:
         if self.required is None:
