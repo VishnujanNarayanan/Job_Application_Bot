@@ -7,6 +7,11 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [v3.3.0] — 2026-11-06
+
+Match quality (#179): which skills count, how they are matched, and which
+bullets reach the resume.
+
 ### Changed
 
 - **Only reviewed skills become requirements (#188).** Every term the
@@ -58,6 +63,10 @@ and this project loosely tracks iterations rather than semver.
   no database) and reports every stage, from parse to resume, with
   before/after comparisons and verdict flips. `tools/swaps_report.py` prints
   every skill substitution the matcher makes for a by-hand check.
+
+## [v3.2.0] — 2026-11-06
+
+Everything on main since v3.1.0, before the match-quality work.
 
 ### Changed
 
