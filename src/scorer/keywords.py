@@ -299,6 +299,31 @@ def canonical_key(tok: str) -> str:
     return min(min(forms[i]) for i in ids) if ids else k
 
 
+@lru_cache(maxsize=1)
+def _never() -> dict[str, tuple[str, ...]]:
+    """{canonical key of a skill: normalised longer names that never prove it}."""
+    import yaml
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "config" / "keyword_never.yaml"
+    raw = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("never") or {} if path.exists() else {}
+    out: dict[str, set[str]] = {}
+    for short, longs in raw.items():
+        out.setdefault(canonical_key(str(short)), set()).update(" ".join(norm(str(x)).split()) for x in longs)
+    return {k: tuple(sorted(v, key=len, reverse=True)) for k, v in out.items()}
+
+
+def _without_never(tok: str, norm_text: str) -> str:
+    """``norm_text`` with the longer names that never prove ``tok`` blanked."""
+    longs = _never().get(canonical_key(tok))
+    if not longs:
+        return norm_text
+    for name in longs:
+        if name in norm_text:
+            norm_text = _boundary_re(name).sub(" ", norm_text)
+    return norm_text
+
+
 def matches(tok: str, norm_text: str) -> bool:
     """``hit``, widened by spelling rules and keyword families. ``norm_text`` MUST
     already be normalised.
@@ -307,6 +332,9 @@ def matches(tok: str, norm_text: str) -> bool:
     profile lines counts only where the line uses it in its skill sense
     (``registry.shown_in_profile``)."""
     keys = match_keys(tok)
+    # A longer name that is another product or field (config/keyword_never.yaml,
+    # #191) does not prove the skill inside it: "Azure DevOps" is not Azure.
+    norm_text = _without_never(tok, norm_text)
     found = hit(tok, norm_text) or (bool(keys) and not keys.isdisjoint(_ngram_keys(norm_text)))
     if not found:
         return False
@@ -414,6 +442,8 @@ def keyword_spans(
             continue
         if registry.shown_in_profile(tok, line_key) is False:
             continue  # "gradient oracle" is not Oracle: no bold
+        if _without_never(tok, line_key) != line_key and not matches(tok, line_key):
+            continue  # "Azure DevOps" is not Azure: no bold (#191)
         m = _boundary_re(t).search(norm_text)
         span = (m.start(), m.end()) if m else _family_span(norm_text, match_keys(tok))
         if span:

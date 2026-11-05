@@ -1,0 +1,47 @@
+# #191: longer names that must NOT prove the shorter skill inside them.
+#
+# A skill named inside a longer skill name usually counts: AWS Lambda proves
+# AWS, Spring Boot proves Spring, load testing proves testing, Spark SQL
+# proves SQL. Read by hand from every such pair in the registry (343 on
+# 2026-11-06); these are the exceptions, where the longer name is another
+# product or another field. A short skill found ONLY inside one of these in a
+# text does not count there (profile matching, coverage, bolding).
+#
+# Advert side, the longest-match reading already keeps the longer name whole.
+
+never:
+  # --- another product that shares a word ---------------------------------------
+  Azure: [Azure DevOps]
+  Vault: [Azure Key Vault, Data Vault]
+  Claude: [Claude Code]
+  GitHub: [GitHub Copilot]
+  OpenAI: [Azure OpenAI]
+  Looker: [Looker Studio]
+  Visual Studio: [Visual Studio Code]
+  Visual: [Visual Studio, Visual Studio Code]
+  Argo: [Argo CD]
+  Oracle: [Oracle Cloud, Oracle EBS, Oracle Fusion, Oracle Fusion Middleware, Oracle HCM Cloud,
+           Oracle CX, Oracle DRM, Oracle Integration Cloud, Oracle Access Manager, Oracle APEX]
+  Apache: [Apache Atlas, Apache Druid, Apache Ignite, Apache NiFi, Apache Ozone, Apache POI,
+           Apache Subversion, Apache Kafka, Apache Spark, Apache Airflow, Apache Flink, Apache Beam,
+           Apache Iceberg, Apache Hudi, Apache Cassandra, Apache Hive]
+  Ant: [Ant Design]
+  Composer: [Cloud Composer]
+  Apex: [Oracle APEX]
+  EBS: [Oracle EBS]
+  Functions: [Step Functions, Cloud Functions, SQL window functions, window functions]
+  Experience Cloud: [Adobe Experience Cloud]
+  BMC: [BMC Remedy]
+  ARM: [ARM Templates]
+  C: [C Sharp]
+  Sigma: [Six Sigma]
+  # React Native is a separate skill from web React (operator to confirm).
+  React: [React Native]
+
+  # --- another field ---------------------------------------------------------------
+  Snowflake: [snowflake schema]
+  testing: [hypothesis testing, A/B testing, usability testing, penetration testing]
+  Testing: [hypothesis testing, A/B testing, usability testing, penetration testing]
+  regression: [regression testing]
+  clustering: [failover clustering]
+  routing: [model routing]

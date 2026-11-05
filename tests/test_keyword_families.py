@@ -167,3 +167,54 @@ def test_allowed_swaps(tok, text):
 ])
 def test_swaps_never_allowed(tok, text):
     assert not _m(tok, text)
+
+
+# --- #191: every row of the issue's two tables, plus the never list -------------
+
+@pytest.mark.parametrize("tok,text,want", [
+    ("AI", "Maintained the pipeline and said so.", False),     # letters inside words
+    ("AI", "Wired the OpenAI API.", False),
+    ("Spark", "Planned it in Apache Spark.", True),
+    ("NoSQL", "Kept sessions in MongoDB.", True),
+    ("MongoDB", "Used NoSQL stores.", False),
+    ("relational databases", "Stored rows in PostgreSQL.", True),
+    ("AWS", "Deployed on Amazon Web Services.", True),
+    ("SQL", "Stored events in PostgreSQL.", True),
+    ("SQL", "Queried with Spark SQL.", True),
+    ("React", "Built React Native apps.", False),              # never: React Native
+    ("PostgreSQL", "Wrote SQL queries.", False),
+    ("workflow orchestration", "Scheduled the flows in Airflow.", True),
+    ("infrastructure automation", "Provisioned it with Terraform.", True),
+    ("SQL", "Kept documents in MongoDB.", False),
+    ("Java", "Wrote JavaScript.", False),
+])
+def test_issue_191_tables(tok, text, want):
+    assert _m(tok, text) is want
+
+
+@pytest.mark.parametrize("tok,text,want", [
+    ("Azure", "Ran pipelines in Azure DevOps.", False),
+    ("Azure", "Deployed to Azure and tracked work in Azure DevOps.", True),
+    ("Claude", "Used Claude Code daily.", False),
+    ("GitHub", "Used GitHub Copilot.", False),
+    ("GitHub", "Ran checks in GitHub Actions.", True),
+    ("Snowflake", "Designed a snowflake schema.", False),
+    ("testing", "Ran A/B testing on prices.", False),
+    ("testing", "Load testing with k6.", True),
+    ("AWS", "Deployed AWS Lambda functions.", True),
+    ("Spring", "Built Spring Boot services.", True),
+])
+def test_a_longer_name_proves_the_skill_inside_unless_listed_never(tok, text, want):
+    assert _m(tok, text) is want
+
+
+def test_never_names_are_not_bolded():
+    from src.scorer.keywords import keyword_spans
+
+    assert keyword_spans("Ran pipelines in Azure DevOps.", ["Azure"])[1] == set()
+
+
+def test_weekly_review_lists_skills_a_new_term_contains():
+    from tools.registry_review import _contains
+
+    assert _contains("Azure DevOps Server", ["Azure DevOps", "Azure", "Kafka"]) == ["Azure DevOps", "Azure"]

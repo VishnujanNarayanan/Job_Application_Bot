@@ -61,6 +61,17 @@ def _suggest(term: str, reg, approved: list[str]) -> list[str]:
     return out[:3]
 
 
+def _contains(term: str, approved: list[str]) -> list[str]:
+    """Approved skills named inside ``term`` as whole words ("Azure DevOps"
+    names Azure): the swaps the matcher will make for it (#191)."""
+    from src.scorer.keywords import norm
+
+    low = f" {' '.join(norm(term).split())} "
+    whole = " ".join(norm(term).split())
+    return [a for a in approved if len(a) > 1 and " ".join(norm(a).split()) != whole
+            and f" {' '.join(norm(a).split())} " in low][:5]
+
+
 def _pending(args) -> int:
     """Every term recent adverts used that the registry has no label for.
 
@@ -122,7 +133,8 @@ def _pending(args) -> int:
         term = spelling[key]
         rx = re.compile(r"(?<![\w+#.-])" + re.escape(key) + r"(?![\w+#-]|\.\w)")
         ex = [ln for ln, lo in zip(lines, low) if key in lo and rx.search(lo)][:3]
-        out.append({"term": term, "adverts": n, "suggest": _suggest(term, reg, approved), "examples": ex})
+        out.append({"term": term, "adverts": n, "suggest": _suggest(term, reg, approved),
+                    "contains": _contains(term, approved), "examples": ex})
     path = Path(args.out)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out, indent=1, ensure_ascii=False))
@@ -133,7 +145,11 @@ def _pending(args) -> int:
         "# below is a guess from shared words: check every line, then\n"
         "#   python -m tools.registry_review lines <this file> decisions.json\n"
         "#   python -m tools.registry_review apply decisions.json\n"
-        + "".join(f"{o['term']}|{('a=' + '|'.join(o['suggest'])) if o['suggest'] else 'a'}\n" for o in out),
+        "# A '# contains' line lists skills named inside the term: each counts as proven by it\n"
+        "# unless the term is added under that skill in config/keyword_never.yaml (#191). A term\n"
+        "# that does the same job as other tools goes in config/comparable_tools.yaml.\n"
+        + "".join((f"# contains: {', '.join(o['contains'])}\n" if o["contains"] else "")
+                  + f"{o['term']}|{('a=' + '|'.join(o['suggest'])) if o['suggest'] else 'a'}\n" for o in out),
         encoding="utf-8")
     print(f"{len(out)} pending terms -> {path}; review file -> {review}")
     return 0
