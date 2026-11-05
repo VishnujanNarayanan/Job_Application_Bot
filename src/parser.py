@@ -134,7 +134,7 @@ def with_pool_skills(
 
     named = _registry.named_keys(scan(skill_text(clean_ad_text(jd_text)),
                                       tuple((t, t.casefold()) for t in terms) + others,
-                                      admit=lambda t: _registry.admits(t, jd_text)))
+                                      admit=lambda t: _registry.claims(t, jd_text)))
     added: list[str] = []
     for term in terms:
         key = term.casefold()
@@ -207,7 +207,7 @@ def with_vocabulary_skills(skills: list[str], jd_text: str) -> list[str]:
     # Not from the company intro, benefits or EEO text when the advert has
     # sections of its own (#188).
     for found in scan(skill_text(clean_ad_text(jd_text)), terms + extra,
-                      admit=lambda t: registry.admits(t, jd_text)):  # advert order
+                      admit=lambda t: registry.claims(t, jd_text)):  # advert order
         for k in (found.casefold(), *sorted(registry.named_keys([found]) - {found.casefold()})):
             if k in spelled and k not in present and k not in order:
                 order.append(k)

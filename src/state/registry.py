@@ -183,9 +183,7 @@ def skill_terms() -> tuple[str, ...]:
     skill names, a dictionary source of its own (#188), so a long name such
     as "Apache Druid" is read as itself rather than as "Apache".
 
-    Off unless ``scoring.registry.as_dictionary`` is true: on the #179
-    benchmark it lifts skill recall 75% -> 81% but also reads weak past-match
-    terms ("deployment", "Prototyping") as asks; those want a review first."""
+    ``scoring.registry.as_dictionary`` turns it on (see config.yaml)."""
     from src.config import settings
 
     if not enabled() or not (settings.scoring.get("registry") or {}).get("as_dictionary", False):
@@ -193,7 +191,9 @@ def skill_terms() -> tuple[str, ...]:
     # A term mapped to other skills ("on AWS" -> AWS, "Proficiency in Python"
     # -> Python) is a spelling seen in past matches: it maps, but is not read
     # out of adverts as a name of its own; its skills are.
-    return tuple(e.term for e in load().exact.values() if e.label in (APPROVE, SENSE)
+    # Fields of work are read too, only so they claim their words ("Computer
+    # Vision" leaves no "Vision"); admission drops them as skills.
+    return tuple(e.term for e in load().exact.values() if e.label in (APPROVE, SENSE, DOMAIN)
                  and (not e.means or [m.casefold() for m in e.means] == [e.term.casefold()]))
 
 
@@ -212,6 +212,19 @@ def named_keys(terms) -> set[str]:
 def admits(term: str, jd_text: str | None = None) -> bool:
     """``load().admits`` when the registry is enabled, else always True."""
     return load().admits(term, jd_text) if enabled() else True
+
+
+def claims(term: str, jd_text: str | None = None) -> bool:
+    """Whether ``term``, found in an advert, claims its words in the longest-
+    match reading (``vocabulary.scan``): an admitted term, or a field of work
+    ("Computer Vision" is one thing; "Vision" inside it is no ask). A rejected
+    phrase ("Python developer") does not claim, so the skill inside counts."""
+    if admits(term, jd_text):
+        return True
+    if not enabled():
+        return False
+    e = load().entry(term)
+    return e is not None and e.label == DOMAIN
 
 
 def admitted(terms, jd_text: str | None = None) -> list[str]:

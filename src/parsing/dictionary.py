@@ -173,7 +173,7 @@ def scan_skills(jd_text: str, dictionary: Dictionary, read_text: str | None = No
     # Only registry-admitted terms (#188): the scan used to return every
     # vocabulary word in the advert, company intro and benefits included.
     found = scan(read_text if read_text is not None else jd_text, dictionary.terms(),
-                 admit=lambda t: registry.admits(t, jd_text))
+                 admit=lambda t: registry.claims(t, jd_text))
     return registry.admitted(found, jd_text)
 
 
@@ -199,7 +199,7 @@ def split_required_nice(
     # Longest match, judged on the whole advert: "Spark SQL" on a required
     # line makes Spark SQL required, not also a plain SQL from a "nice" line.
     required_keys = {canonical_key(s) for s in registry.named_keys(
-        scan("\n".join(rest_lines), dictionary.terms(), admit=lambda t: registry.admits(t, jd_text)))}
+        scan("\n".join(rest_lines), dictionary.terms(), admit=lambda t: registry.claims(t, jd_text)))}
     required = [s for s in skills if canonical_key(s) in required_keys]
     nice = [s for s in skills if canonical_key(s) not in required_keys]
     return required, nice

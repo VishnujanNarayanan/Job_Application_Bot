@@ -39,7 +39,7 @@ terms:
   "acca": {label: credential, term: ACCA}
   "acceptance test driven development": {label: approve, means: [ATDD], term: Acceptance Test Driven Development}
   "accepting feedback": {label: soft, term: Accepting Feedback}
-  "access": {label: sense, note: Microsoft Access, term: Access}
+  "access": {label: reject, note: 'bare "Access" is the everyday word; Microsoft Access / MS Access are their own entries', term: Access}
   "access certification campaigns": {label: domain, term: Access Certification campaigns}
   "access control": {label: approve, term: access control}
   "access controls": {label: reject, term: access controls}

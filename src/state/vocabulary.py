@@ -154,8 +154,9 @@ def scan(jd_text: str, terms: tuple[tuple[str, str], ...], admit=None) -> list[s
     names is not returned. "Spark SQL" is one skill, not also SQL and Spark;
     "Apache Druid" does not add Apache. A term the advert also names on its
     own elsewhere is still returned. Only terms ``admit`` accepts (default:
-    the skills registry, given the advert) claim their words, so a rejected
-    phrase such as "Python developer" never hides the Python inside it.
+    ``registry.claims``: admitted terms and fields of work) claim their words,
+    so a rejected phrase such as "Python developer" never hides the Python
+    inside it, while "Computer Vision" does not leave a "Vision" behind.
     """
     if not jd_text or not terms:
         return []
@@ -163,7 +164,7 @@ def scan(jd_text: str, terms: tuple[tuple[str, str], ...], admit=None) -> list[s
         from src.state import registry
 
         def admit(term: str) -> bool:
-            return registry.admits(term, jd_text)
+            return registry.claims(term, jd_text)
     # Markdown escapes ("C\+\+") and typographic hyphens hid known terms (#73).
     haystack = clean_ad_text(jd_text).casefold()
     claimed: list[tuple[int, int]] = []

@@ -522,10 +522,12 @@ scoring:
   # as before the registry; kept for before/after replays.
   registry:
     enabled: true
-    # Read the registry's approved names out of adverts too, not only the
-    # vocabulary/pool/families (#188). Off: +6 pts recall on the benchmark,
-    # but weak past-match terms come in as asks; review them first.
-    as_dictionary: false
+    # Read the registry's own names out of adverts too, not only the
+    # vocabulary/pool/families (#188): core tools the vocabulary never learned
+    # (IBM BPM, Semarchy xDM, LIMS) become asks, so matches missing them are
+    # no longer matches. Turned on after the weak past-match terms were
+    # relabelled (2026-11-06).
+    as_dictionary: true
     # A term the registry has no label for yet (new in the vocabulary or the
     # LLM parse): "keep" = a keyword until the weekly review labels it, "drop"
     # = left out until approved. Decided on the #179 benchmark.

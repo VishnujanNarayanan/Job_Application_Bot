@@ -345,3 +345,18 @@ def test_an_equipment_line_is_not_a_skill_line(monkeypatch):
                "python": (Entry(term="Python", label="approve"), False)})
     jd = REQ + "* Own PC/laptop with 8GB RAM, Windows 10 or above.\n* Python."
     assert not r.admits("Windows", jd)
+
+
+def test_a_field_of_work_claims_its_words_but_is_not_a_skill(reg, monkeypatch):
+    from src.state.registry import Entry, build
+    from src.state.vocabulary import scan
+
+    r = build({"computer vision": (Entry(term="Computer Vision", label="domain"), False),
+               "vision": (Entry(term="Vision", label="sense"), False),
+               "pytorch": (Entry(term="PyTorch", label="approve"), False)})
+    monkeypatch.setattr(reg_mod, "load", lambda: r)
+    jd = REQ + "Deep learning and computer vision with PyTorch."
+    terms = tuple((t, t.casefold()) for t in sorted(("Computer Vision", "Vision", "PyTorch"), key=len, reverse=True))
+    found = scan(jd, terms)
+    assert "Vision" not in found and "PyTorch" in found
+    assert reg_mod.admitted(found, jd) == ["PyTorch"]
