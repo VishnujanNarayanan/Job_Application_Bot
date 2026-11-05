@@ -203,9 +203,15 @@ def replay_job(rec: dict, profile, parses: dict, extras: set[str], evidence: lis
 
     built = build_applied(profile, job, parsed, result)
     gaps = list(built.gap_skills) if built else []
-    req_tokens = _required_tokens(list(parsed.required_skills or []))
+    from src.state import registry
+
+    # The skills the requirements mean (what the gap list is made of), so
+    # matched + gap = required in the same names. Comparing the advert's raw
+    # wording ("Microsoft Azure") with the gap names ("Azure") called gaps
+    # matched.
+    req_skills = registry.skills_of(_required_tokens(list(parsed.required_skills or [])), job.jd_text)
     out["gap_skills"] = gaps
-    out["matched_skills"] = [t for t in req_tokens if t not in set(gaps)]
+    out["matched_skills"] = [t for t in req_skills if t not in set(gaps)]
 
     # The page: what renders, what each bullet was picked for, what is bolded.
     to_bold = [k.token for k in kws]

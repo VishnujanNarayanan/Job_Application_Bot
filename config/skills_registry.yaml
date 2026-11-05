@@ -147,7 +147,7 @@ terms:
   "aeron": {label: approve, term: Aeron}
   "aerospike": {label: approve, term: Aerospike}
   "ag-grid": {label: approve, term: ag-Grid}
-  "agent": {label: sense, note: 'AI/LLM agent, not a sales or support agent', term: agent}
+  "agent": {label: sense, means: [AI agents], note: 'AI/LLM agent, not a sales or support agent', term: Agent}
   "agent design": {label: approve, means: [AI agents], term: agent design}
   "agent development patterns": {label: approve, means: [AI agents], term: agent development patterns}
   "agent evaluation": {label: approve, means: [LLM evaluation], term: Agent evaluation}
@@ -189,7 +189,7 @@ terms:
   "agentic tooling": {label: approve, means: [AI agents], term: agentic tooling}
   "agentic tools": {label: reject, term: agentic tools}
   "agentic workflows": {label: approve, term: agentic workflows}
-  "agents": {label: sense, note: 'AI/LLM agents, not sales or support agents', term: agents}
+  "agents": {label: sense, means: [AI agents], note: 'AI/LLM agents, not sales or support agents', term: agents}
   "aggregate spend": {label: domain, term: aggregate spend}
   "agile": {label: sense, note: 'Agile methodology, not ''agile'' (nimble)', term: Agile}
   "agile / scrum": {label: approve, means: [Agile, Scrum], term: Agile / Scrum}
@@ -2113,7 +2113,7 @@ terms:
   "document repositories": {label: reject, term: document repositories}
   "document understanding": {label: approve, means: [document parsing], term: document understanding}
   "document-based authoring": {label: approve, means: [Adobe Experience Manager], term: Document-based Authoring}
-  "documentation": {label: sense, note: technical documentation, term: documentation}
+  "documentation": {label: sense, means: [Technical documentation], note: technical documentation, term: documentation}
   "documentation activities": {label: reject, term: documentation activities}
   "documentation standards": {label: approve, means: [Technical documentation], term: documentation standards}
   "dom": {label: approve, term: DOM}
@@ -2199,7 +2199,7 @@ terms:
   "einstein ai": {label: approve, means: [Salesforce], term: Einstein AI}
   "eks": {label: approve, term: EKS}
   "eks/ecs": {label: approve, means: [EKS, ECS], term: EKS/ECS}
-  "elastic": {label: sense, note: 'Elastic / Elasticsearch, not ''elastic''', term: Elastic}
+  "elastic": {label: sense, means: [Elasticsearch], note: 'Elastic / Elasticsearch, not ''elastic''', term: Elastic}
   "elastic certified engineer": {label: credential, term: Elastic Certified Engineer}
   "elastic container": {label: approve, means: [ECS], term: Elastic Container}
   "elastic search": {label: approve, means: [Elasticsearch], term: Elastic Search}
@@ -3864,7 +3864,7 @@ terms:
   "modularity": {label: reject, term: modularity}
   "monetization": {label: domain, term: monetization}
   "money movement processes": {label: domain, term: Money movement processes}
-  "mongo": {label: approve, term: Mongo}
+  "mongo": {label: approve, means: [MongoDB], term: Mongo}
   "mongodb": {label: approve, term: MongoDB}
   "monitoring": {label: sense, note: system/service monitoring, term: monitoring}
   "monitoring & observability": {label: approve, means: [monitoring, observability], term: Monitoring & Observability}

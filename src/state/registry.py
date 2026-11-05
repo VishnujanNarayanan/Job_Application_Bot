@@ -201,6 +201,8 @@ def skills_of(terms, jd_text: str | None = None) -> list[str]:
     the registry blocks (a domain such as responsible AI) is not a keyword."""
     if not enabled():
         return list(terms)
+    from src.scorer.keywords import canonical_key
+
     reg = load()
     out: list[str] = []
     seen: set[str] = set()
@@ -211,7 +213,9 @@ def skills_of(terms, jd_text: str | None = None) -> list[str]:
             e = reg.entry(skill)
             if e is not None and e.label in BLOCKED:
                 continue
-            k = skill.casefold()
+            # One skill once, whatever spelling family it comes in ("ELT" /
+            # "ETL/ELT"), as the checklist already de-duplicates.
+            k = canonical_key(skill) or skill.casefold()
             if k not in seen:
                 seen.add(k)
                 out.append(skill)
