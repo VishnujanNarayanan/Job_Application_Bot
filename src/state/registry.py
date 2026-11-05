@@ -171,6 +171,30 @@ def admitted(terms, jd_text: str | None = None) -> list[str]:
     return [t for t in terms if reg.admits(t, jd_text)]
 
 
+def not_subsumed(terms: list[str], jd_text: str | None) -> list[str]:
+    """Drop a term whose every mention in the advert lies inside a longer term
+    of the same list: "CI" inside "CI/CD", "pipelines" inside "data
+    pipelines", "Azure" inside "Azure OpenAI". The longer term is the skill;
+    the short one counts only where the advert also names it on its own."""
+    if not jd_text or len(terms) < 2:
+        return list(terms)
+    from src.scorer.keywords import clean_ad_text
+
+    text = clean_ad_text(jd_text)
+    spans = {}
+    for t in terms:
+        pat = re.compile(rf"(?<![\w+#.-]){re.escape(t)}(?![\w+#-]|\.\w)", re.IGNORECASE)
+        spans[t] = [m.span() for m in pat.finditer(text)]
+    out = []
+    for t in terms:
+        own = spans[t]
+        longer = [s for u in terms if len(u) > len(t) and t.casefold() in u.casefold() for s in spans[u]]
+        inside = own and longer and all(any(a <= s and e <= b for a, b in longer) for s, e in own)
+        if not inside:
+            out.append(t)
+    return out
+
+
 # --- sense rules -----------------------------------------------------------------------
 #
 # A sense term ("Make", "Go", "Excel", "Teams", "Testing", "AI") counts only
@@ -190,6 +214,10 @@ _VERBISH = frozenset({"VERB", "AUX", "ADV", "ADP", "PART", "SCONJ", "CCONJ", "DE
 _WORD = re.compile(r"[A-Za-z0-9][\w+#./-]*")
 _ITEM_SPLIT = re.compile(r"\s*(?:[,;|&]|\band\b|\bor\b|\s/\s|(?<=\w)/(?=\w))\s*", re.IGNORECASE)
 _MAX_GRAM = 4
+#: "A skill nearby" means within this many words either side, not anywhere in
+#: the sentence ("coordinate with partner teams ... incident response" is not
+#: Microsoft Teams just because a skill shares the sentence).
+_NEAR_WORDS = 5
 
 
 @lru_cache(maxsize=64)
@@ -267,14 +295,23 @@ def _occurrence_is_skill(e: Entry, text: str, start: int, end: int) -> bool:
     span = doc.char_span(start, end, alignment_mode="expand")
     if span is None or not len(span):
         return False
+    # A term the registry writes as a name ("Teams", "Word", "Power") is not
+    # that name where the advert writes it in lower case ("backend teams").
+    written = text[start:end]
+    if e.term[:1].isupper() and written.islower():
+        return False
     head = span.root
     nxt = doc[span.end].text if span.end < len(doc) else ""
     # A word directly followed by ":" or "(" is a label or a named item
     # ("Go: 3+ years", "Excel (pivot tables)"), whatever its tagged part of speech.
     if head.pos_ in _VERBISH and nxt not in (":", "("):
         return False
-    sent = head.sent.text
-    if _approved_in(sent, text[start:end]):
+    # A line labelled by the term ("Go: 3+ years", "- Excel: pivot tables") is
+    # a skill item.
+    if nxt == ":" and not text[line_start:start].strip(" \t*-•·#>"):
+        return True
+    near = doc[max(span.start - _NEAR_WORDS, head.sent.start): min(span.end + _NEAR_WORDS, head.sent.end)]
+    if _approved_in(near.text, text[start:end]):
         return True
     if _section_at(text, start) in ("req", "nice"):
         return True

@@ -609,7 +609,8 @@ def jd_keywords(parsed, *, title: str | None = None, jd_text: str | None = None)
     # Only terms the skills registry admits become keywords (#188): never
     # rejected, domain, soft or credential terms, and a sense term ("Make",
     # "Go", "Testing") only where the advert uses it in its skill sense.
-    required = registry.admitted(tokens_of(list(parsed.required_skills or [])), jd_text)
+    required = registry.not_subsumed(
+        registry.admitted(tokens_of(list(parsed.required_skills or [])), jd_text), jd_text)
     # De-duplicate on the family key, not the spelling: "REST APIs" and
     # "RESTful APIs" in one checklist are one requirement, not two (#23).
     seen: set[str] = set()
@@ -627,7 +628,8 @@ def jd_keywords(parsed, *, title: str | None = None, jd_text: str | None = None)
     if nice_weight > 0:
         out += [
             Keyword(t, nice_weight, False)
-            for t in _fresh(registry.admitted(tokens_of(list(parsed.nice_to_have or [])), jd_text))
+            for t in _fresh(registry.not_subsumed(
+                registry.admitted(tokens_of(list(parsed.nice_to_have or [])), jd_text), jd_text))
         ]
 
     if cfg.include_responsibilities:

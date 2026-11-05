@@ -385,7 +385,7 @@ terms:
   "ckad": {label: credential, term: CKAD}
   "claims": {label: domain, note: Industry, term: Claims}
   "classes": {label: reject, term: Classes}
-  "classification": {label: sense, note: ML classification, term: Classification}
+  "classification": {label: sense, note: ML classification, term: classification}
   "claude": {label: sense, note: 'Anthropic Claude, not a name', term: Claude}
   "claude code": {label: approve, term: Claude Code}
   "clay": {label: reject, term: Clay}
@@ -1528,7 +1528,7 @@ terms:
   "redshift": {label: approve, term: Redshift}
   "reduced order modeling": {label: approve, term: Reduced Order Modeling}
   "redux": {label: approve, term: Redux}
-  "regression": {label: sense, note: regression testing or regression models, term: Regression}
+  "regression": {label: sense, note: regression testing or regression models, term: regression}
   "regression analysis": {label: approve, term: regression analysis}
   "regression testing": {label: approve, term: Regression testing}
   "regulated": {label: reject, term: regulated}
@@ -1545,7 +1545,7 @@ terms:
   "reliability": {label: reject, term: reliability}
   "reliability engineering": {label: domain, note: Field of work, term: reliability engineering}
   "replication": {label: approve, term: replication}
-  "reporting": {label: sense, note: 'BI/MIS reporting, not ''reporting to''', term: Reporting}
+  "reporting": {label: sense, note: 'BI/MIS reporting, not ''reporting to''', term: reporting}
   "reporting tools": {label: reject, term: reporting tools}
   "reports": {label: reject, term: Reports}
   "reproducibility": {label: approve, term: Reproducibility}
