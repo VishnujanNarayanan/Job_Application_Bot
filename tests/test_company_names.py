@@ -32,6 +32,7 @@ from src.scraper import ats_poller as poller
     ('<meta property="og:site_name" content="ENBD Recruitment Team"/>', "ENBD"),
     ('<meta property="og:site_name" content="SAEL_Career Site_V1"/>', "SAEL"),
     ('<meta property="og:site_name" content="HR"/>', None),
+    ('<title></title><meta name="title" property="og:title" content="India">', None),   # Cengage's site
     # Pages that name nobody.
     ('<meta property="og:site_name" content="Candidate Experience site"/><title>Candidate Experience site</title>', None),
     ('<title></title><meta name="title" property="og:title">', None),

@@ -769,7 +769,7 @@ def upload(dry_run: bool, include_commoncrawl: bool) -> None:
 
 NAMES = OUT / "names.jsonl"
 # Every ATS whose board has a page naming the company (src.scraper.ats.name_page_url).
-NAME_ATSES = ("lever", "ashby", "oracle", "workday", "keka", "rippling", "bamboohr")
+NAME_ATSES = ("lever", "ashby", "oracle", "workday", "rippling", "bamboohr")
 
 
 def page_name(body: str) -> str | None:

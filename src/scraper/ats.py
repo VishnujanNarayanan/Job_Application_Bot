@@ -756,8 +756,8 @@ def name_page_url(ats: str, board_id: str) -> str | None:
         return f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}"
     if ats == "workday":
         return workday_public_base(board_id)
-    if ats == "keka":
-        return list_url("keka", board_id)
+    # Keka is left out: its careers page is filled in by script and names
+    # nobody (2026-11-05); its slugs read as names ("signzy").
     pages = {"lever": f"https://jobs.lever.co/{b}", "ashby": f"https://jobs.ashbyhq.com/{b}",
              "rippling": f"https://ats.rippling.com/{b}/jobs", "bamboohr": f"https://{b}.bamboohr.com/careers"}
     return pages.get(ats)
@@ -780,7 +780,8 @@ _NAME_SUFFIX = re.compile(
 _NOT_A_NAME = re.compile(
     r"^(?:|home|welcome|search|search jobs|job search|jobs|careers|workday|oracle|oracle cloud|lever|ashby|"
     r"rippling|keka|bamboohr|recruitee|candidate experience(?: page)?|sign in|error|page not found|not found|"
-    r"hr|llp|alumni|campus|lateral|our vacancies|join us)$", re.I)
+    r"hr|llp|alumni|campus|lateral|our vacancies|join us|"
+    r"india|global|international|us|usa|uk|emea|apac|americas|europe|asia|mexico|canada|china|japan)$", re.I)
 
 
 def _tidy_title(name: str) -> str:
