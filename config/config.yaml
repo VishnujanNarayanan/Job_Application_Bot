@@ -294,6 +294,9 @@ ats_poll:
   # postings not reached are fetched next run. The first sweep of the new
   # adapters spent 26 minutes here (2026-11-03) and the run was killed.
   detail_budget_minutes: 8
+  # Company names read from careers pages, for boards with none (#182): one
+  # request per board, once (saved to ats_boards.board_name).
+  name_budget_minutes: 2
   # Parallel lanes for ATSes where every company is its own host (Workday,
   # Oracle, Keka, Recruitee, BambooHR, Eightfold): each company stays on one
   # lane, so a host still sees one request per delay_seconds.

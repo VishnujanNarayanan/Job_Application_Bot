@@ -31,6 +31,7 @@ Front, in order (each skip is recorded in ``ats_postings.skipped``):
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from concurrent.futures import ThreadPoolExecutor
 import re
 import sys
@@ -270,6 +271,17 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     log.info("ats_recorded", boards=len(results), statements=statements,
              reached_and_left={t: f"{r}/{r + left}" for t, (r, left) in by_tier.items()})
 
+    # Names for boards that have none, from their careers page (#182): read
+    # once and saved, before the dedupe below, which matches on the name.
+    names = ats_poller.fetch_names(list({(b.ats, b.board_id): b for _p, b in candidates}.values()), lanes,
+                                   delay=delay, budget_s=60 * float(a.get("name_budget_minutes", 2)),
+                                   parallel=int(a.get("parallel_hosts", 1)))
+    if names:
+        ats_poller.save_names(session, names)
+        session.commit()
+        candidates = [(p, _named(b, names.get((b.ats, b.board_id)))) for p, b in candidates]
+    log.info("ats_board_names", found=len(names))
+
     # E: already on LinkedIn/Naukri -> keep that job, give it the ATS link.
     from src.state.models import AllJobs
 
@@ -338,20 +350,29 @@ def log_db_size(session, log, *, warn_mb: float) -> float:
     return mb
 
 
+def _named(board: ats_poller.Board, name: str | None) -> ats_poller.Board:
+    if not name:
+        return board
+    return dataclasses.replace(board, name=name, company_key=ats.key(name) or board.board_id)
+
+
 def company_name(board: ats_poller.Board, p: ats.Posting) -> str:
-    """The board's company name; else the posting's; else the id, tidied
-    ("acme-labs" -> "Acme Labs")."""
-    name = board.name or p.company
+    """The board's company name; else the posting's; else the name
+    config/ats_company_names.yaml gives the Workday tenant / Oracle pod;
+    else the id, tidied ("acme-labs" -> "Acme Labs", "gh" -> "GH")."""
+    name = board.name or p.company or ats.known_name(board.ats, board.board_id)
     if name:
         return name
     ident = board.board_id
     # Workday "accenture/wd103/AccentureCareers" -> its tenant, "Accenture";
     # Oracle "jpmc.fa.oraclecloud.com/CX_1001" -> its pod, the best there is
-    # until ats_boards.company is filled for it.
+    # until the board's careers page names it (fetch_names, #182).
     if board.ats == "workday":
         ident = ats.workday_parts(ident)[0]
     elif board.ats == "oracle":
         ident = ats.oracle_parts(ident)[0].split(".")[0]
+    if len(ident) <= 3 and ident.isalpha():   # an initialism: "wf" -> "WF", not "Wf"
+        return ident.upper()
     words = re.split(r"[-_.\s/]+", ident)
     return " ".join(w[:1].upper() + w[1:] for w in words if w) or board.board_id
 

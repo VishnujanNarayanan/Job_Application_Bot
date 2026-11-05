@@ -741,6 +741,123 @@ def detail_url(posting: Posting) -> str | None:
     return None
 
 
+# --- Company names (#182) ------------------------------------------------------------
+# Most lists name no company, so a board with no ats_boards name showed its id,
+# tidied: Oracle pods ("Fa Etvl Saasfaprod1" for Zensar, "Hcbt" for Kotak),
+# Workday tenants ("Wf", "Pwc", Avanade jobs as "Accenture"). The board's own
+# careers page names the company; read once per board and saved.
+
+def name_page_url(ats: str, board_id: str) -> str | None:
+    """A page of the board's whose title names the company; None when the
+    list itself names it (Greenhouse, SmartRecruiters, Workable, ...)."""
+    b = quote(board_id, safe="")
+    if ats == "oracle":
+        host, site = oracle_parts(board_id)
+        return f"https://{host}/hcmUI/CandidateExperience/en/sites/{site}"
+    if ats == "workday":
+        return workday_public_base(board_id)
+    if ats == "keka":
+        return list_url("keka", board_id)
+    pages = {"lever": f"https://jobs.lever.co/{b}", "ashby": f"https://jobs.ashbyhq.com/{b}",
+             "rippling": f"https://ats.rippling.com/{b}/jobs", "bamboohr": f"https://{b}.bamboohr.com/careers"}
+    return pages.get(ats)
+
+
+_META_NAME = [re.compile(p, re.I | re.S) for p in (
+    r'<meta[^>]+property=["\']og:site_name["\'][^>]+content=["\']([^"\']*)',
+    r'<meta[^>]+content=["\']([^"\']*)["\'][^>]+property=["\']og:site_name',
+    r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']*)',
+    r'<meta[^>]+content=["\']([^"\']*)["\'][^>]+property=["\']og:title',
+    r"<title[^>]*>(.*?)</title>")]
+_NAME_PREFIX = re.compile(r"^(?:(?:careers?|jobs?|work(?:ing)?|life|job listings)\s+(?:at|with|@)\s+|"
+                          r"join\s+(?:us\s+at\s+)?|jobs\s+(?=\w))", re.I)
+_NAME_SUFFIX = re.compile(
+    r"\s*(?:[-|–—:,]\s*)?(?:(?:additional|external|global|professional|experienced|official)\s+)*"
+    r"(?:career(?:s)?(?:\s+(?:site|page|portal|home))?|jobs?(?:\s+(?:site|board|portal|page))?|"
+    r"open\s+(?:positions|roles)|opportunities|recruiting|recruitment(?:\s+team)?|talent\s+community|"
+    r"talent\s+acquisition|candidate\s+experience(?:\s+(?:site|page))?|external|v\d+)\s*$", re.I)
+# Titles that name the platform, the page or a team, not the employer.
+_NOT_A_NAME = re.compile(
+    r"^(?:|home|welcome|search|search jobs|job search|jobs|careers|workday|oracle|oracle cloud|lever|ashby|"
+    r"rippling|keka|bamboohr|recruitee|candidate experience(?: page)?|sign in|error|page not found|not found|"
+    r"hr|llp|alumni|campus|lateral|our vacancies|join us)$", re.I)
+
+
+def _tidy_title(name: str) -> str:
+    name = " ".join(html.unescape(name).replace("_", " ").split())
+    m = re.match(r"^career\s+site\s*\((.+)\)$", name, re.I)   # "Career Site(Servify)"
+    if m:
+        name = m.group(1)
+    name = _NAME_PREFIX.sub("", name)
+    for _ in range(4):
+        name = _NAME_SUFFIX.sub("", name).strip(" -|:–—,")
+    return name
+
+
+def page_name(body: str) -> str | None:
+    """The company a careers page names: og:site_name, else og:title, else
+    <title>, without "Careers"/"Jobs" wording ("Zensar Careers" -> "Zensar",
+    "Kotak Additional Career Site" -> "Kotak"). Of "Verisk Careers | Verisk"
+    the first part that names someone."""
+    for pattern in _META_NAME:
+        m = pattern.search(body or "")
+        if not m:
+            continue
+        for part in re.split(r"\s+[|–—]\s+|\s+-\s+", m.group(1)):
+            name = _tidy_title(part)
+            if not _NOT_A_NAME.match(name) and len(name) <= 60:
+                return name
+    return None
+
+
+_OG_IMAGE_HOST = re.compile(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']https?://([^/"\':]+)', re.I)
+_NOT_EMPLOYER_DOMAIN = {"oracle", "oraclecloud", "myworkday", "myworkdayjobs", "workday", "lever", "ashbyhq",
+                        "rippling", "keka", "bamboohr", "cloudfront", "amazonaws", "googleusercontent", "akamaized",
+                        "imgur", "emmi", "wp", "squarespace", "wixstatic", "hubspot", "ctfassets"}
+
+
+def board_page_name(ats: str, body: str) -> str | None:
+    """:func:`page_name`; for an Oracle site titled only "Candidate
+    Experience site", the domain its logo is on (cdn.tradeweb.com ->
+    "Tradeweb")."""
+    name = page_name(body)
+    if name or ats != "oracle":
+        return name
+    m = _OG_IMAGE_HOST.search(body or "")
+    if not m:
+        return None
+    parts = m.group(1).lower().split(".")
+    # The registrable label: "tradeweb" of cdn.tradeweb.com, "kotak" of www.kotak.co.in.
+    second_level = len(parts) >= 3 and parts[-2] in ("co", "com", "org", "net", "ac", "gov")
+    label = parts[-3] if second_level else (parts[-2] if len(parts) >= 2 else "")
+    if len(label) <= 2 or label in _NOT_EMPLOYER_DOMAIN:
+        return None
+    return label.capitalize()
+
+
+_KNOWN_NAMES: dict | None = None
+
+
+def known_name(ats: str, board_id: str) -> str | None:
+    """The name config/ats_company_names.yaml gives a Workday tenant or an
+    Oracle pod whose id is not readable ("wf" -> "Wells Fargo")."""
+    global _KNOWN_NAMES
+    if _KNOWN_NAMES is None:
+        from pathlib import Path
+
+        import yaml
+
+        f = Path(__file__).resolve().parents[2] / "config" / "ats_company_names.yaml"
+        _KNOWN_NAMES = yaml.safe_load(f.read_text()) if f.exists() else {}
+    if ats == "workday":
+        ident = workday_parts(board_id)[0]
+    elif ats == "oracle":
+        ident = oracle_parts(board_id)[0].split(".")[0]
+    else:
+        return None
+    return ((_KNOWN_NAMES or {}).get(ats) or {}).get(ident.lower())
+
+
 # --- Parsing ----------------------------------------------------------------------
 
 def html_to_text(raw: str | None) -> str | None:
@@ -894,6 +1011,8 @@ def _rippling(board_id: str, data: list) -> list[Posting]:
 
 def _workable(board_id: str, data: dict) -> list[Posting]:
     out = []
+    # The account's name, at the top of the widget response (#182).
+    company = (data.get("name") or "").strip() or None
     for j in data.get("jobs") or []:
         locs = j.get("locations") or []
         codes = {(x.get("countryCode") or "").upper() for x in locs}
@@ -904,7 +1023,7 @@ def _workable(board_id: str, data: dict) -> list[Posting]:
             remote=True if j.get("telecommuting") else None,
             posted_at=_when(j.get("published_on")),
             url=j.get("url"), apply_url=j.get("application_url") or j.get("url"),
-            employment_type=j.get("employment_type"),
+            employment_type=j.get("employment_type"), company=company,
         ))
     return out
 

@@ -42,6 +42,7 @@ import json
 import re
 import threading
 import time
+from types import SimpleNamespace
 from collections import defaultdict
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -764,39 +765,36 @@ def upload(dry_run: bool, include_commoncrawl: bool) -> None:
     print("uploaded")
 
 
-# --- Company names for boards whose API gives none (Lever, Ashby) -------------------
+# --- Company names for boards whose API gives none (#182) --------------------------
 
 NAMES = OUT / "names.jsonl"
-NAME_PAGES = {"lever": "https://jobs.lever.co/{id}", "ashby": "https://jobs.ashbyhq.com/{id}"}
-_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.S | re.I)
-_TITLE_SUFFIX = re.compile(r"\s*(?:[-|\u2013:]\s*)?(?:jobs?|careers?|job board|open (?:positions|roles))\s*$", re.I)
+# Every ATS whose board has a page naming the company (src.scraper.ats.name_page_url).
+NAME_ATSES = ("lever", "ashby", "oracle", "workday", "keka", "rippling", "bamboohr")
 
 
 def page_name(body: str) -> str | None:
-    """The company name from a board page's <title> ("G2i Inc. Jobs" -> "G2i Inc.")."""
-    import html as htmlmod
+    """The company name from a board page ("G2i Inc. Jobs" -> "G2i Inc.")."""
+    from src.scraper.ats import page_name as name
 
-    m = _TITLE.search(body or "")
-    if not m:
-        return None
-    name = _TITLE_SUFFIX.sub("", htmlmod.unescape(" ".join(m.group(1).split()))).strip()
-    return name if name and name.lower() not in ("jobs", "careers", "lever", "ashby") else None
+    return name(body)
 
 
 def names(dry_run: bool) -> None:
-    """Read the board page of every polled Lever/Ashby board with no name,
-    one paced lane per ATS (1 request/second), saving to names.jsonl as it
-    goes so a rerun resumes; then write board_name and company_key to Neon in
-    one batch."""
+    """Read the careers page of every polled board with no name (#182), one
+    paced lane per ATS (1 request/second; host-keyed lanes for Workday and
+    Oracle), saving to names.jsonl as it goes so a rerun resumes; then write
+    board_name and company_key to Neon."""
     from sqlalchemy import select, update
 
-    from src.scraper.ats_poller import Lane, run_lanes
+    from src.scraper import ats as atsmod
+    from src.scraper.ats_poller import Lane, run_lanes, split_by_host
     from src.state.db import session_scope
     from src.state.models import AtsBoard
 
     with session_scope() as s:
         todo = s.execute(select(AtsBoard.ats, AtsBoard.board_id).where(
-            AtsBoard.poll.is_(True), AtsBoard.board_name.is_(None), AtsBoard.ats.in_(list(NAME_PAGES)))).all()
+            AtsBoard.poll.is_(True), AtsBoard.board_name.is_(None), AtsBoard.company.is_(None),
+            AtsBoard.ats.in_(NAME_ATSES))).all()
     done = {}
     if NAMES.exists():
         for line in NAMES.read_text().splitlines():
@@ -804,20 +802,27 @@ def names(dry_run: bool) -> None:
             done[(r["ats"], r["id"])] = r["name"]
     work: dict[str, list] = {}
     for ats_name, ident in todo:
-        if (ats_name, ident) not in done:
+        known = atsmod.known_name(ats_name, ident)   # curated: beats the page, no request
+        if known:
+            done[(ats_name, ident)] = known
+        # A page that named nobody is read again: the reader learns more titles.
+        elif not done.get((ats_name, ident)):
             work.setdefault(ats_name, []).append(ident)
     log(f"names: {len(todo)} boards without a name, {sum(map(len, work.values()))} to fetch")
     lock = threading.Lock()
 
-    def fetch(lane, ident):
-        status, body = lane.get(NAME_PAGES[lane.name].format(id=quote(ident, safe="")))
-        name = page_name(body) if status == 200 else None
+    def fetch(lane, item):
+        ident = item.board_id
+        status, body = lane.get(atsmod.name_page_url(lane.name, ident))
+        name = atsmod.board_page_name(lane.name, body) if status == 200 else None
         with lock, NAMES.open("a") as f:
             f.write(json.dumps({"ats": lane.name, "id": ident, "name": name, "status": status}) + "\n")
             done[(lane.name, ident)] = name
         return name
 
-    run_lanes({n: Lane(n, 1.0) for n in work}, work, fetch, None)
+    lanes = {n: Lane(n, 1.0) for n in work}
+    items = {n: [SimpleNamespace(ats=n, board_id=i) for i in v] for n, v in work.items()}
+    run_lanes(lanes, split_by_host(items, lanes, parallel=8, delay=1.0), fetch, None)
     found = {k: v for k, v in done.items() if v}
     log(f"names: {len(found)} found, {len(done) - len(found)} without one")
     if dry_run or not found:
@@ -839,7 +844,7 @@ def main() -> None:
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--upload", action="store_true", help="write everything to Neon in one batch")
     ap.add_argument("--names", action="store_true",
-                    help="look up company names for polled Lever/Ashby boards that have none")
+                    help="look up company names for polled boards that have none (#182)")
     ap.add_argument("--dry-run", action="store_true", help="with --upload: print sizes only")
     ap.add_argument("--include-commoncrawl", action="store_true",
                     help="with --upload: include Common Crawl rows (check the size first)")

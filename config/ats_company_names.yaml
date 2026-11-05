@@ -1,0 +1,329 @@
+# Company names for Workday tenants and Oracle pods whose id is not readable
+# as a name (#182). Read before the board's careers page and before the id,
+# tidied ("accenture" -> "Accenture" needs no entry). Keys are lower case.
+#
+# Workday: the tenant, the first part of the board id ("wf/wd1/WellsFargoJobs").
+# Oracle: the pod, the first label of the host ("hcbt.fa.em2.oraclecloud.com/CX").
+# A pod or tenant that hosts several brands (Oracle "hdga": Lucy Group's
+# companies; "ehtl": ADI and Resideo) is left out: each site's page names it.
+
+workday:
+  3m: 3M
+  abb: ABB
+  acehardware: Ace Hardware
+  advanceauto: Advance Auto Parts
+  ag: Airbus
+  airliquidehr: Air Liquide
+  airproducts: Air Products
+  alfalaval: Alfa Laval
+  allegromicro: Allegro MicroSystems
+  alsglobal: ALS
+  amat: Applied Materials
+  amlrightsource: AML RightSource
+  analogdevices: Analog Devices
+  applyboard: ApplyBoard
+  arcticwolf: Arctic Wolf
+  aresmgmt: Ares Management
+  ascendperformancematerials: Ascend Performance Materials
+  ascensushr: Ascensus
+  aspentech: AspenTech
+  athenahealth: athenahealth
+  att: AT&T
+  automationanywhere: Automation Anywhere
+  avisbudget: Avis Budget Group
+  bakertilly: Baker Tilly
+  barrywehmiller: Barry-Wehmiller
+  bdx: BD
+  bentleysystems: Bentley Systems
+  bf: Brown-Forman
+  biibhr: Biogen
+  blackline: BlackLine
+  blackrock: BlackRock
+  bloomenergy: Bloom Energy
+  borgwarner: BorgWarner
+  bpinternational: bp
+  brevanhoward: Brevan Howard
+  bristolmyerssquibb: Bristol Myers Squibb
+  browserstack: BrowserStack
+  bsigroup: BSI
+  cae: CAE
+  capitalone: Capital One
+  cardinalhealth: Cardinal Health
+  cat: Caterpillar
+  cba: Commonwealth Bank
+  cdk: CDK Global
+  cgg: CGG
+  chrobinson: C.H. Robinson
+  citicclsa: CLSA
+  clarioclinical: Clario
+  clearwateranalytics: Clearwater Analytics
+  cmegroup: CME Group
+  coke: Coca-Cola
+  columbiasportswearcompany: Columbia Sportswear
+  communitybrands: Community Brands
+  condenast: Condé Nast
+  cppib: CPP Investments
+  crowdstrike: CrowdStrike
+  csagroup: CSA Group
+  curriculumassociates: Curriculum Associates
+  curtisswright: Curtiss-Wright
+  cw: Cushman & Wakefield
+  dbs: DBS
+  dentsuaegis: dentsu
+  dollartree: Dollar Tree
+  dowjones: Dow Jones
+  drivenbrands: Driven Brands
+  dssmith: DS Smith
+  duckcreek: Duck Creek
+  dupont: DuPont
+  dxctechnology: DXC Technology
+  ebay: eBay
+  eisneramper: EisnerAmper
+  elevancehealth: Elevance Health
+  elliottgroup: Elliott Group
+  ensemblehp: Ensemble Health Partners
+  enzazaden: Enza Zaden
+  epicorsoftware: Epicor
+  epiqsystems: Epiq
+  erm: ERM
+  esab: ESAB
+  eset: ESET
+  exfo: EXFO
+  factset: FactSet
+  fedex: FedEx
+  ffive: F5
+  fico: FICO
+  fil: Fidelity International
+  firstadvantage: First Advantage
+  firstam: First American
+  fis: FIS
+  flexerasoftware: Flexera
+  flextronics: Flex
+  flsmidth: FLSmidth
+  fluenceenergy: Fluence
+  fmc: FMC
+  fmr: Fidelity Investments
+  fnz: FNZ
+  fourseasons: Four Seasons
+  freseniusmedicalcare: Fresenius Medical Care
+  fticonsulting: FTI Consulting
+  gapinc: Gap Inc.
+  gatesfoundation: Gates Foundation
+  gea: GEA
+  geaerospace: GE Aerospace
+  gehc: GE HealthCare
+  generalmotors: General Motors
+  genmills: General Mills
+  gevernova: GE Vernova
+  globalfoundries: GlobalFoundries
+  globusmedical: Globus Medical
+  gsk: GSK
+  gsknch: Haleon
+  guggenheiminvestment: Guggenheim Investments
+  hbpublishing: Harvard Business Publishing
+  heidrick: Heidrick & Struggles
+  hl: Houlihan Lokey
+  hp: HP
+  hpe: Hewlett Packard Enterprise
+  hpinc: HP
+  husqvarnagroup: Husqvarna
+  icf: ICF
+  icon: ICON
+  iff: IFF
+  ig: IG Group
+  ingrammicro: Ingram Micro
+  integralife: Integra LifeSciences
+  iqvia: IQVIA
+  ironmountain: Iron Mountain
+  issgovernance: ISS
+  jadeglobal: Jade Global
+  jbtm: JBT Marel
+  jci: Johnson Controls
+  jda: Blue Yonder
+  jiostar: JioStar
+  jj: Johnson & Johnson
+  jll: JLL
+  johnsonelectric: Johnson Electric
+  juliusbaer: Julius Baer
+  kbr: KBR
+  kimberlyclark: Kimberly-Clark
+  kindercare: KinderCare
+  kiongroup: KION Group
+  kla: KLA
+  ksb: KSB
+  lambweston: Lamb Weston
+  lbg: Lloyds Banking Group
+  lego: LEGO
+  levistraussandco: Levi Strauss & Co.
+  livenation: Live Nation
+  lnw: Light & Wonder
+  lowes: Lowe's
+  lseg: LSEG
+  lummustechnology: Lummus Technology
+  manh: Manhattan Associates
+  matthey: Johnson Matthey
+  mckesson: McKesson
+  mdlz: Mondelez International
+  michelinhr: Michelin
+  microchiphr: Microchip
+  millerknoll: MillerKnoll
+  mitsubishichemicalgroup: Mitsubishi Chemical Group
+  mksinst: MKS Instruments
+  mmc: Marsh McLennan
+  modmed: ModMed
+  modsquad: ModSquad
+  monolithicpower: Monolithic Power Systems
+  motorolasolutions: Motorola Solutions
+  movadogroup: Movado Group
+  mrisoftware: MRI Software
+  msd: MSD
+  mufgub: MUFG
+  nab: NAB
+  ncr: NCR Voyix
+  ncratleos: NCR Atleos
+  newbalance: New Balance
+  newperkinelmer: PerkinElmer
+  nextgen: NextGen Healthcare
+  nordsonhcm: Nordson
+  ntrs: Northern Trust
+  ntst: Netsmart
+  nttglobaldatacenters: NTT Global Data Centers
+  nttlimited: NTT
+  nvent: nVent
+  nvidia: NVIDIA
+  nxp: NXP
+  o9solutions: o9 Solutions
+  onehealthineers: Siemens Healthineers
+  onemagnify: OneMagnify
+  oreillyauto: O'Reilly Auto Parts
+  orthoclinical: QuidelOrtho
+  oshkoshcorporation: Oshkosh
+  ouryahoo: Yahoo
+  owensminor: Owens & Minor
+  paloaltonetworks: Palo Alto Networks
+  pepperlfuchs: Pepperl+Fuchs
+  pg: P&G
+  phcgroup: PHC Group
+  pibgroup: PIB Group
+  pinebridge: PineBridge
+  pitneybowes: Pitney Bowes
+  plantemoran: Plante Moran
+  plugpower: Plug Power
+  premierresearch: Premier Research
+  propertyguru: PropertyGuru
+  propharmagroup: ProPharma
+  prysmiangroup: Prysmian
+  ptc: PTC
+  puma: PUMA
+  pvh: PVH
+  pwc: PwC
+  q2ebanking: Q2
+  r1rcm: R1 RCM
+  redhat: Red Hat
+  regalrexnord: Regal Rexnord
+  relx: RELX
+  rgare: RGA
+  riministreet: Rimini Street
+  ringcentral: RingCentral
+  riotinto: Rio Tinto
+  roberthalf: Robert Half
+  rockwellautomation: Rockwell Automation
+  rockwoolgroup: ROCKWOOL
+  rollsroyce: Rolls-Royce
+  royalihc: Royal IHC
+  rsm: RSM
+  ruderfinn: Ruder Finn
+  ryansg: Ryan Specialty
+  saabgroup: Saab
+  safeguardglobal: Safeguard Global
+  sbdinc: Stanley Black & Decker
+  schreiberfoods: Schreiber Foods
+  scottsmiraclegro: ScottsMiracle-Gro
+  seic: SEI
+  selinc: SEL
+  simcorp: SimCorp
+  situsamc: SitusAMC
+  smithnephew: Smith+Nephew
+  snapchat: Snap
+  soti: SOTI
+  spe: Sony Pictures
+  spencerstuart: Spencer Stuart
+  spgi: S&P Global
+  springernature: Springer Nature
+  ssctech: SS&C
+  statestreet: State Street
+  surbanajurong: Surbana Jurong
+  suse: SUSE
+  svb: SVB
+  swa: Southwest Airlines
+  synchronyfinancial: Synchrony
+  syneoshealth: Syneos Health
+  tateandlyle: Tate & Lyle
+  td: TD
+  tdwilliamson: T.D. Williamson
+  theaccessgroup: The Access Group
+  theapexgroup: Apex Group
+  thehartford: The Hartford
+  thermofisher: Thermo Fisher Scientific
+  thomsonreuters: Thomson Reuters
+  tiaa: TIAA
+  tiketdotcom: tiket.com
+  tjx: TJX
+  tnsi: TNS
+  tollgroup: Toll Group
+  toppanmerrill: Toppan Merrill
+  tranetechnologies: Trane Technologies
+  transperfect: TransPerfect
+  transunion: TransUnion
+  trekbikes: Trek
+  trendmicro: Trend Micro
+  trinitylifesciences: Trinity Life Sciences
+  tsys: TSYS
+  ttc: Toro
+  tvh: TVH
+  tysonfoods: Tyson Foods
+  unitytech: Unity
+  uobgroup: UOB
+  upm: UPM
+  usbank: U.S. Bank
+  vareximaging: Varex Imaging
+  venaenergy: Vena Energy
+  vertexinc: Vertex
+  viavisolutions: Viavi Solutions
+  vwr: Avantor
+  vxi: VXI
+  warnerbros: Warner Bros. Discovery
+  weareeverise: Everise
+  webtravelgroup: Web Travel Group
+  weg: WEG
+  westernunion: Western Union
+  wexinc: WEX
+  wf: Wells Fargo
+  wfp: WFP
+  wilsonhcg: WilsonHCG
+  wk: Wolters Kluwer
+  woodmac: Wood Mackenzie
+  wri: WRI
+  xpel: XPEL
+  ypo: YPO
+  zeissgroup: ZEISS
+
+oracle:
+  ecnf: Tradeweb            # titled "Candidate Experience site"; logo on tradeweb.com
+  edox: SBI Card            # "SBIC External Career Site", "Make Life Simple"
+  eeho: Oracle
+  egmk: Calderys            # one site titled "APAC/EMEA Career Opportunities"
+  fa-epba-saasfaprod1: Tata Realty and Infrastructure   # titled "HR"; TRIL logo
+  fa-eosa-saasfaprod1: L&L Products                     # titled "LLP"
+  fa-etbm-saasfaprod1: IBS Software
+  fa-evlo-saasfaprod1: Emirates NBD
+  fa-exdu-saasfaprod1: Daimler Truck                    # titled "Our vacancies"
+  fa-exdu-dev2-saasfaprod1: Daimler Truck
+  hcib: Hill International  # titled "Hill Minimal 112022"
+  hdpc: Goldman Sachs       # "Candidate Experience Site - Campus/Lateral"; the jobs name Goldman Sachs
+  iabyiz: SAEL
+  iaheme: Ascendion         # titled "Career Site - Mexico"
+  icfcjb: Honeywell         # the "Aerospace" site; jobs are Honeywell Aerospace
+  jpmc: JPMorganChase       # sites titled "Alumni", "Chase"
+  jpmc-dev8: JPMorganChase
+  ibqbjb: Honeywell
