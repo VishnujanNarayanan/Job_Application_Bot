@@ -123,6 +123,12 @@ class DictionaryRules:
     duty_categories: frozenset[str] = frozenset({"duty"})
     #: Character cap on ``role_summary`` (schema max is 1500).
     summary_chars: int = 1500
+    #: Sections whose text is not read for skills (company intro, benefits,
+    #: EEO, how to apply) ...
+    skill_skip_categories: frozenset[str] = frozenset({"drop"})
+    #: ... but only when the advert also has one of these, so an advert whose
+    #: only structure is an "About us" heading is still read whole.
+    skill_core_categories: frozenset[str] = frozenset({"req", "nice", "duty"})
     extra: dict = field(default_factory=dict)
 
 
@@ -136,19 +142,39 @@ Sections = tuple[str, list[tuple[str, str]]]
 # ---------------------------------------------------------------------------
 
 
-def scan_skills(jd_text: str, dictionary: Dictionary) -> list[str]:
+def skill_text(text: str, sections: Sections | None = None,
+               rules: DictionaryRules = DEFAULT_RULES) -> str:
+    """The part of a cleaned advert read for skills: without the company
+    intro, benefits and EEO sections when the advert has requirements,
+    nice-to-have or duty sections of its own; otherwise all of it (#188)."""
+    if sections is None:
+        from src.llm.sections import split_sections
+
+        sections = split_sections(text)
+    preamble, secs = sections
+    cats = {c for c, _ in secs}
+    if not cats & rules.skill_core_categories or not cats & rules.skill_skip_categories:
+        return text
+    return "\n".join([preamble] + [b for c, b in secs if c not in rules.skill_skip_categories])
+
+
+def scan_skills(jd_text: str, dictionary: Dictionary, read_text: str | None = None) -> list[str]:
     """Every dictionary term the JD names, in order of first appearance.
 
     ``vocabulary.scan``: word-bounded and markdown-cleaned. Family variants
     are in ``dictionary.terms()``, so "retrieval-augmented generation" is
     found as itself.
+    ``read_text`` (``skill_text``) is the part read; the whole advert still
+    decides sense terms.
     """
     from src.state import registry
     from src.state.vocabulary import scan
 
     # Only registry-admitted terms (#188): the scan used to return every
     # vocabulary word in the advert, company intro and benefits included.
-    return registry.admitted(scan(jd_text, dictionary.terms()), jd_text)
+    found = scan(read_text if read_text is not None else jd_text, dictionary.terms(),
+                 admit=lambda t: registry.admits(t, jd_text))
+    return registry.admitted(found, jd_text)
 
 
 def split_required_nice(
@@ -358,7 +384,7 @@ def build_parsed(job: AllJobs, dictionary: Dictionary,
 
     text = clean_ad_text(job.jd_text or "")
     sections = split_sections(text)
-    skills = scan_skills(text, dictionary)
+    skills = scan_skills(text, dictionary, skill_text(text, sections, rules))
     required, nice = split_required_nice(skills, text, sections, dictionary, rules)
     responsibilities, summary = extract_responsibilities(text, sections, rules)
     job_type = extract_job_type(job.role, text)

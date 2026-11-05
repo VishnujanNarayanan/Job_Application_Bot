@@ -130,7 +130,11 @@ def with_pool_skills(
     others = tuple((t, t.casefold()) for t in (*(v for v, _ in _vocabulary()), *_family_terms(),
                                                *_registry.skill_terms())
                    if t.casefold() not in pool_keys)
-    named = _registry.named_keys(scan(jd_text, tuple((t, t.casefold()) for t in terms) + others))
+    from src.parsing.dictionary import skill_text
+
+    named = _registry.named_keys(scan(skill_text(clean_ad_text(jd_text)),
+                                      tuple((t, t.casefold()) for t in terms) + others,
+                                      admit=lambda t: _registry.admits(t, jd_text)))
     added: list[str] = []
     for term in terms:
         key = term.casefold()
@@ -198,7 +202,12 @@ def with_vocabulary_skills(skills: list[str], jd_text: str) -> list[str]:
                   if t.casefold() not in known)
     spelled = {k: t for t, k in terms}
     order: list[str] = []
-    for found in scan(jd_text, terms + extra):  # advert order
+    from src.parsing.dictionary import skill_text
+
+    # Not from the company intro, benefits or EEO text when the advert has
+    # sections of its own (#188).
+    for found in scan(skill_text(clean_ad_text(jd_text)), terms + extra,
+                      admit=lambda t: registry.admits(t, jd_text)):  # advert order
         for k in (found.casefold(), *sorted(registry.named_keys([found]) - {found.casefold()})):
             if k in spelled and k not in present and k not in order:
                 order.append(k)

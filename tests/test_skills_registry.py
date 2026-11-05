@@ -306,3 +306,21 @@ def test_pool_top_up_skips_a_pool_skill_inside_a_longer_name(monkeypatch):
     monkeypatch.setattr(reg_mod, "enabled", lambda: False)
     assert parser.with_pool_skills([], "Hands-on Spark SQL.", pool=("SQL",)) == []
     assert parser.with_pool_skills([], "Hands-on Spark SQL and plain SQL.", pool=("SQL",)) == ["SQL"]
+
+
+# --- company intro, benefits and EEO text are not read for skills (#188) -------
+
+def test_intro_and_benefits_are_skipped_when_the_advert_has_its_own_sections():
+    from src.parsing.dictionary import skill_text
+
+    ad = (ABOUT + "We build AI for Salesforce users.\n\n" + REQ + "Python and SQL.\n\n"
+          "**Benefits**\nAccessibility support and learning budget.")
+    kept = skill_text(ad)
+    assert "Python" in kept and "Salesforce" not in kept and "Accessibility" not in kept
+
+
+def test_an_advert_without_its_own_sections_is_read_whole():
+    from src.parsing.dictionary import skill_text
+
+    ad = ABOUT + "We run on AWS and Kafka; you will build our Python services."
+    assert skill_text(ad) == ad
