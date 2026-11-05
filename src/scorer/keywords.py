@@ -120,14 +120,35 @@ def hit(tok: str, text: str) -> bool:
         return False
     if _boundary_re(t).search(text):
         return True
-    words = [w for w in t.split() if len(w) > 3 and w not in _STOP]
-    if len(words) >= 3:
-        matched = sum(1 for w in words if _boundary_re(w).search(text))
-        if matched / len(words) >= 0.6:
-            # The fallback was tuned for hand-written checklist prose, not for
-            # LLM-parsed required_skills. A long parsed phrase can register here
-            # without really being covered, so leave a trail when it fires.
-            log.debug("keyword_prose_match", token=tok, matched=matched, of=len(words))
+    words = [w for w in t.split() if len(w) > 3 and w not in _STOP and w not in _ASK_WORDS]
+    if len(words) >= 3 and _all_near(words, text):
+        # Every content word, close together (#189). It used to take 60% of
+        # them anywhere in the text, so "Google Workspace APIs" matched a line
+        # naming Google and GitHub REST APIs, and "AWS, Azure, or GCP cloud
+        # environments" matched "production environments".
+        log.debug("keyword_prose_match", token=tok, words=len(words))
+        return True
+    return False
+
+
+#: Words of the request, not of the skill ("experience with distributed systems
+#: at scale" asks for distributed systems at scale).
+_ASK_WORDS = frozenset("""experience experienced knowledge strong proficiency proficient understanding
+familiarity familiar ability working hands skills skill solid good excellent deep demonstrated proven
+exposure""".split())
+
+#: How close a prose qualification's words must sit in the text.
+_PROSE_WINDOW = 8
+
+
+def _all_near(words: list[str], text: str) -> bool:
+    """Every word of ``words`` (as a whole word) within ``_PROSE_WINDOW`` words
+    of the others, in any order."""
+    toks = text.split()
+    need = set(words)
+    for i in range(len(toks)):
+        window = {w.strip(".,;:()") for w in toks[i:i + _PROSE_WINDOW + len(need)]}
+        if need <= window:
             return True
     return False
 
@@ -166,6 +187,30 @@ def _plural_to_singular(word: str) -> str:
     return word[:-1]
 
 
+def _word_form(word: str) -> str:
+    """Fold a word's form so its variants share one key (#189): "grounded",
+    "grounding" and "ground"; "modelling", "modeling" and "model"; "caching"
+    and "cache"; "processing" and "process"; "optimise" and "optimize". The
+    same fold runs on both sides (advert token and every resume window), so
+    the result is never compared with real text. Short words (names such as
+    Node, Rust, Make) and short stems ("Spring", "string") are left alone."""
+    if len(word) < 5 or not word.isalpha():
+        return word
+    for end in ("isation", "ise", "ised", "ising"):
+        if word.endswith(end):
+            word = word[: -len(end)] + end.replace("is", "iz", 1)
+            break
+    for end in ("ing", "ed"):
+        if word.endswith(end) and len(word) - len(end) >= 4:
+            word = word[: -len(end)]
+            break
+    if word.endswith("e") and len(word) >= 5:
+        word = word[:-1]
+    if len(word) >= 5 and word[-1] == word[-2] and word[-1] not in "aeiou":
+        word = word[:-1]
+    return word
+
+
 def _key_words(words: Sequence[str]) -> str:
     """Fold already-normalised words to the compact matching key."""
     out = []
@@ -178,13 +223,20 @@ def _key_words(words: Sequence[str]) -> str:
         w = _JS_SUFFIX.sub("", w) or w
         out.append(w)
     if out:
-        out[-1] = _plural_to_singular(out[-1])
+        out[-1] = _word_form(_plural_to_singular(out[-1]))
     return "".join(out)
 
 
 def phrase_key(phrase: str) -> str:
     """The compact key of a phrase: what spelling variants have in common."""
     return _key_words(norm(phrase).split())
+
+
+#: Glue words that must not be joined into a key with their neighbours: the
+#: compact key runs words together, so "so a" became "soa" (= SOA) and
+#: "database's so" became "sso" (= SSO), which matched skills and produced
+#: garbled bolds ("s so", "so a"). #189.
+_GLUE = frozenset("a an s so of to in on at by or as is it be the and for with".split())
 
 
 @lru_cache(maxsize=8192)
@@ -195,6 +247,7 @@ def _ngram_keys(norm_text: str) -> frozenset[str]:
         for i in range(len(words))
         for n in range(1, _MAX_NGRAM + 1)
         if i + n <= len(words)
+        and (n == 1 or not any(w in _GLUE or len(w) == 1 for w in words[i:i + n]))
     )
 
 
@@ -228,6 +281,11 @@ def match_keys(tok: str) -> frozenset[str]:
         return frozenset()
     index, forms, members = _families()
     out = {k}
+    from src.state import registry
+
+    # Every spelling the registry maps to this skill ("Glue": AWS Glue,
+    # Amazon Glue; "Agile": Agile methodologies...), #188/#189.
+    out |= {phrase_key(a) for a in registry.aliases(tok)} - {""}
     for i in index.get(k, ()):
         out |= forms[i] | members[i]
     return frozenset(out)
@@ -241,13 +299,65 @@ def canonical_key(tok: str) -> str:
     return min(min(forms[i]) for i in ids) if ids else k
 
 
+@lru_cache(maxsize=1)
+def _never() -> dict[str, tuple[str, ...]]:
+    """{canonical key of a skill: normalised longer names that never prove it}."""
+    import yaml
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "config" / "keyword_never.yaml"
+    raw = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("never") or {} if path.exists() else {}
+    out: dict[str, set[str]] = {}
+    for short, longs in raw.items():
+        out.setdefault(canonical_key(str(short)), set()).update(" ".join(norm(str(x)).split()) for x in longs)
+    return {k: tuple(sorted(v, key=len, reverse=True)) for k, v in out.items()}
+
+
+def _without_never(tok: str, norm_text: str) -> str:
+    """``norm_text`` with the longer names that never prove ``tok`` blanked."""
+    longs = _never().get(canonical_key(tok))
+    if not longs:
+        return norm_text
+    for name in longs:
+        if name in norm_text:
+            norm_text = _boundary_re(name).sub(" ", norm_text)
+    return norm_text
+
+
 def matches(tok: str, norm_text: str) -> bool:
     """``hit``, widened by spelling rules and keyword families. ``norm_text`` MUST
-    already be normalised."""
-    if hit(tok, norm_text):
-        return True
+    already be normalised.
+
+    A sense skill ("Oracle", "Windows", "Power") in one of the operator's own
+    profile lines counts only where the line uses it in its skill sense
+    (``registry.shown_in_profile``)."""
     keys = match_keys(tok)
-    return bool(keys) and not keys.isdisjoint(_ngram_keys(norm_text))
+    # A longer name that is another product or field (config/keyword_never.yaml,
+    # #191) does not prove the skill inside it: "Azure DevOps" is not Azure.
+    norm_text = _without_never(tok, norm_text)
+    found = hit(tok, norm_text) or (bool(keys) and not keys.isdisjoint(_ngram_keys(norm_text)))
+    if not found:
+        return False
+    from src.state import registry
+
+    if registry.shown_in_profile(tok, norm_text) is not False:
+        return True
+    # A sense skill proven by a specific tool its family lists ("grounding" by
+    # a RAG bullet): the tool is the evidence of the skill sense (#191).
+    return not _member_keys(tok).isdisjoint(_ngram_keys(norm_text))
+
+
+@lru_cache(maxsize=8192)
+def _member_keys(tok: str) -> frozenset[str]:
+    """Keys of the specific skills that prove ``tok`` one way (family members),
+    without its own spellings."""
+    index, forms, members = _families()
+    own = {phrase_key(tok)}
+    out: set[str] = set()
+    for i in index.get(phrase_key(tok), ()):
+        own |= forms[i]
+        out |= members[i]
+    return frozenset(out - own)
 
 
 def _family_span(norm_text: str, keys: frozenset[str]) -> tuple[int, int] | None:
@@ -320,12 +430,20 @@ def keyword_spans(
     span counts as shown, because it is on the page inside that span. A token that
     only partly overlaps a kept span is neither kept nor shown.
     """
+    from src.state import registry
+
+    registry.remember_profile_text(text)
+    line_key = norm(text)
     norm_text, src = _norm_with_offsets(text)
     found: list[tuple[int, int, str]] = []
     for tok in tokens:
         t = norm(tok).strip()
         if not t:
             continue
+        if registry.shown_in_profile(tok, line_key) is False:
+            continue  # "gradient oracle" is not Oracle: no bold
+        if _without_never(tok, line_key) != line_key and not matches(tok, line_key):
+            continue  # "Azure DevOps" is not Azure: no bold (#191)
         m = _boundary_re(t).search(norm_text)
         span = (m.start(), m.end()) if m else _family_span(norm_text, match_keys(tok))
         if span:
@@ -403,6 +521,9 @@ class Keyword:
     #: What one match counts for in weighted_count's "how many matched" half:
     #: 1, except in a short advert (:func:`short_ad_scale`).
     unit: float = 1.0
+    #: Set on a comparable tool standing in for this advert ask (#191,
+    #: src/scorer/comparable.py): "S3" standing in for "Google Cloud Storage".
+    stands_for: str | None = None
 
     def __post_init__(self) -> None:
         if self.required is None:
@@ -603,8 +724,13 @@ def jd_keywords(parsed, *, title: str | None = None, jd_text: str | None = None)
     lines from the required token set entirely; half weight is the softest honest
     version of the same judgement.
     """
+    from src.state import registry
+
     cfg = settings.selection.keywords
-    required = tokens_of(list(parsed.required_skills or []))
+    # Only terms the skills registry admits become keywords (#188): never
+    # rejected, domain, soft or credential terms, and a sense term ("Make",
+    # "Go", "Testing") only where the advert uses it in its skill sense.
+    required = registry.skills_of(tokens_of(list(parsed.required_skills or [])), jd_text)
     # De-duplicate on the family key, not the spelling: "REST APIs" and
     # "RESTful APIs" in one checklist are one requirement, not two (#23).
     seen: set[str] = set()
@@ -622,7 +748,7 @@ def jd_keywords(parsed, *, title: str | None = None, jd_text: str | None = None)
     if nice_weight > 0:
         out += [
             Keyword(t, nice_weight, False)
-            for t in _fresh(tokens_of(list(parsed.nice_to_have or [])))
+            for t in _fresh(registry.skills_of(tokens_of(list(parsed.nice_to_have or [])), jd_text))
         ]
 
     if cfg.include_responsibilities:

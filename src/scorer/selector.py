@@ -83,6 +83,9 @@ class BulletCand:
     def __post_init__(self) -> None:
         if not self.norm_text:
             self.norm_text = norm(self.text)
+        from src.state import registry
+
+        registry.remember_profile_text(self.text)
 
 
 @dataclass
@@ -144,6 +147,9 @@ class CommonCand:
     def __post_init__(self) -> None:
         if not self.norm_text:
             self.norm_text = norm(self.text)
+        from src.state import registry
+
+        registry.remember_profile_text(self.text)
 
 
 @dataclass
@@ -362,6 +368,16 @@ def is_gated(norm_text: str, terms: tuple[str, ...] = ()) -> bool:
     """Does this bullet belong to a gated family?"""
     terms = terms or gated_terms()
     return any(hit(t, norm_text) for t in terms)
+
+
+def _proven_by_gated(token: str, terms: tuple[str, ...] = ()) -> bool:
+    """Is ``token`` a skill the gated tools prove ("AI-assisted development",
+    whose family lists Claude Code, Cursor, Copilot; #191)? The AI-tooling
+    line answers that ask, so it is credited with it."""
+    from src.scorer.keywords import match_keys, phrase_key
+
+    keys = match_keys(token)
+    return any(phrase_key(t) in keys for t in (terms or gated_terms()))
 
 
 def jd_wants_gated(keywords: tuple[Keyword, ...], terms: tuple[str, ...] = ()) -> bool:
@@ -781,7 +797,8 @@ def select_entry_bullets(
         for b in remaining:
             if _gated(b):
                 hits_of[b.id] = {AI_TOOLING_ASK} | {
-                    t for t in hits_of[b.id] if is_gated(norm(t), g_terms)
+                    t for t in hits_of[b.id]
+                    if is_gated(norm(t), g_terms) or _proven_by_gated(t, g_terms)
                 }
     canon_of = {
         b.id: canonical_covered(b.norm_text, block.checklist) for b in remaining
@@ -1350,3 +1367,59 @@ def build_jd_context(
             parsed.role_summary,
         ),
     )
+
+
+def promote_missing_tools(entries: list[SelectedEntry], profile: Profile,
+                          keywords: tuple[Keyword, ...], *, allow_gated: bool = False) -> list[str]:
+    """A required TOOL the resume never shows, though an entry on it has a
+    bullet proving it, replaces that entry's weakest bullet carrying no tool
+    at all (#190, the operator's rule: a concept or soft skill must never be
+    chosen over a real tool).
+
+    Runs once every entry has chosen, so "never shows" means the whole
+    resume. The resume never grows; a bullet carrying a tool, the summary and
+    common lines are never displaced; concepts never trigger a swap; gated
+    lines (AI coding tools) are only used when the advert asks for them.
+    Mutates ``entries``; returns the promoted bullet ids."""
+    by_id = {e.id: e for e in (*profile.work, *profile.projects)}
+    shown = {b.id for se in entries for b in se.bullets}
+    on_page: set[str] = set().union(*(se.covered for se in entries)) if entries else set()
+    weight = {k.token: k.weight for k in keywords}
+    g_terms = gated_terms()
+
+    def tools_in(text: str) -> set[str]:
+        return {t for t in covered_by(text, keywords) if term_type(t) == "tool"}
+
+    promoted: list[str] = []
+    missing = [k for k in keywords if k.required and term_type(k.token) == "tool"
+               and k.token not in on_page]
+    for k in sorted(missing, key=lambda k: -k.weight):
+        if k.token in on_page:
+            continue
+        for se in entries:
+            entry = by_id.get(se.id)
+            if entry is None:
+                continue
+            proofs = [b for blk in entry.blocks for b in blk.bullets
+                      if b.id not in shown and not b.is_summary
+                      and (allow_gated or not is_gated(b.norm_text, g_terms))
+                      and k.token in covered_by(b.norm_text, keywords)]
+            victims = [(i, b) for i, b in enumerate(se.bullets)
+                       if not b.is_summary and getattr(b, "via", "") != "common"
+                       and not tools_in(norm(b.text))]
+            if not proofs or not victims:
+                continue
+            # The proof that brings the most missing tools; the victim worth least.
+            proof = max(proofs, key=lambda b: sum(weight.get(t, 0) for t in tools_in(b.norm_text) - on_page))
+            vi, victim = min(victims, key=lambda p: sum(weight.get(t, 0) for t in covered_by(norm(p[1].text), keywords)))
+            gained = covered_by(proof.norm_text, keywords)
+            se.bullets[vi] = SelectedBullet(proof.id, proof.text, victim.score, False,
+                                            sorted(gained - se.covered))
+            se.covered = set().union(*(covered_by(norm(b.text), keywords) for b in se.bullets))
+            se.coverage = coverage_of(se.covered, keywords)
+            shown.add(proof.id)
+            on_page = set().union(*(e.covered for e in entries))
+            promoted.append(proof.id)
+            log.info("tool_promoted", tool=k.token, entry=se.id, replaced=victim.id, bullet=proof.id)
+            break
+    return promoted

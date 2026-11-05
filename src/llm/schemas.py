@@ -21,6 +21,7 @@ import structlog
 from pydantic import (
     BaseModel,
     Field,
+    PrivateAttr,
     StringConstraints,
     field_validator,
     model_validator,
@@ -269,6 +270,12 @@ class JDParsed(BaseModel):
     # limit. The cap is a sanity bound, not a budget — nothing downstream
     # cares about the exact length, so it should be loose enough never to be
     # the reason a parse fails.
+    #: The model's own skills (required + nice), grounded, before the pool and
+    #: vocabulary additions. Not a field: never sent to or asked of the model.
+    #: Stored as all_jobs.llm_skills_raw so the vocabulary learns only from what
+    #: the model extracted, not from its own earlier additions (#188).
+    _llm_skills: list[str] | None = PrivateAttr(default=None)
+
     role_summary: str = Field(
         ..., max_length=1500, description="2-3 sentence summary of the role"
     )

@@ -31,7 +31,8 @@ UNKNOWN = "Unknown"
 # ---------------------------------------------------------------------------
 
 
-def compute_gap_skills(required: list[str], pool: list[str], bullets: tuple[str, ...] = ()) -> list[str]:
+def compute_gap_skills(required: list[str], pool: list[str], bullets: tuple[str, ...] = (),
+                       jd_text: str | None = None) -> list[str]:
     """Required skills the operator shows NOWHERE: not in the skills pool, not in
     any bullet, in any spelling or family form (``keywords.matches``, #23).
 
@@ -48,6 +49,11 @@ def compute_gap_skills(required: list[str], pool: list[str], bullets: tuple[str,
         p.strip(" ;:") for line in required for p in re.split(r"[,()]", line or "")
         if len(p.strip(" ;:")) >= 2
     ))
+    from src.state import registry
+
+    # Only skills can be gaps (#188): "communication", "Computer Science",
+    # "operations" were listed as gaps in most matches.
+    tokens = registry.skills_of(tokens, jd_text)
     evidence = [norm(s) for s in pool] + list(bullets)
     return [t for t in tokens if not any(matches(t, e) for e in evidence)]
 
@@ -62,8 +68,12 @@ def bullet_texts(profile) -> tuple[str, ...]:
     ))
 
 
-def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None):
-    """Layer 4: embed the parsed advert and score it against the profile."""
+def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None,
+              now: datetime | None = None):
+    """Layer 4: embed the parsed advert and score it against the profile.
+
+    ``now`` pins the clock (the #179 benchmark replays at its snapshot time);
+    None is the current time."""
     from src.scorer.apply_decision import evaluate, threshold_for
     from src.scorer.keywords import jd_keywords
     from src.scorer.selector import build_jd_context
@@ -82,8 +92,15 @@ def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None)
         title=job.role,
         site=job.site,
     )
-    return evaluate(profile, jd_context, keywords=jd_keywords(parsed, title=job.role, jd_text=job.jd_text),
-                    threshold=threshold_for(job.site))
+    keywords = jd_keywords(parsed, title=job.role, jd_text=job.jd_text)
+    # Comparable tools (#191): an ask the profile cannot prove is partly met by
+    # the same job done in another product (GCS by S3, GitLab by GitHub).
+    from src.scorer.comparable import with_comparables
+    from src.scorer.keywords import norm
+
+    evidence = [norm(sc.skill) for sc in profile.skills] + list(bullet_texts(profile))
+    keywords = with_comparables(keywords, evidence)
+    return evaluate(profile, jd_context, keywords=keywords, threshold=threshold_for(job.site), now=now)
 
 
 @dataclass
@@ -108,7 +125,8 @@ def build_applied(profile, job, parsed, result) -> Built | None:
     # Gap skills: JD required skills not in operator's pool
     skills_pool = [sc.skill for sc in profile.skills]
     gap_skills = compute_gap_skills(
-        list(parsed.required_skills or []), skills_pool, bullet_texts(profile)
+        list(parsed.required_skills or []), skills_pool, bullet_texts(profile),
+        jd_text=job.jd_text,
     )
     selection = build_selection(
         result=result,

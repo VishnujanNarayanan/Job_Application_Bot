@@ -56,6 +56,7 @@ def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
     jd_text = clean_ad_text(job.jd_text or "")
     parsed.required_skills = grounded_skills(parsed.required_skills, jd_text)
     parsed.nice_to_have = grounded_skills(parsed.nice_to_have, jd_text)
+    parsed._llm_skills = list(dict.fromkeys([*parsed.required_skills, *parsed.nice_to_have]))
     parsed.required_skills = with_pool_skills(parsed.required_skills, jd_text)
     parsed.required_skills = with_vocabulary_skills(parsed.required_skills, jd_text)
     return parsed
@@ -116,20 +117,33 @@ def with_pool_skills(
     )
     if not jd_text or not terms:
         return skills
-    haystack = clean_ad_text(jd_text).casefold()
     present = {s.casefold() for s in skills}
+    # Word-bounded, longest match (vocabulary.scan): "R" does not fire on every
+    # word containing r, "Go" not inside "Google", "Node" not inside
+    # "Node.js", and a pool term found only inside a longer skill the advert
+    # names ("SQL" in "Spark SQL") is not added (#188).
+    from src.parsing.dictionary import _family_terms
+
+    pool_keys = {t.casefold() for t in terms}
+    from src.state import registry as _registry
+
+    others = tuple((t, t.casefold()) for t in (*(v for v, _ in _vocabulary()), *_family_terms(),
+                                               *_registry.skill_terms())
+                   if t.casefold() not in pool_keys)
+    from src.parsing.dictionary import skill_text
+
+    named = _registry.named_keys(scan(skill_text(clean_ad_text(jd_text)),
+                                      tuple((t, t.casefold()) for t in terms) + others,
+                                      admit=lambda t: _registry.claims(t, jd_text)))
     added: list[str] = []
     for term in terms:
         key = term.casefold()
-        if key in present:
-            continue
-        # Word-boundary match so "R" does not fire on every word containing r
-        # and "Go" does not fire inside "Google". A dot only blocks the match
-        # when a word follows it, so "Node.js" is not matched by "Node" while
-        # a term ending a sentence ("...and FastAPI.") still matches.
-        if re.search(rf"(?<![\w+#.]){re.escape(key)}(?![\w+#]|\.\w)", haystack):
+        if key in named and key not in present:
             added.append(term)
             present.add(key)
+    from src.state import registry
+
+    added = registry.admitted(added, jd_text)
     if added:
         log.info("pool_skills_recovered", count=len(added), skills=added[:12])
     return skills + added
@@ -175,7 +189,29 @@ def with_vocabulary_skills(skills: list[str], jd_text: str) -> list[str]:
     if not terms:
         return skills
     present = {s.casefold() for s in skills}
-    added = [t for t in scan(jd_text, terms) if t.casefold() not in present]
+    from src.state import registry
+
+    # The vocabulary holds everyday words learned from past adverts ("quality",
+    # "make", "system"); only registry-admitted terms are added (#188).
+    # Longest match over the vocabulary and the operator's pool together, so a
+    # pool term's longer name claims its words too (#188).
+    from src.parsing.dictionary import _family_terms
+
+    known = {k for _t, k in terms}
+    extra = tuple((t, t.casefold()) for t in (*_pool_terms(), *_family_terms(), *registry.skill_terms())
+                  if t.casefold() not in known)
+    spelled = {k: t for t, k in terms}
+    order: list[str] = []
+    from src.parsing.dictionary import skill_text
+
+    # Not from the company intro, benefits or EEO text when the advert has
+    # sections of its own (#188).
+    for found in scan(skill_text(clean_ad_text(jd_text)), terms + extra,
+                      admit=lambda t: registry.claims(t, jd_text)):  # advert order
+        for k in (found.casefold(), *sorted(registry.named_keys([found]) - {found.casefold()})):
+            if k in spelled and k not in present and k not in order:
+                order.append(k)
+    added = registry.admitted([spelled[k] for k in order], jd_text)
     if added:
         log.info("vocabulary_skills_recovered", count=len(added), skills=added[:12])
     return skills + added
@@ -201,6 +237,9 @@ def apply_to_row(job: AllJobs, parsed: JDParsed) -> None:
     job.salary_min_lpa = parsed.salary_min_lpa
     job.salary_max_lpa = parsed.salary_max_lpa
     job.salary_currency = parsed.salary_currency
+    # Only an LLM parse sets it; a dictionary parse leaves the column alone.
+    if getattr(parsed, "_llm_skills", None) is not None:
+        job.llm_skills_raw = parsed._llm_skills
 
 
 # ---------------------------------------------------------------------------

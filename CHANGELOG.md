@@ -7,6 +7,67 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [v3.3.0] — 2026-11-06
+
+Match quality (#179): which skills count, how they are matched, and which
+bullets reach the resume.
+
+### Changed
+
+- **Only reviewed skills become requirements (#188).** Every term the
+  system can read as a skill is labelled by hand in
+  `config/skills_registry.yaml`: a skill, a word with another meaning
+  (Make, Go, Excel, Testing), a reject, a field of work, a soft skill or a
+  credential. Each term also records the skill(s) it means, so one skill is
+  one requirement however an ad spells it. A word with another meaning
+  counts only where the ad uses it as the skill: in a requirements line, in
+  a list of skills, or labelling a line, never in the company blurb, a team
+  heading or an equipment line. The parse reads the longest skill name at
+  each point ("Spark SQL" is one skill, not also SQL and Spark) and skips
+  the company intro, benefits and equal-opportunity text when the ad has
+  sections of its own. The vocabulary now learns only from the LLM's own
+  output (`all_jobs.llm_skills_raw`, migration 0018), and new terms are
+  queued for a weekly review (`tools.registry_review`).
+- **Skills are matched as whole phrases, in the same sense (#189, #191).**
+  A short skill inside a longer name counts unless
+  `config/keyword_never.yaml` says the longer name is another product or
+  field (Azure DevOps is not Azure, React Native is not React, snowflake
+  schema is not Snowflake). Word forms meet (grounded/grounding,
+  modelling/modeling). Specific tools prove general skills one way only,
+  written by hand in `config/keyword_families.yaml` (PostgreSQL proves SQL;
+  MongoDB does not). Your own profile lines are judged by the same sense
+  rules.
+- **Comparable tools count for half an ask (#191).** Tools that do the same
+  job (S3 and Google Cloud Storage, GitHub and GitLab, Render and Railway)
+  are grouped by hand in `config/comparable_tools.yaml`. When an ad asks for
+  one you have not used but you have used another, that bullet earns half
+  the credit and is bolded; the ask still shows as a gap, and no bullet is
+  reworded. Programming languages are never grouped
+  (`scoring.comparable.credit`).
+- **A real tool is never left off the resume for a concept-only bullet
+  (#190).** When a required tool appears nowhere on the resume but a shown
+  entry has a bullet proving it, that bullet replaces the entry's weakest
+  bullet carrying no tool. The resume never gets longer. SDLC, OOP, UI and
+  UX are typed as concepts, not tools.
+
+  Measured on a frozen benchmark of 145 jobs (50 labelled by hand): skill
+  precision 22% → 53%, recall 75% → 80%, wrong-sense words in checklists
+  105 → 17, proven required skills missing from the resume 618 → 134,
+  median resume 33 → 24 bullets. Matches fall from 48 to 35 per 100 jobs;
+  the lost ones lack a core skill the ad asks for.
+
+### Added
+
+- **Match-quality tooling (#179).** `tools/quality_snapshot.py` freezes a
+  benchmark of jobs; `tools/quality_audit.py` replays it offline (no network,
+  no database) and reports every stage, from parse to resume, with
+  before/after comparisons and verdict flips. `tools/swaps_report.py` prints
+  every skill substitution the matcher makes for a by-hand check.
+
+## [v3.2.0] — 2026-11-06
+
+Everything on main since v3.1.0, before the match-quality work.
+
 ### Changed
 
 - **ATS jobs score posting age the way LinkedIn jobs score applicant count.**

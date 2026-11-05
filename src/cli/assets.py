@@ -8,6 +8,8 @@ git (they carry personal data):
 
     master_profile.yaml   the source of truth the operator edits
     master_profile.json   the canonical parsed form the scorer loads
+    config/skills_registry.local.yaml
+                          registry labels for pool-only terms (#188)
     <template>.docx       hashed by the builder for `template_version`
 
 A GitHub Actions runner therefore has no way to see them. GitHub secrets
@@ -48,7 +50,14 @@ def _asset_paths() -> list[tuple[Path, str]]:
         (_ROOT / "master_profile.yaml", f"{_PREFIX}/master_profile.yaml"),
         (_ROOT / "master_profile.json", f"{_PREFIX}/master_profile.json"),
         (_ROOT / template, f"{_PREFIX}/{template.name}"),
+        (_ROOT / _REGISTRY_LOCAL, f"{_PREFIX}/{_REGISTRY_LOCAL.name}"),
     ]
+
+
+#: Registry entries for terms only in the operator's skills pool (#188). Optional
+#: on pull: a runner without it treats those terms as approved, as before.
+_REGISTRY_LOCAL = Path("config/skills_registry.local.yaml")
+_OPTIONAL = {_REGISTRY_LOCAL.name}
 
 
 def push() -> int:
@@ -91,6 +100,10 @@ def pull() -> int:
             log.info("asset_pulled", key=key, path=str(path), bytes=path.stat().st_size)
             print(f"pulled s3://{bucket}/{key} -> {path}")
         except Exception as exc:
+            if path.name in _OPTIONAL:
+                log.warning("optional_asset_missing", key=key, error=str(exc)[:160])
+                print(f"skipped optional s3://{bucket}/{key}: {exc}", file=sys.stderr)
+                continue
             log.error("asset_pull_failed", key=key, error=str(exc))
             print(f"FAILED s3://{bucket}/{key}: {exc}", file=sys.stderr)
             failed = True

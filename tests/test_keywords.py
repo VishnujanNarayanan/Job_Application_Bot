@@ -253,7 +253,7 @@ def test_spans_cut_the_original_casing_and_punctuation():
 
 @pytest.mark.parametrize(
     "token,text",
-    [("Java", "Wrote JavaScript"), ("SQL", "Tuned PostgreSQL"), ("Go", "Built in Django")],
+    [("Java", "Wrote JavaScript"), ("SQL", "Ran NoSQL stores"), ("Go", "Built in Django")],
 )
 def test_spans_respect_alphanumeric_boundaries(token, text):
     """The same guard as hit(): a token inside a longer name is not a keyword."""

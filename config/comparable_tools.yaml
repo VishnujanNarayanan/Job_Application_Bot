@@ -1,0 +1,389 @@
+# Comparable tools (#191): the same job, a different product.
+#
+# Written by hand from every skill in the registry (2,014 on 2026-11-05).
+# A group says "having used one of these is close to having used another":
+# an advert asking for Google Cloud Storage is partly met by an S3 bullet.
+#
+# What a comparable tool may do (the operator's decision, 2026-11-05):
+#   * partial credit in the fit score (scoring.comparable.credit);
+#   * the bullet that proves it is picked and bolded for the advert's ask.
+# The ask still shows as a gap skill, and the tool in a bullet is never
+# renamed: the resume only claims what was used.
+#
+# This is NOT the one-way "proves" relation (config/keyword_families.yaml,
+# members): PostgreSQL proves SQL; MongoDB proves neither SQL nor PostgreSQL,
+# but is comparable to Cosmos DB and Firestore.
+#
+# Not grouped on purpose: API styles (REST vs GraphQL vs gRPC), methods
+# (ARIMA vs Prophet), and NO general programming languages (C, C++, Java,
+# Scala, Kotlin, JavaScript/TypeScript, R...): interviews test the language
+# itself (the operator's rule, 2026-11-05; the #179 benchmark flipped an
+# Android job on Scala for Kotlin). Shells and SQL dialects do group.
+
+
+groups:
+  # --- cloud -------------------------------------------------------------------
+  - name: cloud platforms
+    tools: [AWS, Azure, GCP, Oracle Cloud, OCI]
+  - name: object storage
+    tools: [S3, Google Cloud Storage, Azure Storage, ADLS, ADLS Gen2, Azure Data Lake, Apache Ozone]
+  - name: serverless functions
+    tools: [Lambda, Azure Functions, Cloud Functions]
+  - name: serverless containers
+    tools: [Fargate, Cloud Run, Azure Container Apps]
+  - name: managed Kubernetes
+    tools: [EKS, AKS, GKE, OpenShift]
+  - name: container orchestration
+    tools: [Kubernetes, Docker Swarm, ECS]
+  - name: container engines
+    tools: [Docker, Podman, containerd]
+  - name: container image builders
+    tools: [Buildah, Kaniko]
+  - name: container registries
+    tools: [ECR, Azure Container Registry]
+  - name: artifact repositories
+    tools: [Artifactory, Nexus, Sonatype Nexus]
+  - name: app hosting (PaaS)
+    tools: [Render, Railway, Heroku, Fly.io, Azure App, Cloud Foundry]
+  - name: frontend and static hosting
+    tools: [Vercel, Netlify, GitHub Pages, AWS Amplify]
+  - name: backend as a service
+    tools: [Firebase, Supabase]
+  - name: CDN and edge
+    tools: [CloudFront, Cloudflare]
+  - name: virtualization
+    tools: [VMware, KVM, Proxmox, KubeVirt]
+
+  # --- infrastructure and delivery ------------------------------------------------
+  - name: infrastructure as code
+    tools: [Terraform, CloudFormation, Pulumi, Bicep, ARM Templates, CDK, AWS SAM, Crossplane, Heat]
+  - name: configuration management
+    tools: [Ansible, Chef, Puppet, SaltStack]
+  - name: CI servers
+    tools: [GitHub Actions, Jenkins, CircleCI, Bamboo, TeamCity, CodeBuild, AWS CodePipeline, Cloud Build, GoCD, CloudBees, Azure DevOps, Harness]
+  - name: continuous deployment
+    tools: [Argo CD, ArgoCD, Flux, Spinnaker, Octopus Deploy, Octopus, uDeploy, Harness]
+  - name: Git hosting
+    tools: [GitHub, GitLab, Bitbucket]
+  - name: version control systems
+    tools: [Git, Apache Subversion, TFS]
+  - name: web servers and reverse proxies
+    tools: [Nginx, HAProxy, Envoy, Caddy, Apache HTTP Server, IIS]
+  - name: Java application servers
+    tools: [Tomcat, JBoss, WebLogic, WebSphere]
+  - name: Python app servers
+    tools: [uvicorn, gunicorn, Daphne]
+  - name: service meshes
+    tools: [Istio, Linkerd]
+  - name: API gateways
+    tools: [API Gateway, Azure API Management]
+  - name: Linux distributions
+    tools: [Ubuntu, RHEL, Red Hat Linux, CentOS, SUSE Linux]
+  - name: Unix-like systems
+    tools: [Linux, Unix, AIX]
+  - name: shells
+    tools: [Bash, Shell, PowerShell]
+  - name: JVM build tools
+    tools: [Maven, Gradle, Ant, sbt, Bazel]
+  - name: native build tools
+    tools: [Cmake, Makefiles, Bazel, MSBuild]
+  - name: JS bundlers
+    tools: [Webpack, Vite, gulp]
+  - name: JS package managers
+    tools: [NPM, pnpm]
+  - name: IDEs
+    tools: [Visual Studio Code, Visual Studio, Eclipse]
+
+  # --- messaging and streaming ------------------------------------------------------
+  - name: event streaming
+    tools: [Kafka, Redpanda, Kinesis, Event Hubs, Azure Event Hubs, Event Hub, Pub/Sub, MSK]
+  - name: message queues
+    tools: [RabbitMQ, SQS, Azure Service Bus, Service Bus, IBM MQ, MQ, MSMQ, NATS, Solace, JMS]
+  - name: event routers
+    tools: [EventBridge, Event Grid, SNS]
+  - name: stream processing
+    tools: [Flink, Spark Streaming, Kafka Streams, Storm, Beam, Dataflow, KsqlDB]
+  - name: change data capture
+    tools: [Debezium, GoldenGate, HVR, AWS DMS]
+  - name: task queues
+    tools: [Celery, BullMQ]
+  - name: real-time messaging
+    tools: [WebSockets, Socket.IO, SignalR, SSE]
+  - name: serialization formats
+    tools: [Protocol Buffers, Protobuf, Avro, Thrift]
+
+  # --- data engineering ---------------------------------------------------------------
+  - name: distributed compute engines
+    tools: [Spark, Dask, Ray, Hadoop]
+  - name: managed Spark platforms
+    tools: [Databricks, Azure Databricks, EMR, Dataproc, Cloudera]
+  - name: dataframe libraries
+    tools: [pandas, Polars]
+  - name: cloud data warehouses
+    tools: [Snowflake, BigQuery, Redshift, Azure Synapse, Microsoft Fabric, Teradata, Netezza, Greenplum]
+  - name: real-time OLAP stores
+    tools: [ClickHouse, Apache Druid, StarRocks]
+  - name: SQL query engines
+    tools: [Presto, Trino, Starburst, Athena, Hive]
+  - name: open table formats
+    tools: [Delta Lake, Delta, Iceberg, Hudi]
+  - name: columnar file formats
+    tools: [Parquet, ORC]
+  - name: ETL tools
+    tools: [Informatica, Informatica PowerCenter, Talend, SSIS, Azure Data Factory, ADF, Data Factory, Glue, DataStage, Ab Initio, SAP BODS, Matillion, Fivetran, StreamSets, Apache NiFi, DMExpress, IBM InfoSphere]
+  - name: SQL transformation frameworks
+    tools: [dbt, Dataform]
+  - name: data orchestrators
+    tools: [Airflow, Prefect, Dagster, Luigi, Cloud Composer, Databricks Workflows, Argo]
+  - name: durable workflow engines
+    tools: [Temporal, Cadence, Step Functions]
+  - name: enterprise job schedulers
+    tools: [Control-M, Autosys, UC4, Stonebranch, CA7]
+  - name: data quality frameworks
+    tools: [Great Expectations, Deequ, Soda]
+  - name: data catalogs
+    tools: [Alation, Collibra, Atlan, DataHub, Amundsen, Unity Catalog, Microsoft Purview, Apache Atlas]
+
+  # --- databases ------------------------------------------------------------------------
+  - name: relational databases
+    tools: [PostgreSQL, MySQL, MariaDB, SQL Server, Oracle Database, DB2, Sybase, CockroachDB, SQLite]
+  - name: managed relational databases
+    tools: [Neon, RDS, Aurora, Azure SQL, Cloud SQL, AlloyDB]
+  - name: SQL procedural dialects
+    tools: [T-SQL, PL/SQL, PL/pgSQL]
+  - name: document databases
+    tools: [MongoDB, Cosmos DB, Couchbase, Firestore, DynamoDB]
+  - name: wide-column databases
+    tools: [Cassandra, HBase, Bigtable]
+  - name: key-value stores and caches
+    tools: [Redis, Memcached, ElastiCache, Valkey, Hazelcast, Aerospike, Apache Ignite]
+  - name: graph databases
+    tools: [Neo4j, Amazon Neptune, TigerGraph, Memgraph]
+  - name: search engines
+    tools: [Elasticsearch, OpenSearch, Solr, Algolia, Azure AI Search]
+  - name: vector stores
+    tools: [Pinecone, Weaviate, Qdrant, Milvus, Chroma, ChromaDB, pgvector, FAISS]
+  - name: time-series databases
+    tools: [InfluxDB, TimescaleDB, kdb+]
+  - name: connection poolers
+    tools: [PgBouncer, Pgpool-II, ProxySQL]
+  - name: PostgreSQL backup tools
+    tools: [Barman, pgBackRest, WAL-G]
+  - name: enterprise backup
+    tools: [Veeam, Commvault, NetBackup, Cohesity, IBM Spectrum Protect, AWS Backup]
+  - name: ORMs
+    tools: [SQLAlchemy, Hibernate, JPA, Spring Data JPA, Entity Framework, Prisma, Sequelize, TypeORM, Eloquent ORM, NHibernate, Tortoise ORM, Ecto]
+  - name: schema migration tools
+    tools: [Alembic, Liquibase, schemachange]
+
+  # --- analytics and BI --------------------------------------------------------------------
+  - name: BI tools
+    tools: [Power BI, Tableau, Looker, Looker Studio, Qlik, Metabase, Superset, MicroStrategy, Domo, Spotfire, SAP BusinessObjects, Amazon QuickSight, SAP Analytics Cloud, Sigma, Astrato]
+  - name: report builders
+    tools: [SSRS, SQL Reporting, BIRT, BI Publisher, OTBI]
+  - name: OLAP models
+    tools: [SSAS, Azure Analysis Services]
+  - name: product analytics
+    tools: [Amplitude, Mixpanel, PostHog, Google Analytics, GA4, Adobe Analytics]
+  - name: customer data platforms
+    tools: [Segment, Treasure Data, Salesforce Data Cloud, Adobe Experience Platform]
+  - name: Python plotting
+    tools: [Matplotlib, seaborn, Plotly]
+  - name: JS charting
+    tools: [Chart.js, Recharts]
+  - name: notebooks
+    tools: [Jupyter, Google Colab]
+  - name: spreadsheets
+    tools: [Microsoft Excel, Google Sheets]
+  - name: spreadsheet lookups
+    tools: [VLOOKUP, XLOOKUP, INDEX-MATCH]
+  - name: statistics packages
+    tools: [SAS, SPSS, Stata]
+  - name: surveys
+    tools: [Qualtrics, Alchemer, Confirmit, Decipher]
+
+  # --- ML and AI ------------------------------------------------------------------------------
+  - name: deep learning frameworks
+    tools: [PyTorch, TensorFlow, Keras, JAX]
+  - name: gradient boosting libraries
+    tools: [XGBoost, LightGBM, CatBoost]
+  - name: NLP libraries
+    tools: [spaCy, NLTK, Gensim]
+  - name: image processing libraries
+    tools: [OpenCV, Pillow, ImageMagick]
+  - name: ML platforms
+    tools: [SageMaker, Vertex AI, Azure Machine Learning, DataRobot, H2O, Kubeflow, DKube]
+  - name: experiment tracking
+    tools: [MLflow, Weights & Biases]
+  - name: LLM application frameworks
+    tools: [LangChain, LlamaIndex, Haystack, Semantic Kernel, DSPy, LangChain4j, Spring AI]
+  - name: agent frameworks
+    tools: [LangGraph, AutoGen, CrewAI, Google ADK, Strands Agents SDK]
+  - name: LLM model families
+    tools: [GPT, Claude, Gemini, Llama, Mistral]
+  - name: hosted LLM APIs
+    tools: [OpenAI, Azure OpenAI, Bedrock]
+  - name: LLM inference servers
+    tools: [Ollama, vLLM, SGLang, Triton]
+  - name: LLM observability
+    tools: [Langfuse, LangSmith, Helicone]
+  - name: LLM evaluation tools
+    tools: [RAGAS, DeepEval, Promptfoo]
+  - name: AI coding assistants
+    tools: [Claude Code, Cursor, GitHub Copilot, Codex, Windsurf, Jules]
+  - name: quantum SDKs
+    tools: [Qiskit, Cirq, PennyLane]
+
+  # --- application frameworks ------------------------------------------------------------------
+  - name: Python web frameworks
+    tools: [Django, Flask, FastAPI, Sanic]
+  - name: Node.js web frameworks
+    tools: [Express.js, NestJS, Fastify]
+  - name: Java service frameworks
+    tools: [Spring Boot, Quarkus, DropWizard]
+  - name: PHP frameworks
+    tools: [Laravel, Symfony, CodeIgniter]
+  - name: frontend frameworks
+    tools: [React, Angular, Vue, Backbone.js, KnockoutJS, Lit]
+  - name: React meta-frameworks
+    tools: [Next.js, Remix]
+  - name: cross-platform mobile
+    tools: [React Native, Flutter]
+  - name: iOS UI frameworks
+    tools: [SwiftUI, UIKit]
+  - name: state management libraries
+    tools: [Redux, NgRx, Recoil, Zustand, Context API]
+  - name: data-fetching libraries
+    tools: [TanStack Query, SWR]
+  - name: UI component libraries
+    tools: [Material UI, Ant Design, shadcn/ui, Radix UI, Bootstrap, Angular Material, Fluent UI]
+  - name: CSS preprocessors
+    tools: [SASS, SCSS, LESS]
+  - name: CSS-in-JS
+    tools: [Styled Components, CSS-in-JS]
+  - name: server-side templates
+    tools: [Jinja2, Thymeleaf, Handlebars, Blade, JSP]
+  - name: web scraping libraries
+    tools: [Scrapy, BeautifulSoup, Crawlee]
+
+  # --- testing ----------------------------------------------------------------------------------
+  - name: JS test runners
+    tools: [Jest, Vitest, Mocha, Jasmine, Karma]
+  - name: browser automation
+    tools: [Selenium, Cypress, Playwright, WebDriverIO]
+  - name: Python test frameworks
+    tools: [pytest, unittest]
+  - name: Java test frameworks
+    tools: [JUnit, TestNG, Spock]
+  - name: .NET test frameworks
+    tools: [nUnit, xUnit, MSTest, MS Unit]
+  - name: BDD frameworks
+    tools: [Cucumber, Serenity BDD]
+  - name: API testing tools
+    tools: [Postman, Postman / Newman, SoapUI, Rest Assured, Karate]
+  - name: load testing tools
+    tools: [JMeter, Gatling, k6, Locust, LoadRunner, BlazeMeter]
+  - name: test management
+    tools: [TestRail, Zephyr, Xray, qTest, HP ALM]
+  - name: test reporting
+    tools: [Allure, ExtentReports]
+
+  # --- security ---------------------------------------------------------------------------------
+  - name: static analysis (SAST)
+    tools: [SonarQube, Checkmarx, Fortify, Veracode, Semgrep, CodeQL, Bandit]
+  - name: dependency and image scanners
+    tools: [Snyk, Trivy, Grype, Dependency-Track, Aqua]
+  - name: dynamic scanners (DAST)
+    tools: [OWASP ZAP, Burp Suite, AppScan, WebInspect]
+  - name: SBOM formats
+    tools: [CycloneDX, SPDX]
+  - name: secrets managers
+    tools: [HashiCorp Vault, Vault, Azure Key Vault, Secrets Manager, CyberArk, 1Password]
+  - name: identity providers
+    tools: [Okta, Auth0, Keycloak, Ping Identity, Entra ID, Cognito, ADFS, Oracle Access Manager]
+  - name: directories
+    tools: [Active Directory, LDAP, eDirectory]
+  - name: single sign-on protocols
+    tools: [SAML, OIDC, OpenID Connect]
+  - name: authorization engines
+    tools: [Open Policy Agent, Cedar, OpenFGA, Casbin]
+  - name: Kubernetes policy
+    tools: [Kyverno, Open Policy Agent, Conftest]
+  - name: endpoint detection
+    tools: [CrowdStrike, SentinelOne]
+  - name: SIEM
+    tools: [Splunk, Microsoft Sentinel, Google SecOps, Panther]
+  - name: cloud security platforms
+    tools: [Wiz, Aqua]
+  - name: reverse engineering
+    tools: [Ghidra, IDA Pro]
+
+  # --- operations -------------------------------------------------------------------------------
+  - name: APM
+    tools: [Datadog, New Relic, NewRelic, Dynatrace, AppDynamics, Instana, Application Insights, Coralogix]
+  - name: infrastructure monitoring
+    tools: [Prometheus, Zabbix, Nagios, CloudWatch, Azure Monitor, Cloud Monitoring, Netcool]
+  - name: dashboards for metrics and logs
+    tools: [Grafana, Kibana]
+  - name: log platforms
+    tools: [ELK, Loki, Splunk, Cloud Logging, Log Analytics, Logflare]
+  - name: error tracking
+    tools: [Sentry, Crashlytics]
+  - name: on-call and alert routing
+    tools: [PagerDuty, OpsGenie, Alertmanager]
+  - name: ITSM
+    tools: [ServiceNow, Jira Service Management, BMC Remedy]
+
+  # --- collaboration and business systems -------------------------------------------------------
+  - name: work tracking
+    tools: [Jira, Asana, ClickUp, OpenProject, Plane, Smartsheet, Workfront]
+  - name: team wikis
+    tools: [Confluence, Notion]
+  - name: diagramming
+    tools: [Lucidchart, Draw.io, Visio, Miro]
+  - name: design tools
+    tools: [Figma, Sketch]
+  - name: team chat
+    tools: [Slack, Microsoft Teams, Pumble]
+  - name: office suites
+    tools: [Microsoft Office, Microsoft 365, Google Workspace]
+  - name: CRM
+    tools: [Salesforce, HubSpot, Microsoft Dynamics, Oracle CX]
+  - name: marketing automation
+    tools: [Salesforce Marketing Cloud, Eloqua, Adobe Campaign, Adobe Journey Optimizer]
+  - name: enterprise ERP
+    tools: [SAP, SAP S/4HANA, SAP ECC, Oracle EBS, Oracle Fusion, NetSuite, Microsoft Dynamics, Odoo]
+  - name: accounting software
+    tools: [QuickBooks, Xero, Tally, Sage Intacct]
+  - name: HR systems
+    tools: [Workday HCM, Oracle HCM Cloud, UKG Pro, HiBob]
+  - name: financial planning
+    tools: [Anaplan, Workday Adaptive Planning, Essbase]
+  - name: integration platforms (iPaaS)
+    tools: [MuleSoft, Boomi, Workato, Jitterbit, Tray.io, Azure Logic Apps, Logic Apps, Oracle Integration Cloud, OIC]
+  - name: no-code automation
+    tools: [Zapier, Make, n8n, Power Automate]
+  - name: RPA
+    tools: [UiPath, Automation Anywhere, Blue Prism]
+  - name: low-code platforms
+    tools: [Power Apps, Mendix, Appian, Pega, Oracle APEX]
+  - name: BPM engines
+    tools: [Camunda, Activiti, IBM BPM]
+  - name: payments
+    tools: [Stripe, Adyen, Worldpay]
+  - name: messaging APIs
+    tools: [Twilio, Sinch, Infobip]
+  - name: telephony servers
+    tools: [Asterisk, FreeSWITCH, Kamailio, OpenSIPS]
+  - name: contact centre platforms
+    tools: [Genesys, Amazon Connect, NICE CXone, Avaya]
+  - name: content management
+    tools: [WordPress, Drupal, Adobe Experience Manager]
+  - name: e-commerce platforms
+    tools: [Shopify, SFCC]
+  - name: SEO tools
+    tools: [Ahrefs, Semrush, Screaming Frog, Google Search Console]
+  - name: simulation (CAE)
+    tools: [ANSYS, Ansys Fluent, Abaqus, COMSOL, OpenFOAM, STAR-CCM+]
+  - name: HPC interconnects
+    tools: [InfiniBand, RoCE]

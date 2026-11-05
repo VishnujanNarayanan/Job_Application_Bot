@@ -6,9 +6,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/VishnujanNarayanan/Job_Application_Bot/releases/tag/v3.1.0"><img alt="Version" src="https://img.shields.io/badge/version-v3.1.0-2ea44f"/></a>
+  <a href="https://github.com/VishnujanNarayanan/Job_Application_Bot/releases/tag/v3.3.0"><img alt="Version" src="https://img.shields.io/badge/version-v3.3.0-2ea44f"/></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white"/>
-  <img alt="Tests" src="https://img.shields.io/badge/tests-648_passing-3FB950?logo=pytest&logoColor=white"/>
+  <img alt="Tests" src="https://img.shields.io/badge/tests-1522_passing-3FB950?logo=pytest&logoColor=white"/>
   <a href="CHANGELOG.md"><img alt="Changelog" src="https://img.shields.io/badge/changelog-CHANGELOG.md-blue"/></a>
   <br>
   <a href="https://vishnujan.dev/"><img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-vishnujan.dev-3b5998?logo=googlechrome&logoColor=white"/></a>
@@ -27,13 +27,19 @@
 
 ## What it does
 
-- **Scrapes** recent LinkedIn and Naukri listings for your search terms.
-- **Parses** each job ad with an LLM (Groq, Gemini or OpenRouter, rotating) into structured
-  requirements.
-- **Scores** the job against your profile and the number of applicants; anything above the
-  threshold is a match.
-- **Builds a tailored resume** (PDF and DOCX) for each match, using only bullets you wrote. The LLM
-  never writes resume text.
+- **Collects** recent jobs from two kinds of source: LinkedIn and Naukri searches for your search
+  terms, and companies' own career boards (Greenhouse, Lever, Ashby, Workday, SmartRecruiters,
+  SuccessFactors and other applicant-tracking systems), polled every two hours.
+- **Parses** each job ad into structured requirements. A free dictionary parse reads it first; an
+  LLM (Groq, Gemini or OpenRouter, rotating) is called only when that parse is uncertain.
+- **Checks every skill against a reviewed skills list.** Only real skills become requirements: a
+  word that has another meaning ("make", "excel", "Go") counts only where the ad uses it as the
+  skill, and new terms are queued for a weekly review that labels and groups them.
+- **Scores** the job against your profile: which required skills your bullets prove, how strongly,
+  and how competitive the posting is (applicant count, or posting age for career boards). Anything
+  above the threshold is a match.
+- **Builds a tailored resume** (PDF and DOCX) for each match, using only bullets you wrote and
+  bolding the ad's skills in them. The LLM never writes resume text.
 - **Notifies you on Telegram** with Apply, Resume PDF, Resume DOCX, Mark applied and Dismiss
   buttons, and shows everything on a local dashboard.
 
@@ -42,14 +48,31 @@ It never applies to anything: you review the resume and click Apply yourself.
 ## How it works
 
 ```
-search terms → scrape (JobSpy) → filters → LLM parse → score → match?
-                                                                 ├─ no  → logged as skipped
-                                                                 └─ yes → tailored resume → Telegram + dashboard
+search terms → LinkedIn / Naukri ─┐
+                                  ├→ filters → parse (dictionary, LLM if unsure) → skills list → score → match?
+career boards (ATS) ──────────────┘                                                                  ├─ no  → logged as skipped
+                                                                                                     └─ yes → tailored resume → Telegram + dashboard
 ```
 
 Jobs, scores and your profile live in Postgres (pgvector for the bullet embeddings). Resumes are
 assembled from your DOCX template and converted to PDF with LibreOffice. Design notes are in
 [`docs/`](docs/); the full history is in [CHANGELOG.md](CHANGELOG.md).
+
+### How a skill is matched
+
+Every rule below is a hand-written list in `config/`, never a guess made at run time:
+
+| File | Decides |
+|---|---|
+| `skills_registry.yaml` | Which terms are skills at all (approve, sense, reject, field of work, soft skill, credential), and which spellings mean the same skill |
+| `keyword_families.yaml` | Spellings that are the same skill both ways, and specific tools that prove a general skill one way (PostgreSQL proves SQL; SQL never proves PostgreSQL) |
+| `keyword_never.yaml` | Longer names that do not prove the skill inside them (Azure DevOps is not Azure) |
+| `comparable_tools.yaml` | Tools that do the same job (S3 and Google Cloud Storage, GitHub and GitLab): half credit for the ask, which still shows as a gap; never programming languages |
+
+Skills are read as whole phrases, longest first, so "Spark SQL" is one skill and "Apache Druid" does
+not add "Apache". The company intro, benefits and equal-opportunity text are not read for skills.
+Changes to these rules are measured on a frozen benchmark of hand-labelled jobs
+(`tools/quality_audit.py`) before they ship.
 
 ## Getting started
 
@@ -214,7 +237,7 @@ Secrets live in `.env` (gitignored). Every variable in `.env.example` is marked 
 | `operator` | Your name, years of experience, time zone, resume header lines |
 | `filters` | Job type, years ceiling, blocked regions and companies |
 | `scraper` | Search terms, terms per run, time budget |
-| `scoring` | Every threshold and weight in the selection formula |
+| `scoring` | Every threshold and weight in the selection formula, the skills registry switches, comparable-tool credit |
 | `llm` | Providers, rotation order, timeouts |
 | `prerender` | Render resumes during the run and upload them to S3 |
 | `endpoint` | Template path, dashboard, Tailscale base URL, GitHub dispatch |
@@ -250,6 +273,10 @@ A run lock prevents overlapping runs. A term picked by hand doesn't move the rot
 | `python -m src.cli.aws_check` | Verify S3, IAM, and CloudWatch connectivity |
 | `python -m src.cli.llm_check <provider>` | Make one real structured call to an LLM provider |
 | `python tools/personalize_template.py` | Create your resume template from the example and your profile |
+| `python -m tools.registry_review pending` | Weekly: list new skill terms with suggested labels, groupings and contained skills, for review |
+| `python -m tools.registry_review apply <file>` | Merge the reviewed labels into the skills registry |
+| `python -m tools.swaps_report` | Print every skill substitution the matcher makes, for a by-hand check |
+| `python -m tools.quality_audit run --label X` | Replay the frozen benchmark offline and report every stage (`compare A B` for before/after) |
 
 ### Endpoint
 
@@ -315,7 +342,11 @@ Add `DATABASE_URL`, your LLM keys (`GROQ_API_KEY`, `GEMINI_FREE_API_KEY`, ...), 
 
 ## Limitations
 
-- **LinkedIn and Naukri only** for now; Indeed and Glassdoor are switched off.
+- **Sources:** LinkedIn, Naukri and the supported company career boards; Indeed and Glassdoor
+  are switched off. A company whose careers site is not a supported board is not covered.
+- **Matching is only as good as its lists.** The skills registry and the swap lists are reviewed by
+  hand. A term new to the registry counts as a skill until the weekly review labels it
+  (`scoring.registry.pending`), so a new everyday word can slip through for up to a week.
 - **The dashboard needs your computer on.** Telegram messages and (with AWS) resume links work
   with it off; resume links expire after 7 days.
 - **Phone access to the dashboard needs Tailscale.** The dashboard has no login, so it is only

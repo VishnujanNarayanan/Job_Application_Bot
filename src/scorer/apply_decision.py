@@ -69,6 +69,7 @@ from src.scorer.selector import (
     gated_terms,
     select_top,
     select_entry_bullets,
+    promote_missing_tools,
 )
 
 
@@ -419,6 +420,9 @@ def evaluate(
     # any earlier, one could claim a generic keyword and bar a project bullet that
     # carries it alongside keywords nothing else on the entry says.
     place_common_bullets(entries, profile.common, keywords, jd)
+    # A required tool the resume never shows, though a shown entry proves it,
+    # displaces a bullet carrying no tool (#190).
+    promote_missing_tools(entries, profile, keywords)
 
     # The entry that leads the page is graded in fit (lead_entry_score below),
     # whatever its kind. It used to be salaried employment only, but a project led

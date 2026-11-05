@@ -23,7 +23,7 @@ import re
 from collections import defaultdict
 
 import structlog
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -84,11 +84,13 @@ def rebuild(session: Session, *, min_jobs: int | None = None) -> int:
     # LLM-parsed jobs only (#71): a dictionary-parsed job's skills came from
     # this vocabulary, so counting them would only re-confirm it. Null is a
     # row parsed before routing existed, which was always the LLM.
-    jobs = session.execute(
-        select(AllJobs.required_skills, AllJobs.nice_to_have)
-        .where(AllJobs.required_skills.isnot(None))
-        .where(or_(AllJobs.parse_mode.is_(None), AllJobs.parse_mode == "llm"))
-    ).all()
+    # Only the model's own skills (#188): required_skills also holds what the
+    # vocabulary itself added to each parse, so counting it re-confirmed every
+    # term on every rebuild ("make" in 746 stored lists). Rows from before the
+    # column existed are not counted again; their terms keep their last count.
+    jobs = [(raw, []) for (raw,) in session.execute(
+        select(AllJobs.llm_skills_raw).where(AllJobs.llm_skills_raw.isnot(None))
+    ).all()]
 
     spellings: dict[str, defaultdict[str, int]] = {}
     job_counts: defaultdict[str, int] = defaultdict(int)
@@ -141,21 +143,43 @@ def load_terms(session: Session) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(((r[0], r[1]) for r in rows), key=lambda p: len(p[1]), reverse=True))
 
 
-def scan(jd_text: str, terms: tuple[tuple[str, str], ...]) -> list[str]:
+def scan(jd_text: str, terms: tuple[tuple[str, str], ...], admit=None) -> list[str]:
     """Vocabulary terms the JD names literally, in the order they appear.
 
     Word-boundary matching only. A dot blocks the match only when a word
     follows it, so "Node" does not match inside "Node.js" while a term ending a
     sentence ("...and FastAPI.") still does.
+
+    Longest match (#188): a term found only inside a longer term the advert
+    names is not returned. "Spark SQL" is one skill, not also SQL and Spark;
+    "Apache Druid" does not add Apache. A term the advert also names on its
+    own elsewhere is still returned. Only terms ``admit`` accepts (default:
+    ``registry.claims``: admitted terms and fields of work) claim their words,
+    so a rejected phrase such as "Python developer" never hides the Python
+    inside it, while "Computer Vision" does not leave a "Vision" behind.
     """
     if not jd_text or not terms:
         return []
+    if admit is None:
+        from src.state import registry
+
+        def admit(term: str) -> bool:
+            return registry.claims(term, jd_text)
     # Markdown escapes ("C\+\+") and typographic hyphens hid known terms (#73).
     haystack = clean_ad_text(jd_text).casefold()
+    claimed: list[tuple[int, int]] = []
     found: list[tuple[int, str]] = []
-    for term, key in terms:
-        match = re.search(rf"(?<![\w+#.]){re.escape(key)}(?![\w+#]|\.\w)", haystack)
-        if match:
-            found.append((match.start(), term))
+    # terms come longest first, so a longer name claims its words before any
+    # term inside it is looked at.
+    for term, key in sorted(terms, key=lambda p: len(p[1]), reverse=True):
+        if key not in haystack:
+            continue
+        spans = [m.span() for m in re.finditer(rf"(?<![\w+#.]){re.escape(key)}(?![\w+#]|\.\w)", haystack)]
+        free = [(a, b) for a, b in spans if not any(a < y and x < b for x, y in claimed)]
+        if not free:
+            continue
+        found.append((free[0][0], term))
+        if admit(term):
+            claimed.extend(free)
     found.sort()
     return [term for _, term in found]

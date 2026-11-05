@@ -131,7 +131,9 @@ _PAD = " We are a growing team with a friendly culture." * 12  # past short_desc
 def test_an_unclear_title_needs_the_operators_skills_in_the_description(monkeypatch):
     monkeypatch.setattr("src.parser._pool_terms", lambda: ("Python", "SQL", "Airflow", "fintech", "Kafka"))
     assert pipe.decide(_p(title="Analyst", desc="Python, SQL and Airflow daily." + _PAD), RULES) is None
-    assert pipe.decide(_p(title="Analyst", desc="Python and fintech." + _PAD), RULES) == "relevance:skills=2"
+    assert pipe.decide(_p(title="Analyst", desc="Python and Kafka." + _PAD), RULES) == "relevance:skills=2"
+    # An industry is not a skill (#188 registry: fintech is a domain).
+    assert pipe.decide(_p(title="Analyst", desc="Python and fintech." + _PAD), RULES) == "relevance:skills=1"
     assert pipe.decide(_p(title="Analyst", desc="Excel and PowerPoint." + _PAD), RULES) == "relevance:skills=0"
     # A tech title is never held back by the skills check.
     assert pipe.decide(_p(title="Backend Engineer", desc="Excel." + _PAD), RULES) is None

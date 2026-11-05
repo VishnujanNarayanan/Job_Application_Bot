@@ -67,26 +67,30 @@ class Dictionary:
       ``src.state.vocabulary.load_terms`` returns them.
     * ``pool``       -- the operator's skills_pool, as ``parser._pool_terms``.
     * ``families``   -- every head and variant in config/keyword_families.yaml.
+    * ``registry``   -- the skills registry's approved and sense terms (#188).
     """
 
     vocabulary: tuple[tuple[str, str], ...] = ()
     pool: tuple[str, ...] = ()
     families: tuple[str, ...] = ()
+    registry: tuple[str, ...] = ()
 
     @classmethod
     def load(cls) -> Dictionary:
         """Load all three sources. A source that fails to load is empty and
         logged by its loader, never fatal."""
         from src.parser import _pool_terms, _vocabulary
+        from src.state import registry
 
-        return cls(vocabulary=_vocabulary(), pool=_pool_terms(), families=_family_terms())
+        return cls(vocabulary=_vocabulary(), pool=_pool_terms(), families=_family_terms(),
+                   registry=registry.skill_terms())
 
     def terms(self) -> tuple[tuple[str, str], ...]:
         """All three merged and de-duplicated by key, longest first, in the
         ``(term, key)`` shape ``vocabulary.scan`` takes. Pool spelling wins a
         tie so the operator's own wording reaches the scorer."""
         merged: dict[str, str] = {}
-        for term in (*self.pool, *(t for t, _ in self.vocabulary), *self.families):
+        for term in (*self.pool, *(t for t, _ in self.vocabulary), *self.families, *self.registry):
             term = term.strip()
             if term:
                 merged.setdefault(term.casefold(), term)
@@ -119,6 +123,12 @@ class DictionaryRules:
     duty_categories: frozenset[str] = frozenset({"duty"})
     #: Character cap on ``role_summary`` (schema max is 1500).
     summary_chars: int = 1500
+    #: Sections whose text is not read for skills (company intro, benefits,
+    #: EEO, how to apply) ...
+    skill_skip_categories: frozenset[str] = frozenset({"drop"})
+    #: ... but only when the advert also has one of these, so an advert whose
+    #: only structure is an "About us" heading is still read whole.
+    skill_core_categories: frozenset[str] = frozenset({"req", "nice", "duty"})
     extra: dict = field(default_factory=dict)
 
 
@@ -132,16 +142,39 @@ Sections = tuple[str, list[tuple[str, str]]]
 # ---------------------------------------------------------------------------
 
 
-def scan_skills(jd_text: str, dictionary: Dictionary) -> list[str]:
+def skill_text(text: str, sections: Sections | None = None,
+               rules: DictionaryRules = DEFAULT_RULES) -> str:
+    """The part of a cleaned advert read for skills: without the company
+    intro, benefits and EEO sections when the advert has requirements,
+    nice-to-have or duty sections of its own; otherwise all of it (#188)."""
+    if sections is None:
+        from src.llm.sections import split_sections
+
+        sections = split_sections(text)
+    preamble, secs = sections
+    cats = {c for c, _ in secs}
+    if not cats & rules.skill_core_categories or not cats & rules.skill_skip_categories:
+        return text
+    return "\n".join([preamble] + [b for c, b in secs if c not in rules.skill_skip_categories])
+
+
+def scan_skills(jd_text: str, dictionary: Dictionary, read_text: str | None = None) -> list[str]:
     """Every dictionary term the JD names, in order of first appearance.
 
     ``vocabulary.scan``: word-bounded and markdown-cleaned. Family variants
     are in ``dictionary.terms()``, so "retrieval-augmented generation" is
     found as itself.
+    ``read_text`` (``skill_text``) is the part read; the whole advert still
+    decides sense terms.
     """
+    from src.state import registry
     from src.state.vocabulary import scan
 
-    return scan(jd_text, dictionary.terms())
+    # Only registry-admitted terms (#188): the scan used to return every
+    # vocabulary word in the advert, company intro and benefits included.
+    found = scan(read_text if read_text is not None else jd_text, dictionary.terms(),
+                 admit=lambda t: registry.claims(t, jd_text))
+    return registry.admitted(found, jd_text)
 
 
 def split_required_nice(
@@ -157,12 +190,16 @@ def split_required_nice(
     section and off a "nice to have" line; otherwise it is nice-to-have.
     """
     from src.scorer.keywords import canonical_key
+    from src.state import registry
     from src.state.vocabulary import scan
 
     preamble, secs = sections
     rest = [preamble] + [body for cat, body in secs if cat not in rules.nice_categories]
     rest_lines = [ln for ln in "\n".join(rest).splitlines() if not rules.nice_inline.search(ln)]
-    required_keys = {canonical_key(s) for s in scan("\n".join(rest_lines), dictionary.terms())}
+    # Longest match, judged on the whole advert: "Spark SQL" on a required
+    # line makes Spark SQL required, not also a plain SQL from a "nice" line.
+    required_keys = {canonical_key(s) for s in registry.named_keys(
+        scan("\n".join(rest_lines), dictionary.terms(), admit=lambda t: registry.claims(t, jd_text)))}
     required = [s for s in skills if canonical_key(s) in required_keys]
     nice = [s for s in skills if canonical_key(s) not in required_keys]
     return required, nice
@@ -347,7 +384,7 @@ def build_parsed(job: AllJobs, dictionary: Dictionary,
 
     text = clean_ad_text(job.jd_text or "")
     sections = split_sections(text)
-    skills = scan_skills(text, dictionary)
+    skills = scan_skills(text, dictionary, skill_text(text, sections, rules))
     required, nice = split_required_nice(skills, text, sections, dictionary, rules)
     responsibilities, summary = extract_responsibilities(text, sections, rules)
     job_type = extract_job_type(job.role, text)

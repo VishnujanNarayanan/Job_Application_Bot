@@ -517,6 +517,27 @@ selection:
     period_end: "2025-06"     # the month the salaried job started
 
 scoring:
+  # Skills registry (#188): only terms config/skills_registry.yaml admits
+  # become JD keywords (fit, gaps, selection, bolding). false = every term,
+  # as before the registry; kept for before/after replays.
+  registry:
+    enabled: true
+    # Read the registry's own names out of adverts too, not only the
+    # vocabulary/pool/families (#188): core tools the vocabulary never learned
+    # (IBM BPM, Semarchy xDM, LIMS) become asks, so matches missing them are
+    # no longer matches. Turned on after the weak past-match terms were
+    # relabelled (2026-11-06).
+    as_dictionary: true
+    # A term the registry has no label for yet (new in the vocabulary or the
+    # LLM parse): "keep" = a keyword until the weekly review labels it, "drop"
+    # = left out until approved. Decided on the #179 benchmark.
+    pending: keep
+  # Comparable tools (#191, config/comparable_tools.yaml): an advert ask the
+  # profile cannot prove, but a comparable tool it does prove (GCS <- S3,
+  # GitLab <- GitHub), gets this share of the ask's weight through that
+  # tool's bullet; the rest stays a gap. 0 = off. Bullet text never changes.
+  comparable:
+    credit: 0.5
   final:
     # final = min(max_score, fit x success_prob)
     # success_prob is the applicant multiplier (#26): early postings are
@@ -597,7 +618,7 @@ scoring:
                   Cloud, Testing, monitoring, Optimization, APIs, API, databases, automation,
                   deployment, documentation, design, backend, frontend, infrastructure,
                   architecture, modeling, evaluation, research, production, cloud, web,
-                  web applications, BI, Sales]
+                  web applications, BI, Sales, SDLC, STLC, OOP, UI, UX, UI/UX, TDD, BDD, SOLID principles]
         # Soft skills the rules miss.
         generic: [Teams, English, Hindi, Client, e.g, etc]
         # A phrase starting with one of these is a product: "Azure Data Factory".

@@ -83,7 +83,8 @@ def test_a_family_never_covers_a_member(member, family_text):
     (".NET", "Reported the net profit."),     # a leading dot is load-bearing
     ("SAS", "Styled with Sass."),             # "ss" is not a plural
     ("Java", "Wrote JavaScript."),
-    ("SQL", "Tuned PostgreSQL."),
+    ("PostgreSQL", "Wrote SQL queries."),   # one way only: SQL never proves PostgreSQL (#191)
+    ("SQL", "Ran NoSQL stores."),
     ("Go", "Built in Django."),
     ("communication", "Communicated results to the desk."),   # word form, not spelling (#30)
 ])
@@ -120,7 +121,8 @@ def test_one_requirement_in_two_spellings_counts_once():
         nice_to_have=["REST API"], responsibilities=[],
     )
     tokens = [k.token for k in kw.jd_keywords(parsed)]
-    assert tokens == ["REST APIs", "Postgres", "Python"]
+    # The registry names each skill once, by its own name (#188/#189).
+    assert tokens == ["REST APIs", "PostgreSQL", "Python"]
 
 
 def test_gap_skills_read_bullets_and_spellings():
@@ -139,3 +141,80 @@ def test_gap_skills_keep_the_leading_dot_of_dotnet():
 
     bullets = (kw.norm("Trained a small neural net in NumPy."),)
     assert _compute_gap_skills([".NET", ".NET Core"], [], bullets) == [".NET", ".NET Core"]
+
+
+# --- #191: allowed swaps, one way --------------------------------------------------
+
+@pytest.mark.parametrize("tok,text", [
+    ("SQL", "Tuned PostgreSQL."),
+    ("SQL", "Queried events with Spark SQL."),
+    ("AI-assisted development", "Built it with Claude Code and Cursor."),
+    ("tool calling", "Exposed the API as an MCP server."),
+    ("infrastructure automation", "Provisioned it with Terraform."),
+    ("semantic search", "Ranked passages by vector search in pgvector."),
+    ("exception handling", "Added error handling and logging."),
+    ("predictive modelling", "Predictive modeling of churn."),
+    ("grounding", "Kept answers grounded in retrieved documents."),
+])
+def test_allowed_swaps(tok, text):
+    assert _m(tok, text)
+
+
+@pytest.mark.parametrize("tok,text", [
+    ("SQL", "Stored sessions in MongoDB."),
+    ("Claude Code", "Practised AI-assisted development."),
+    ("workflow orchestration", "Scheduled jobs with cron."),
+])
+def test_swaps_never_allowed(tok, text):
+    assert not _m(tok, text)
+
+
+# --- #191: every row of the issue's two tables, plus the never list -------------
+
+@pytest.mark.parametrize("tok,text,want", [
+    ("AI", "Maintained the pipeline and said so.", False),     # letters inside words
+    ("AI", "Wired the OpenAI API.", False),
+    ("Spark", "Planned it in Apache Spark.", True),
+    ("NoSQL", "Kept sessions in MongoDB.", True),
+    ("MongoDB", "Used NoSQL stores.", False),
+    ("relational databases", "Stored rows in PostgreSQL.", True),
+    ("AWS", "Deployed on Amazon Web Services.", True),
+    ("SQL", "Stored events in PostgreSQL.", True),
+    ("SQL", "Queried with Spark SQL.", True),
+    ("React", "Built React Native apps.", False),              # never: React Native
+    ("PostgreSQL", "Wrote SQL queries.", False),
+    ("workflow orchestration", "Scheduled the flows in Airflow.", True),
+    ("infrastructure automation", "Provisioned it with Terraform.", True),
+    ("SQL", "Kept documents in MongoDB.", False),
+    ("Java", "Wrote JavaScript.", False),
+])
+def test_issue_191_tables(tok, text, want):
+    assert _m(tok, text) is want
+
+
+@pytest.mark.parametrize("tok,text,want", [
+    ("Azure", "Ran pipelines in Azure DevOps.", False),
+    ("Azure", "Deployed to Azure and tracked work in Azure DevOps.", True),
+    ("Claude", "Used Claude Code daily.", False),
+    ("GitHub", "Used GitHub Copilot.", False),
+    ("GitHub", "Ran checks in GitHub Actions.", True),
+    ("Snowflake", "Designed a snowflake schema.", False),
+    ("testing", "Ran A/B testing on prices.", False),
+    ("testing", "Load testing with k6.", True),
+    ("AWS", "Deployed AWS Lambda functions.", True),
+    ("Spring", "Built Spring Boot services.", True),
+])
+def test_a_longer_name_proves_the_skill_inside_unless_listed_never(tok, text, want):
+    assert _m(tok, text) is want
+
+
+def test_never_names_are_not_bolded():
+    from src.scorer.keywords import keyword_spans
+
+    assert keyword_spans("Ran pipelines in Azure DevOps.", ["Azure"])[1] == set()
+
+
+def test_weekly_review_lists_skills_a_new_term_contains():
+    from tools.registry_review import _contains
+
+    assert _contains("Azure DevOps Server", ["Azure DevOps", "Azure", "Kafka"]) == ["Azure DevOps", "Azure"]
