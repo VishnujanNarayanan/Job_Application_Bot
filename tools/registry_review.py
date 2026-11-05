@@ -96,7 +96,7 @@ def _pending(args) -> int:
             "select 1 from information_schema.columns where table_name = 'all_jobs'"
             " and column_name = 'llm_skills_raw'")).first() is not None
         if not has_raw:
-            print("all_jobs.llm_skills_raw not there yet (migration 0017); skipping that source")
+            print("all_jobs.llm_skills_raw not there yet (migration 0018); skipping that source")
         for (raw,) in (s.execute(text(
             "select llm_skills_raw from all_jobs where llm_skills_raw is not null"
             " and scraped_at > now() - make_interval(days => :d)"), {"d": args.days}).all() if has_raw else []):
