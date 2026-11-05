@@ -285,7 +285,11 @@ def score_gold(job: dict, gold: dict) -> dict:
             types.append((g["name"], g["type"], p["type"]))
     extra = [p["token"] for p in pred if not any(_same(p["token"], str(g["name"])) for g in g_sk)]
     drop = [str(w) for w in gold.get("must_drop") or []]
-    wrong_sense = [p["token"] for p in pred if any(_same(p["token"], w) for w in drop)]
+    # Exact key, not _same: "excel at" must not flag the tool "Excel".
+    from src.scorer.keywords import canonical_key
+
+    drop_keys = {canonical_key(w) for w in drop}
+    wrong_sense = [p["token"] for p in pred if canonical_key(p["token"]) in drop_keys]
     out = {"gold_skills": len(g_sk), "found": found, "missed": missed, "extraneous": extra,
            "bucket_ok": buckets_ok, "wrong_sense": wrong_sense, "types": types}
     if "years" in gold:
