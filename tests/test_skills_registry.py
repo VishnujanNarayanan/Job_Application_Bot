@@ -33,6 +33,12 @@ def reg(monkeypatch):
         e("Data Engineering", "domain"), e("communication", "soft"), e("Computer Science", "credential"),
     ]))
     monkeypatch.setattr(reg_mod, "load", lambda: r)
+    # keywords.term_type reads the learned vocabulary from the database; the
+    # tests stay offline.
+    monkeypatch.setattr("src.parser._vocabulary", lambda: ())
+    from src.scorer import keywords as kw
+
+    kw._usual_spelling.cache_clear()
     monkeypatch.setattr(reg_mod, "enabled", lambda: True)
     return r
 
@@ -64,6 +70,11 @@ def test_pending_terms_are_kept(reg):
     ("Excel", "Discover what you excel at.", False),
     ("React", "Build UIs in React and TypeScript.", True),
     ("React", "React quickly to incidents.", False),
+    ("Go", "- Rust and Go\n- WebAssembly", True),
+    ("Excel", "* Excel (pivot tables, macros)", True),
+    ("Go", "Go: 3+ years building services", True),
+    ("Make", "Make sure you apply.", False),
+    ("Excel", "Excel at communication.", False),
     ("Teams", "Work with cross-functional teams.", False),
     ("Teams", "Administer Exchange, SharePoint and Microsoft Teams.", True),
     ("Testing", REQ + "- Python, testing, CI/CD\n" + ABOUT + "We love testing ideas.", True),

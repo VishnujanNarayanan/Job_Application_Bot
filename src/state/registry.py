@@ -197,19 +197,25 @@ def _requirement_text(jd_text: str) -> str | None:
 
 
 def _occurrences(term: str, text: str, *, exact_case: bool):
-    """(text before the match on its line, the whole line) per occurrence."""
+    """(text before the match on its line, text after it, the whole line)."""
     flags = 0 if exact_case else re.IGNORECASE
     pat = re.compile(rf"(?<![\w+#.-]){re.escape(term)}(?![\w+#-]|\.\w)", flags)
     for m in pat.finditer(text):
         line_start = text.rfind("\n", 0, m.start()) + 1
         line_end = text.find("\n", m.end())
         line = text[line_start: line_end if line_end >= 0 else len(text)]
-        yield text[line_start:m.start()], line
+        yield text[line_start:m.start()], line[m.end() - line_start:], line
 
 
 def _sentence_start(before: str) -> bool:
     lead = _LEAD.sub("", before)
     return not lead.strip() or bool(_SENTENCE_END.search(lead))
+
+
+#: What may follow a tool name that starts a line or sentence when it is a
+#: list item, not a verb: "- Rust and WebAssembly", "Excel (pivot tables)",
+#: "Go: 3+ years". "Excel at", "Make sure", "Go through" do not qualify.
+_ITEM_FOLLOW = re.compile(r"^\s*(?:$|[,/;:(|&\-–]|\.\s*$|(?:and|or)\b(?!\s+(?:a|an|the)\b))", re.IGNORECASE)
 
 
 _ITEM_SPLIT = re.compile(r"\s*(?:[,/;|&]|\band\b|\bor\b)\s*", re.IGNORECASE)
@@ -248,10 +254,11 @@ def sense_shown(e: Entry, jd_text: str) -> bool:
     # Casing is evidence only for tool names ("Go", "Excel"); a concept word
     # checked by its requirements line ("Testing", "AI") matches in any case.
     has_caps = any(c.isupper() for c in e.term) and not e.requirement_line
-    for before, line in _occurrences(e.term, where, exact_case=has_caps):
+    for before, after, line in _occurrences(e.term, where, exact_case=has_caps):
         if has_caps:
-            # Tool casing, not starting a line or sentence ("Go through", "Excel at").
-            if not _sentence_start(before):
+            # Tool casing, not starting a line or sentence ("Go through", "Excel
+            # at"), unless it is a list item there ("- Rust and WebAssembly").
+            if not _sentence_start(before) or _ITEM_FOLLOW.match(after):
                 return True
         elif req is None or where is req or line.strip() in req:
             # A lower-case term counts on a requirements line (any line when the

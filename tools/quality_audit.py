@@ -253,13 +253,14 @@ def load_gold(set_dir: Path) -> dict:
     return (yaml.safe_load(p.read_text()) or {}).get("jobs") or {}
 
 
-def _same(a: str, b: str) -> bool:
-    """A predicted keyword and a gold skill name are the same skill: same family
-    key, or one names the other ("Python programming" / "Python")."""
+def _same(pred: str, gold: str) -> bool:
+    """A predicted keyword covers a gold skill: the same family key, or the
+    keyword is a more specific form of it ("Python programming" covers
+    "Python"). Never a fragment of it: "requests" does not cover "Pull
+    requests", nor "Google" "Google Ads" (that inflated recall before #188)."""
     from src.scorer.keywords import canonical_key, matches, norm
 
-    return (canonical_key(a) == canonical_key(b)
-            or matches(a, norm(b)) or matches(b, norm(a)))
+    return canonical_key(pred) == canonical_key(gold) or matches(gold, norm(pred))
 
 
 def _first(items, pred):
@@ -268,7 +269,10 @@ def _first(items, pred):
 
 def score_gold(job: dict, gold: dict) -> dict:
     """Per-job parse / type / match numbers against its gold label."""
-    g_sk = gold.get("skills") or []
+    # Fields, industries, soft skills and credentials are not keywords (#188
+    # operator rule); they are counted apart, never as missed keywords.
+    NOT_KW = {"domain", "soft", "credential"}
+    g_sk = [g for g in gold.get("skills") or [] if g.get("type") not in NOT_KW]
     pred = job.get("keywords")
     if pred is None:  # never scored (hard filter): fall back to the parse lists
         pred = ([{"token": t, "required": True, "type": None} for t in _required_tokens(job["required_skills"])]
