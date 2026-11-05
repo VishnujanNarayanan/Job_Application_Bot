@@ -150,6 +150,9 @@ class Applied(Base):
     final_score: Mapped[float | None] = mapped_column(Float)
     gap_skills: Mapped[Any | None] = mapped_column(JSONB)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The Telegram message it was sent as: {"id", "text", "markup"} (#186), so
+    # a late sibling (same role, another city or opening) can edit it.
+    telegram_message: Mapped[Any | None] = mapped_column(JSONB)
     # pending | applied | dismissed — set by the operator from the dashboard,
     # which asks "did you apply?" when they return from the job posting.
     user_status: Mapped[str] = mapped_column(Text, default="pending")

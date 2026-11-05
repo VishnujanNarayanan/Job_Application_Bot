@@ -122,8 +122,14 @@ def send_match_notification(
     title_alias: str | None = None,
     resume_urls: dict[str, str] | None = None,
     resume_pdf: bytes | None = None,
-) -> None:
+    siblings: list[tuple[str | None, str | None]] | None = None,
+) -> dict | None:
     """Send a per-match Telegram message with apply + resume links.
+
+    ``siblings``: (location, apply url) of the role's other openings (#186),
+    listed under the match instead of each sent on its own. Returns the
+    message as ``applied.telegram_message`` keeps it ({"id", "text",
+    "markup"}, text without the sibling lines) so a late sibling can edit it.
 
     Architecture §8 format:
         🎯 {score}
@@ -171,7 +177,8 @@ def send_match_notification(
     if gap_skills:
         text_lines += ["", f"Gap skills: {', '.join(gap_skills)}"]
 
-    text = "\n".join(line for line in text_lines if line is not None)
+    base_text = "\n".join(line for line in text_lines if line is not None)
+    text = with_sibling_lines(base_text, job.location, siblings)
 
     apply_url = fields["apply_url"]
     resume_urls = resume_urls or {}
@@ -238,7 +245,60 @@ def send_match_notification(
             log.error("resume_file_send_failed", job_id=job.job_id, fmt="pdf", error=str(exc))
 
     log.info("notification_sent", job_id=job.job_id, score=result.final_score,
-             resume="file" if resume_pdf is not None else "links")
+             resume="file" if resume_pdf is not None else "links", siblings=len(siblings or []))
+    message_id = getattr(message, "message_id", None)
+    if message_id is None:
+        return None
+    try:
+        markup = keyboard.to_dict() if keyboard is not None else None
+    except Exception:  # noqa: BLE001 - the stored copy is a convenience
+        markup = None
+    return {"id": message_id, "text": base_text, "markup": markup}
+
+
+def with_sibling_lines(base_text: str, head_location: str | None,
+                       siblings: list[tuple[str | None, str | None]] | None) -> str:
+    """The match text with its role's other openings listed under it (#186)."""
+    from src.ats_dedupe import sibling_lines
+
+    lines = sibling_lines(head_location, siblings or [])
+    return base_text + ("\n\n" + "\n".join(lines) if lines else "")
+
+
+def update_match_siblings(stored: dict, head_location: str | None,
+                          siblings: list[tuple[str | None, str | None]]) -> bool:
+    """Rewrite a sent match message with its current list of other openings
+    (a late sibling arrived, #186). The buttons are sent again: Telegram
+    drops them from an edited message otherwise. False when it failed."""
+    if not stored or not stored.get("id"):
+        return False
+    text = with_sibling_lines(stored.get("text") or "", head_location, siblings)
+
+    async def edit():
+        async with Bot(token=_env_or_die("TELEGRAM_BOT_TOKEN")) as bot:
+            markup = InlineKeyboardMarkup.de_json(stored["markup"], bot) if stored.get("markup") else None
+            await bot.edit_message_text(chat_id=_env_or_die("TELEGRAM_CHAT_ID"), message_id=stored["id"],
+                                        text=text, parse_mode="Markdown", reply_markup=markup)
+    try:
+        asyncio.run(edit())
+        return True
+    except Exception as exc:  # noqa: BLE001 - "message is not modified", deleted, ...
+        log.warning("match_edit_failed", message_id=stored.get("id"), error=str(exc)[:200])
+        return False
+
+
+def send_quiet_note(text: str, *, reply_to: int | None = None) -> None:
+    """A message with no notification sound (``disable_notification``),
+    threaded under ``reply_to`` when given: a late sibling's new city (#186)."""
+    async def send():
+        async with Bot(token=_env_or_die("TELEGRAM_BOT_TOKEN")) as bot:
+            kwargs = dict(chat_id=_env_or_die("TELEGRAM_CHAT_ID"), text=text, parse_mode="Markdown",
+                          disable_notification=True, disable_web_page_preview=True)
+            if reply_to:
+                kwargs["reply_to_message_id"] = reply_to
+                kwargs["allow_sending_without_reply"] = True
+            await bot.send_message(**kwargs)
+    asyncio.run(send())
 
 
 async def _send_match(text: str, keyboard=None):
@@ -300,6 +360,7 @@ _OUTCOME_LABELS = (
     ("HARD_FILTER_LAYER_3", "Too many years required"),
     ("LOW_SCORE", "Score below threshold"),
     ("BUILD_FAILURE", "Resume build failed"),
+    ("SIBLING", "Same role as another job (listed in its message)"),
     ("NOT_REACHED", "Not reached (carried to next run)"),
 )
 
@@ -353,6 +414,8 @@ def ats_poll_done_text(stats) -> str:
         parts.append(f"{stats.requeued} re-sent from an interrupted run")
     if stats.duplicates:
         parts.append(f"{stats.duplicates} already found on LinkedIn/Naukri")
+    if getattr(stats, "repeat_requisitions", 0):
+        parts.append(f"{stats.repeat_requisitions} repeats of a job on another board")
     if stats.closed:
         parts.append(f"{stats.closed} closed")
     if stats.failed:
