@@ -120,7 +120,8 @@ def test_one_requirement_in_two_spellings_counts_once():
         nice_to_have=["REST API"], responsibilities=[],
     )
     tokens = [k.token for k in kw.jd_keywords(parsed)]
-    assert tokens == ["REST APIs", "Postgres", "Python"]
+    # The registry names each skill once, by its own name (#188/#189).
+    assert tokens == ["REST APIs", "PostgreSQL", "Python"]
 
 
 def test_gap_skills_read_bullets_and_spellings():

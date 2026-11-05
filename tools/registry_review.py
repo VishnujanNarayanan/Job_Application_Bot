@@ -29,7 +29,7 @@ from pathlib import Path
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[1]
-_ORDER = ["term", "label", "note", "by"]
+_ORDER = ["term", "label", "means", "note", "by"]
 
 
 def _pending(args) -> int:

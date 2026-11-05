@@ -53,7 +53,7 @@ def compute_gap_skills(required: list[str], pool: list[str], bullets: tuple[str,
 
     # Only skills can be gaps (#188): "communication", "Computer Science",
     # "operations" were listed as gaps in most matches.
-    tokens = registry.not_subsumed(registry.admitted(tokens, jd_text), jd_text)
+    tokens = registry.skills_of(tokens, jd_text)
     evidence = [norm(s) for s in pool] + list(bullets)
     return [t for t in tokens if not any(matches(t, e) for e in evidence)]
 

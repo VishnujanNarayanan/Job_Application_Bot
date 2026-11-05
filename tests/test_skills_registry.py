@@ -32,6 +32,9 @@ def reg(monkeypatch):
         e("Data Engineering", "domain"), e("communication", "soft"), e("Computer Science", "credential"),
     ]))
     monkeypatch.setattr(reg_mod, "load", lambda: r)
+    from src.scorer import keywords as _kw
+
+    _kw.match_keys.cache_clear()
     # keywords.term_type reads the learned vocabulary from the database; the
     # tests stay offline.
     monkeypatch.setattr("src.parser._vocabulary", lambda: ())
@@ -192,15 +195,6 @@ def test_review_apply_merges_and_keeps_the_operators_labels(tmp_path, monkeypatc
     assert rr.main(["apply", str(dec)]) == 1
 
 
-def test_a_term_inside_a_longer_one_is_not_a_second_keyword():
-    jd = "Deep understanding of CI/CD and data pipelines. We also use Azure OpenAI."
-    assert reg_mod.not_subsumed(["CI/CD", "CI", "data pipelines", "pipelines", "Azure OpenAI", "Azure"], jd) == [
-        "CI/CD", "data pipelines", "Azure OpenAI"]
-    # Named on its own somewhere, it stays.
-    jd2 = "CI/CD in GitHub Actions; a CI server we run ourselves. Azure OpenAI and Azure Functions."
-    assert reg_mod.not_subsumed(["CI/CD", "CI", "Azure OpenAI", "Azure"], jd2) == ["CI/CD", "CI", "Azure OpenAI", "Azure"]
-
-
 def test_a_name_written_in_lower_case_is_not_the_name(reg):
     assert not reg.admits("Teams", "Collaborate with backend teams and Kafka engineers.")
     assert reg.admits("Teams", "Tools: Exchange, SharePoint, Teams.")
@@ -209,3 +203,26 @@ def test_a_name_written_in_lower_case_is_not_the_name(reg):
 def test_a_skill_far_away_in_the_sentence_is_not_evidence(reg):
     long = "Go ahead and coordinate the whole incident review process with everyone involved in Python."
     assert not reg.admits("Go", long)
+
+
+def test_terms_become_the_skills_written_for_them(monkeypatch):
+    from src.scorer import keywords as kw
+
+    def e(term, label="approve", means=()):
+        return term.casefold(), (Entry(term=term, label=label, means=tuple(means)), False)
+
+    r = build(dict([
+        e("CI/CD"), e("CI", means=["CI/CD"]), e("CI/CD practices", means=["CI/CD"]),
+        e("Agile"), e("Scrum"), e("Agile/Scrum methodologies", means=["Agile", "Scrum"]),
+        e("Glue"), e("AWS Glue", means=["Glue"]), e("Amazon Glue", means=["Glue"]),
+        e("responsible AI", "domain"), e("responsible AI practices", means=["responsible AI"]),
+    ]))
+    monkeypatch.setattr(reg_mod, "load", lambda: r)
+    monkeypatch.setattr(reg_mod, "enabled", lambda: True)
+    kw.match_keys.cache_clear()
+    terms = ["CI/CD", "CI", "CI/CD practices", "Agile/Scrum methodologies", "AWS Glue", "responsible AI practices"]
+    assert reg_mod.skills_of(terms) == ["CI/CD", "Agile", "Scrum", "Glue"]
+    # A profile line in any spelling the registry maps to the skill shows it.
+    assert kw.matches("Glue", kw.norm("Catalogued the lake in AWS Glue"))
+    assert kw.matches("Agile", kw.norm("Worked to Agile/Scrum methodologies"))
+    kw.match_keys.cache_clear()

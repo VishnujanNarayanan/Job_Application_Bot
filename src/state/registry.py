@@ -59,6 +59,9 @@ class Entry:
     term: str
     label: str
     note: str = ""
+    #: The skill(s) this term means, written by hand ("Agile/Scrum
+    #: methodologies" -> Agile, Scrum; "AWS Glue" -> Glue). Empty: itself.
+    means: tuple[str, ...] = ()
 
 
 #: When two registry terms fold to one matching key ("React" / "React.js"),
@@ -71,6 +74,13 @@ class Registry:
     #: Exact entries by lower-cased term, and the fallback by matching key.
     exact: dict[str, Entry] = field(default_factory=dict)
     folded: dict[str, Entry] = field(default_factory=dict)
+    #: Skill (lower-cased) -> every term that means it, the skill included.
+    aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def skills(self, term: str) -> tuple[str, ...]:
+        """The skill(s) ``term`` means: its hand-written mapping, else itself."""
+        e = self.entry(term)
+        return e.means if e is not None and e.means else (term,)
 
     def entry(self, term: str) -> Entry | None:
         """The term's own entry, else the entry of its spelling family
@@ -114,6 +124,7 @@ def _load_file(path: Path) -> dict[str, tuple[Entry, bool]]:
             term=term,
             label=label,
             note=str(e.get("note") or ""),
+            means=tuple(str(m) for m in e.get("means") or ()),
         ), e.get("by") == "operator")
     return out
 
@@ -128,7 +139,12 @@ def build(raw: dict[str, tuple[Entry, bool]]) -> Registry:
         cur = folded.get(k)
         if cur is None or (by_operator, -_STRICTNESS[e.label]) > (cur[1], -_STRICTNESS[cur[0].label]):
             folded[k] = (e, by_operator)
-    return Registry(exact, {k: e for k, (e, _op) in folded.items()})
+    aliases: dict[str, set[str]] = {}
+    for e, _op in raw.values():
+        for skill in e.means or (e.term,):
+            aliases.setdefault(skill.casefold(), {skill}).add(e.term)
+    return Registry(exact, {k: e for k, (e, _op) in folded.items()},
+                    {k: tuple(sorted(v)) for k, v in aliases.items()})
 
 
 @lru_cache(maxsize=1)
@@ -171,28 +187,39 @@ def admitted(terms, jd_text: str | None = None) -> list[str]:
     return [t for t in terms if reg.admits(t, jd_text)]
 
 
-def not_subsumed(terms: list[str], jd_text: str | None) -> list[str]:
-    """Drop a term whose every mention in the advert lies inside a longer term
-    of the same list: "CI" inside "CI/CD", "pipelines" inside "data
-    pipelines", "Azure" inside "Azure OpenAI". The longer term is the skill;
-    the short one counts only where the advert also names it on its own."""
-    if not jd_text or len(terms) < 2:
-        return list(terms)
-    from src.scorer.keywords import clean_ad_text
+def skills_of(terms, jd_text: str | None = None) -> list[str]:
+    """The advert's terms as the skills they mean, admitted terms only, each
+    skill once, in first-mention order.
 
-    text = clean_ad_text(jd_text)
-    spans = {}
+    The mapping is written by hand in the registry ("CI/CD practices" ->
+    CI/CD, "Agile/Scrum methodologies" -> Agile + Scrum, "AWS Glue" -> Glue),
+    so a skill is one keyword however the advert spells it. A mapped skill
+    the registry blocks (a domain such as responsible AI) is not a keyword."""
+    if not enabled():
+        return list(terms)
+    reg = load()
+    out: list[str] = []
+    seen: set[str] = set()
     for t in terms:
-        pat = re.compile(rf"(?<![\w+#.-]){re.escape(t)}(?![\w+#-]|\.\w)", re.IGNORECASE)
-        spans[t] = [m.span() for m in pat.finditer(text)]
-    out = []
-    for t in terms:
-        own = spans[t]
-        longer = [s for u in terms if len(u) > len(t) and t.casefold() in u.casefold() for s in spans[u]]
-        inside = own and longer and all(any(a <= s and e <= b for a, b in longer) for s, e in own)
-        if not inside:
-            out.append(t)
+        if not reg.admits(t, jd_text):
+            continue
+        for skill in reg.skills(t):
+            e = reg.entry(skill)
+            if e is not None and e.label in BLOCKED:
+                continue
+            k = skill.casefold()
+            if k not in seen:
+                seen.add(k)
+                out.append(skill)
     return out
+
+
+def aliases(skill: str) -> tuple[str, ...]:
+    """Every term the registry maps to ``skill`` ("Glue" -> AWS Glue, Amazon
+    Glue...), so a profile line in any of those spellings shows the skill."""
+    if not enabled():
+        return ()
+    return load().aliases.get(skill.casefold(), ())
 
 
 # --- sense rules -----------------------------------------------------------------------
