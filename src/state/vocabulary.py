@@ -23,7 +23,7 @@ import re
 from collections import defaultdict
 
 import structlog
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -84,11 +84,13 @@ def rebuild(session: Session, *, min_jobs: int | None = None) -> int:
     # LLM-parsed jobs only (#71): a dictionary-parsed job's skills came from
     # this vocabulary, so counting them would only re-confirm it. Null is a
     # row parsed before routing existed, which was always the LLM.
-    jobs = session.execute(
-        select(AllJobs.required_skills, AllJobs.nice_to_have)
-        .where(AllJobs.required_skills.isnot(None))
-        .where(or_(AllJobs.parse_mode.is_(None), AllJobs.parse_mode == "llm"))
-    ).all()
+    # Only the model's own skills (#188): required_skills also holds what the
+    # vocabulary itself added to each parse, so counting it re-confirmed every
+    # term on every rebuild ("make" in 746 stored lists). Rows from before the
+    # column existed are not counted again; their terms keep their last count.
+    jobs = [(raw, []) for (raw,) in session.execute(
+        select(AllJobs.llm_skills_raw).where(AllJobs.llm_skills_raw.isnot(None))
+    ).all()]
 
     spellings: dict[str, defaultdict[str, int]] = {}
     job_counts: defaultdict[str, int] = defaultdict(int)

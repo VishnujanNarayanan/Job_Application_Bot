@@ -56,6 +56,7 @@ def parse(job: AllJobs, *, complete: CompleteFn | None = None) -> JDParsed:
     jd_text = clean_ad_text(job.jd_text or "")
     parsed.required_skills = grounded_skills(parsed.required_skills, jd_text)
     parsed.nice_to_have = grounded_skills(parsed.nice_to_have, jd_text)
+    parsed._llm_skills = list(dict.fromkeys([*parsed.required_skills, *parsed.nice_to_have]))
     parsed.required_skills = with_pool_skills(parsed.required_skills, jd_text)
     parsed.required_skills = with_vocabulary_skills(parsed.required_skills, jd_text)
     return parsed
@@ -208,6 +209,9 @@ def apply_to_row(job: AllJobs, parsed: JDParsed) -> None:
     job.salary_min_lpa = parsed.salary_min_lpa
     job.salary_max_lpa = parsed.salary_max_lpa
     job.salary_currency = parsed.salary_currency
+    # Only an LLM parse sets it; a dictionary parse leaves the column alone.
+    if getattr(parsed, "_llm_skills", None) is not None:
+        job.llm_skills_raw = parsed._llm_skills
 
 
 # ---------------------------------------------------------------------------

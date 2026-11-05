@@ -62,6 +62,10 @@ class AllJobs(Base):
     required_skills: Mapped[Any | None] = mapped_column(JSONB)
     nice_to_have: Mapped[Any | None] = mapped_column(JSONB)
     responsibilities: Mapped[Any | None] = mapped_column(JSONB)
+    # The LLM's own skills (grounded, before pool/vocabulary additions), #188.
+    # The vocabulary is rebuilt from this, never from required_skills, which
+    # holds the vocabulary's own additions.
+    llm_skills_raw: Mapped[Any | None] = mapped_column(JSONB)
     role_summary: Mapped[str | None] = mapped_column(Text)
     team_or_product: Mapped[str | None] = mapped_column(Text)
     years_required: Mapped[int | None] = mapped_column(Integer)

@@ -519,6 +519,10 @@ scoring:
   # as before the registry; kept for before/after replays.
   registry:
     enabled: true
+    # A term the registry has no label for yet (new in the vocabulary or the
+    # LLM parse): "keep" = a keyword until the weekly review labels it, "drop"
+    # = left out until approved. Decided on the #179 benchmark.
+    pending: keep
   final:
     # final = min(max_score, fit x success_prob)
     # success_prob is the applicant multiplier (#26): early postings are

@@ -91,7 +91,7 @@ class Registry:
         the term is not admitted."""
         e = self.entry(term)
         if e is None:
-            return True  # pending: unchanged until reviewed
+            return pending_admitted()  # not reviewed yet
         if e.label == APPROVE:
             return True
         if e.label in BLOCKED:
@@ -140,6 +140,15 @@ def load() -> Registry:
     if not raw:
         log.warning("skills_registry_empty", path=str(PUBLIC))
     return build(raw)
+
+
+def pending_admitted() -> bool:
+    """``scoring.registry.pending``: "keep" (default) treats a term the registry
+    does not know as a keyword until it is reviewed; "drop" leaves it out."""
+    from src.config import settings
+
+    reg = settings.scoring.get("registry")
+    return str(reg.get("pending", "keep") if reg is not None else "keep") != "drop"
 
 
 def enabled() -> bool:

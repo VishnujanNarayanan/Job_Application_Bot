@@ -116,3 +116,77 @@ def test_the_committed_registry_loads():
     assert r.label("Python") == "approve"
     assert r.label("application") == "reject"
     reg_mod.load.cache_clear()
+
+
+# --- #188 PR 2: the model's own skills, pending terms, the weekly review ---------------
+
+
+def test_parse_keeps_the_models_own_skills_apart(monkeypatch):
+    """The vocabulary must learn only from what the model extracted, not from
+    the pool/vocabulary additions that follow it."""
+    import src.parser as parser_module
+    from src.llm.schemas import JDParsed
+    from src.parser import apply_to_row, parse
+    from src.state.models import AllJobs
+
+    monkeypatch.setattr(parser_module, "_pool_terms", lambda: ("Docker",))
+    monkeypatch.setattr(parser_module, "_vocabulary", lambda: (("Kafka", "kafka"),))
+    monkeypatch.setattr(reg_mod, "enabled", lambda: False)
+    job = AllJobs(job_id="j", company="c", role="r", site="s",
+                  jd_text="We use Python and SQL daily, with Docker and Kafka.")
+    raw = JDParsed(role_summary="x", role_category="data", role_level="junior", years_required=1,
+                   required_skills=["Python"], nice_to_have=["SQL"])
+    parsed = parse(job, complete=lambda *a, **k: raw)
+    assert {"Docker", "Kafka"} <= set(parsed.required_skills)       # additions are used
+    assert parsed._llm_skills == ["Python", "SQL"]                  # but kept apart
+    apply_to_row(job, parsed)
+    assert job.llm_skills_raw == ["Python", "SQL"]
+    # Never part of what the model is asked for.
+    assert not any("llm_skills" in f for f in JDParsed.model_json_schema()["properties"])
+
+
+def test_a_dictionary_parse_does_not_write_the_column():
+    from src.llm.schemas import JDParsed
+    from src.parser import apply_to_row
+    from src.state.models import AllJobs
+
+    job = AllJobs(job_id="j", company="c", role="r", site="s", jd_text="x")
+    apply_to_row(job, JDParsed(role_summary="x", role_category="data", role_level="junior",
+                               years_required=1, required_skills=["Python"]))
+    assert job.llm_skills_raw is None
+
+
+def test_pending_terms_follow_the_setting(reg, monkeypatch):
+    assert reg.admits("Snowpark")
+    monkeypatch.setattr(reg_mod, "pending_admitted", lambda: False)
+    assert not reg.admits("Snowpark")
+    assert reg.admits("Python")
+
+
+def test_review_apply_merges_and_keeps_the_operators_labels(tmp_path, monkeypatch):
+    import json
+
+    import yaml
+
+    from tools import registry_review as rr
+
+    pub, loc = tmp_path / "pub.yaml", tmp_path / "loc.yaml"
+    pub.write_text("# header\nterms:\n  \"python\": {term: Python, label: approve, by: operator}\n")
+    monkeypatch.setattr(reg_mod, "PUBLIC", pub)
+    monkeypatch.setattr(reg_mod, "LOCAL", loc)
+    monkeypatch.setattr(rr, "_pool_only", lambda t: t == "Fintech payments")
+    dec = tmp_path / "d.json"
+    dec.write_text(json.dumps([
+        {"term": "Python", "label": "reject"},                    # operator's label kept
+        {"term": "Snowpark", "label": "approve"},
+        {"term": "Gemini", "label": "sense", "note": "Google Gemini"},
+        {"term": "Fintech payments", "label": "domain"},          # pool-only -> local file
+    ]))
+    assert rr.main(["apply", str(dec)]) == 0
+    p = yaml.safe_load(pub.read_text())["terms"]
+    assert p["python"]["label"] == "approve" and p["snowpark"]["label"] == "approve"
+    assert p["gemini"] == {"term": "Gemini", "label": "sense", "note": "Google Gemini"}
+    assert pub.read_text().startswith("# header\n")
+    assert yaml.safe_load(loc.read_text())["terms"]["fintech payments"]["label"] == "domain"
+    dec.write_text(json.dumps([{"term": "X", "label": "nonsense"}]))
+    assert rr.main(["apply", str(dec)]) == 1

@@ -56,6 +56,8 @@ data/index/*
 !data/index/.gitkeep
 data/reports/*
 !data/reports/.gitkeep
+# Weekly skills-registry review files (#188): advert lines.
+data/registry/
 # Match-quality benchmark (#179): JD text, the profile and gold labels.
 data/benchmark/
 data/tailored/*
