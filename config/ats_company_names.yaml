@@ -318,10 +318,12 @@ oracle:
   egmk: Calderys            # one site titled "APAC/EMEA Career Opportunities"
   fa-epba-saasfaprod1: Tata Realty and Infrastructure   # titled "HR"; TRIL logo
   fa-eosa-saasfaprod1: L&L Products                     # titled "LLP"
+  fa-espx-saasfaprod1: Cummins   # sites titled "Cummins All Functions", "Cummins Veterans", ...
   fa-etbm-saasfaprod1: IBS Software
   fa-evlo-saasfaprod1: Emirates NBD
   fa-exdu-saasfaprod1: Daimler Truck                    # titled "Our vacancies"
   fa-exdu-dev2-saasfaprod1: Daimler Truck
+  ehpv: DP World            # one site titled "We One"
   hcib: Hill International  # titled "Hill Minimal 112022"
   hdpc: Goldman Sachs       # "Candidate Experience Site - Campus/Lateral"; the jobs name Goldman Sachs
   iabyiz: SAEL
