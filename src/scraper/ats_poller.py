@@ -654,6 +654,47 @@ def fetch_details(postings: list[ats.Posting], lanes: dict[str, Lane], *, delay:
     return {p.job_id: ok for p, ok in run_lanes(lanes, work, fetch_detail, budget_s)}
 
 
+def fetch_names(boards: list[Board], lanes: dict[str, Lane], *, delay: float = 1.0,
+                budget_s: float | None = None, parallel: int = 1) -> dict[tuple[str, str], str]:
+    """(ats, board_id) -> the company name the board's careers page gives,
+    for boards with no name yet (#182). Boards whose page names nobody are
+    left out (their postings fall back to the posting's company, then the id)."""
+    found: dict[tuple[str, str], str] = {}
+    work: dict[str, list] = {}
+    for b in boards:
+        if b.name:
+            continue
+        known = ats.known_name(b.ats, b.board_id)   # curated: no request, and it beats the page
+        if known:
+            found[(b.ats, b.board_id)] = known
+        elif ats.name_page_url(b.ats, b.board_id):
+            work.setdefault(b.ats, []).append(b)
+    if not work:
+        return found
+    for name in work:
+        lanes.setdefault(name, Lane(name, delay))
+    work = split_by_host(work, lanes, parallel=parallel, delay=delay)
+
+    def one(lane: Lane, b: Board) -> str | None:
+        status, body = lane.get(ats.name_page_url(b.ats, b.board_id))
+        return ats.board_page_name(b.ats, body, b.board_id) if status == 200 else None
+
+    found.update({(b.ats, b.board_id): n for b, n in run_lanes(lanes, work, one, budget_s) if n})
+    return found
+
+
+def save_names(session, names: dict[tuple[str, str], str]) -> None:
+    """Write found names to ats_boards, with the company key they give, so
+    each board's page is read once."""
+    from sqlalchemy import update
+
+    from src.state.models import AtsBoard
+
+    for (a, b), name in names.items():
+        session.execute(update(AtsBoard).where(AtsBoard.ats == a, AtsBoard.board_id == b)
+                        .values(board_name=name, company_key=ats.key(name) or b))
+
+
 # --- Bookkeeping -------------------------------------------------------------------
 
 #: ``classify(posting)`` returns None to send a posting on, a reason to record
