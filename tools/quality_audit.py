@@ -259,8 +259,13 @@ def _same(pred: str, gold: str) -> bool:
     "Python"). Never a fragment of it: "requests" does not cover "Pull
     requests", nor "Google" "Google Ads" (that inflated recall before #188)."""
     from src.scorer.keywords import canonical_key, matches, norm
+    from src.state import registry
 
-    return canonical_key(pred) == canonical_key(gold) or matches(gold, norm(pred))
+    if canonical_key(pred) == canonical_key(gold) or matches(gold, norm(pred)):
+        return True
+    # The same skill under the registry's hand-written map ("Glue" / "AWS Glue").
+    reg = registry.load()
+    return bool({s.casefold() for s in reg.skills(pred)} & {s.casefold() for s in reg.skills(gold)})
 
 
 def _first(items, pred):

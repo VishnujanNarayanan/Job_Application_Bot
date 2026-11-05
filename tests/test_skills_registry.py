@@ -226,3 +226,16 @@ def test_terms_become_the_skills_written_for_them(monkeypatch):
     assert kw.matches("Glue", kw.norm("Catalogued the lake in AWS Glue"))
     assert kw.matches("Agile", kw.norm("Worked to Agile/Scrum methodologies"))
     kw.match_keys.cache_clear()
+
+
+def test_weekly_review_suggests_the_skill_a_new_term_names(monkeypatch):
+    from tools import registry_review as rr
+
+    def e(term, label="approve", means=()):
+        return term.casefold(), (Entry(term=term, label=label, means=tuple(means)), False)
+
+    r = build(dict([e("CI/CD"), e("CI/CD pipelines", means=["CI/CD"]), e("Kafka"), e("Error handling"), e("logging")]))
+    approved = sorted((x.term for x in r.exact.values()), key=len, reverse=True)
+    assert rr._suggest("GitLab CI/CD pipelines", r, approved) == ["CI/CD"]
+    assert rr._suggest("Error handling and logging", r, approved) == ["Error handling", "logging"]
+    assert rr._suggest("Kafka Streams", r, approved) == ["Kafka"]
