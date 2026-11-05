@@ -661,6 +661,10 @@ def load_profile(session: Session, *, json_path: Path | None = None) -> Profile:
     ).all():
         if b.parent_type == "skill":
             skills.append(SkillCand(b.text, _vec(b.embedding)))
+            from src.state import registry
+
+            # Skills-pool lines are profile text too (gap skills read them).
+            registry.remember_profile_text(b.text)
         else:
             rows[b.bullet_id] = b
 

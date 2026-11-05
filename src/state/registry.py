@@ -356,3 +356,68 @@ def sense_shown(e: Entry, jd_text: str) -> bool:
     text = clean_ad_text(jd_text)
     pat = re.compile(rf"(?<![\w+#.-]){re.escape(e.term)}(?![\w+#-]|\.\w)", re.IGNORECASE)
     return any(_occurrence_is_skill(e, text, m.start(), m.end()) for m in pat.finditer(text))
+
+
+# --- sense terms in the operator's own profile ---------------------------------------
+#
+# The matcher sees normalised (lower-cased) text, which has lost what tells a
+# name from a word: "SQL window functions" folds to "window" and met Windows,
+# "PyTorch (as a gradient oracle)" met Oracle, "the power to repoint" met
+# Power. The profile's own lines are registered with their original text, so a
+# sense skill is judged in a profile line exactly as in an advert.
+
+_PROFILE_RAW: dict[str, str] = {}
+
+
+def remember_profile_text(raw: str) -> None:
+    """Register a profile line (bullet or skills-pool entry) by its normalised
+    form, so ``shown_in_profile`` can read its original text."""
+    from src.scorer.keywords import norm
+
+    if raw:
+        _PROFILE_RAW.setdefault(norm(raw), raw)
+
+
+@lru_cache(maxsize=65536)
+def _sense_in_line(term: str, raw: str) -> bool:
+    """A profile line is the operator's own careful writing, so a sense skill
+    counts unless the line shows the everyday sense: the term absent as itself
+    ("window functions" is not Windows), a name written in lower case
+    ("gradient oracle", "backend teams", "the power to"), or a verb ("make").
+    Adverts get the stricter rule, which needs positive evidence
+    (``sense_shown``)."""
+    from src.scorer.keywords import clean_ad_text
+
+    e = load().entry(term)
+    if e is None:
+        return True
+    text = clean_ad_text(raw)
+    # A dotted name counts as the term itself: "Node.js" for Node.
+    pat = re.compile(rf"(?<![\w+#.-]){re.escape(e.term)}(?![\w+#-])", re.IGNORECASE)
+    for m in pat.finditer(text):
+        written = text[m.start():m.end()]
+        if e.term[:1].isupper() and written.islower():
+            continue
+        doc = _doc(text)
+        span = doc.char_span(m.start(), m.end(), alignment_mode="expand")
+        if span is not None and len(span):
+            nxt = doc[span.end].text if span.end < len(doc) else ""
+            if span.root.pos_ in _VERBISH and nxt not in (":", "(", "."):
+                continue
+        return True
+    return False
+
+
+def shown_in_profile(tok: str, norm_text: str) -> bool | None:
+    """For a sense skill and a registered profile line: whether the line uses
+    the term in its skill sense. None when the rule does not apply (not a sense
+    term, the registry off, or text that is not a profile line)."""
+    if not enabled():
+        return None
+    raw = _PROFILE_RAW.get(norm_text)
+    if raw is None:
+        return None
+    e = load().entry(tok)
+    if e is None or e.label != SENSE:
+        return None
+    return _sense_in_line(e.term, raw)

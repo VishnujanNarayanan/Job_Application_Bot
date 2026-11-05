@@ -239,3 +239,28 @@ def test_weekly_review_suggests_the_skill_a_new_term_names(monkeypatch):
     assert rr._suggest("GitLab CI/CD pipelines", r, approved) == ["CI/CD"]
     assert rr._suggest("Error handling and logging", r, approved) == ["Error handling", "logging"]
     assert rr._suggest("Kafka Streams", r, approved) == ["Kafka"]
+
+
+def test_sense_skills_in_profile_lines_need_their_sense(reg):
+    from src.scorer import keywords as kw
+
+    kw.match_keys.cache_clear()
+    reg_mod._sense_in_line.cache_clear()
+    for line in ("Wrote SQL window functions to rank rows.", "PyTorch (as a gradient oracle)",
+                 "Configured the service, giving an operator the power to repoint it."):
+        reg_mod.remember_profile_text(line)
+    # Advert text (not a registered profile line) is judged by the advert rules, not here.
+    assert kw.matches("Teams", kw.norm("Collaborated with backend teams on Kafka."))
+    reg_mod.remember_profile_text("Shipped alerts to Microsoft Teams channels from Python.")
+    assert kw.matches("Teams", kw.norm("Shipped alerts to Microsoft Teams channels from Python."))
+    reg_mod.remember_profile_text("Collaborated with backend teams on Kafka.")
+    assert not kw.matches("Teams", kw.norm("Collaborated with backend teams on Kafka."))
+    spans, shown = kw.keyword_spans("Collaborated with backend teams on Kafka.", ["Teams", "Kafka"])
+    assert shown == {"Kafka"}
+    for line, term in (("Wrote SQL window functions to rank rows.", "Windows"),
+                       ("PyTorch (as a gradient oracle)", "Oracle")):
+        reg_mod.remember_profile_text(line)
+    # Profile lines: the everyday sense does not count, the skill sense does.
+    reg_mod.remember_profile_text("Ran Agile sprints with the team.")
+    assert kw.matches("Agile", kw.norm("Ran Agile sprints with the team."))
+    kw.match_keys.cache_clear()

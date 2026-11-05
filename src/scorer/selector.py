@@ -83,6 +83,9 @@ class BulletCand:
     def __post_init__(self) -> None:
         if not self.norm_text:
             self.norm_text = norm(self.text)
+        from src.state import registry
+
+        registry.remember_profile_text(self.text)
 
 
 @dataclass
@@ -144,6 +147,9 @@ class CommonCand:
     def __post_init__(self) -> None:
         if not self.norm_text:
             self.norm_text = norm(self.text)
+        from src.state import registry
+
+        registry.remember_profile_text(self.text)
 
 
 @dataclass

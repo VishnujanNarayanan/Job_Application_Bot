@@ -277,11 +277,18 @@ def canonical_key(tok: str) -> str:
 
 def matches(tok: str, norm_text: str) -> bool:
     """``hit``, widened by spelling rules and keyword families. ``norm_text`` MUST
-    already be normalised."""
-    if hit(tok, norm_text):
-        return True
+    already be normalised.
+
+    A sense skill ("Oracle", "Windows", "Power") in one of the operator's own
+    profile lines counts only where the line uses it in its skill sense
+    (``registry.shown_in_profile``)."""
     keys = match_keys(tok)
-    return bool(keys) and not keys.isdisjoint(_ngram_keys(norm_text))
+    found = hit(tok, norm_text) or (bool(keys) and not keys.isdisjoint(_ngram_keys(norm_text)))
+    if not found:
+        return False
+    from src.state import registry
+
+    return registry.shown_in_profile(tok, norm_text) is not False
 
 
 def _family_span(norm_text: str, keys: frozenset[str]) -> tuple[int, int] | None:
@@ -354,12 +361,18 @@ def keyword_spans(
     span counts as shown, because it is on the page inside that span. A token that
     only partly overlaps a kept span is neither kept nor shown.
     """
+    from src.state import registry
+
+    registry.remember_profile_text(text)
+    line_key = norm(text)
     norm_text, src = _norm_with_offsets(text)
     found: list[tuple[int, int, str]] = []
     for tok in tokens:
         t = norm(tok).strip()
         if not t:
             continue
+        if registry.shown_in_profile(tok, line_key) is False:
+            continue  # "gradient oracle" is not Oracle: no bold
         m = _boundary_re(t).search(norm_text)
         span = (m.start(), m.end()) if m else _family_span(norm_text, match_keys(tok))
         if span:
