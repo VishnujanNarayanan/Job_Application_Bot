@@ -86,6 +86,25 @@ def test_workable_postings_carry_the_account_name():
     assert ats.parse_list("workable", "acme", body)[0].company == "Acme Labs"
 
 
+@pytest.mark.parametrize("ats_name,board,title,name", [
+    ("workday", "kyndryl/wd5/kyndrylprofessionalcareers", "Professional Careers at Kyndryl", "Kyndryl"),
+    ("workday", "accenture/wd103/AvanadeCareers", "Avanade", "Avanade"),   # the site names the brand
+    ("workday", "chubb/wd5/External", "At Chubb we are driven by a powerful purpose", None),   # a slogan
+    ("workday", "ups/wd5/x", "upsjobs.com", None),   # a web address, not a name
+    ("rippling", "orderco", "Order.co", "Order.co"),
+    ("rippling", "texanabank", "Texana Bank, N.A.", "Texana Bank, N.A"),
+    ("rippling", "stocktwits", "Current openings at StockTwits", "StockTwits"),
+    ("rippling", "acme", "Come work with us!", None),
+    ("rippling", "acme", "Current Openings", None),
+    ("ashby", "bumble", "Bumble Inc.", "Bumble"),
+    ("lever", "coupa", "Coupa Software, Inc.", "Coupa Software"),
+    ("lever", "PPA", "Progressive Physician Associates", "Progressive Physician Associates"),
+    ("oracle", "fa-etvl-saasfaprod1.fa.ocs.oraclecloud.com/CX_1", "Zensar", "Zensar"),   # pods resemble nothing
+])
+def test_fit_name(ats_name, board, title, name):
+    assert ats.fit_name(ats_name, board, title) == name
+
+
 def test_name_pages():
     assert ats.name_page_url("oracle", "hcbt.fa.em2.oraclecloud.com/CX_1001") == \
         "https://hcbt.fa.em2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001"

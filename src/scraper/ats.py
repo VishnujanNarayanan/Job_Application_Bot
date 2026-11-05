@@ -817,13 +817,8 @@ _NOT_EMPLOYER_DOMAIN = {"oracle", "oraclecloud", "myworkday", "myworkdayjobs", "
                         "imgur", "emmi", "wp", "squarespace", "wixstatic", "hubspot", "ctfassets"}
 
 
-def board_page_name(ats: str, body: str) -> str | None:
-    """:func:`page_name`; for an Oracle site titled only "Candidate
-    Experience site", the domain its logo is on (cdn.tradeweb.com ->
-    "Tradeweb")."""
-    name = page_name(body)
-    if name or ats != "oracle":
-        return name
+def _logo_name(body: str) -> str | None:
+    """The domain an Oracle site's logo is on (cdn.tradeweb.com -> "Tradeweb")."""
     m = _OG_IMAGE_HOST.search(body or "")
     if not m:
         return None
@@ -834,6 +829,52 @@ def board_page_name(ats: str, body: str) -> str | None:
     if len(label) <= 2 or label in _NOT_EMPLOYER_DOMAIN:
         return None
     return label.capitalize()
+
+
+# "Professional Careers at Kyndryl", "Current openings at StockTwits".
+_AT_COMPANY = re.compile(r"^.*?\b(?:careers?|opportunities|openings|positions|roles|jobs?|vacancies)\s+(?:at|with)\s+(.+?)[.!]?$",
+                         re.I)
+_LEGAL = re.compile(r"(?:,?\s+(?:inc|llc|pllc|ltd|limited|corp|corporation|gmbh|plc|pvt|private)\.?)+\s*$", re.I)
+
+
+def fit_name(ats: str, board_id: str, name: str | None) -> str | None:
+    """A page title as the board's company name, or None. Outside Oracle the
+    name must resemble the board's own id: Rippling and Workday pages are
+    often titled with a slogan ("Come work with us!", "Confidence at every
+    turn"). Oracle ids are pod codes that resemble nothing; its titles name
+    the employer (252 of 262 boards, 2026-11-05)."""
+    if not name:
+        return None
+    m = _AT_COMPANY.match(name)
+    if m:
+        name = m.group(1)
+    name = _LEGAL.sub("", html.unescape(name)).strip(" ,.-")
+    if not name or _NOT_A_NAME.match(name) or len(name) > 60:
+        return None
+    if ats == "oracle":
+        return name
+    slug = re.sub(r"[^a-z0-9]", "", board_id.lower())
+    k = re.sub(r"[^a-z0-9]", "", name.lower())
+    first = re.sub(r"[^a-z0-9]", "", name.split()[0].lower())
+    # "PPA" for Progressive Physician Associates, "uei" for Universal Electronics Inc.
+    initials = "".join(w[0] for w in re.findall(r"[a-z0-9]+", name.lower()) if w not in ("of", "and", "the", "for"))
+    if len(k) >= 3 and (k in slug or slug in k or (len(first) >= 4 and first in slug)):
+        return name
+    if len(initials) >= 2 and (slug.startswith(initials) or initials.startswith(slug)) and len(slug) >= 2:
+        return name
+    import difflib
+
+    return name if difflib.SequenceMatcher(None, k, slug).ratio() >= 0.75 else None
+
+
+def board_page_name(ats: str, body: str, board_id: str = "") -> str | None:
+    """The company a board's careers page names (:func:`page_name`, checked
+    by :func:`fit_name`); for an Oracle site titled only "Candidate
+    Experience site", the domain its logo is on."""
+    name = fit_name(ats, board_id, page_name(body))
+    if name or ats != "oracle":
+        return name
+    return _logo_name(body)
 
 
 _KNOWN_NAMES: dict | None = None

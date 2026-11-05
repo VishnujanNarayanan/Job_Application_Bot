@@ -307,6 +307,9 @@ workday:
   xpel: XPEL
   ypo: YPO
   zeissgroup: ZEISS
+  silabs: Silicon Labs
+  lighting: Signify
+  rbs: NatWest Group
 
 oracle:
   ecnf: Tradeweb            # titled "Candidate Experience site"; logo on tradeweb.com

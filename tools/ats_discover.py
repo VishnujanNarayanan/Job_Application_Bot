@@ -814,7 +814,7 @@ def names(dry_run: bool) -> None:
     def fetch(lane, item):
         ident = item.board_id
         status, body = lane.get(atsmod.name_page_url(lane.name, ident))
-        name = atsmod.board_page_name(lane.name, body) if status == 200 else None
+        name = atsmod.board_page_name(lane.name, body, ident) if status == 200 else None
         with lock, NAMES.open("a") as f:
             f.write(json.dumps({"ats": lane.name, "id": ident, "name": name, "status": status}) + "\n")
             done[(lane.name, ident)] = name

@@ -677,7 +677,7 @@ def fetch_names(boards: list[Board], lanes: dict[str, Lane], *, delay: float = 1
 
     def one(lane: Lane, b: Board) -> str | None:
         status, body = lane.get(ats.name_page_url(b.ats, b.board_id))
-        return ats.board_page_name(b.ats, body) if status == 200 else None
+        return ats.board_page_name(b.ats, body, b.board_id) if status == 200 else None
 
     found.update({(b.ats, b.board_id): n for b, n in run_lanes(lanes, work, one, budget_s) if n})
     return found
