@@ -31,6 +31,7 @@ Front, in order (each skip is recorded in ``ats_postings.skipped``):
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from concurrent.futures import ThreadPoolExecutor
 import re
 import sys
@@ -40,6 +41,7 @@ from pathlib import Path
 
 import structlog
 
+from src import ats_dedupe
 from src.scraper import ats, ats_poller
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -270,12 +272,30 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     log.info("ats_recorded", boards=len(results), statements=statements,
              reached_and_left={t: f"{r}/{r + left}" for t, (r, left) in by_tier.items()})
 
+    # Names for boards that have none, from their careers page (#182): read
+    # once and saved, before the dedupe below, which matches on the name.
+    names = ats_poller.fetch_names(list({(b.ats, b.board_id): b for _p, b in candidates}.values()), lanes,
+                                   delay=delay, budget_s=60 * float(a.get("name_budget_minutes", 2)),
+                                   parallel=int(a.get("parallel_hosts", 1)))
+    if names:
+        ats_poller.save_names(session, names)
+        session.commit()
+        candidates = [(p, _named(b, names.get((b.ats, b.board_id)))) for p, b in candidates]
+    log.info("ats_board_names", found=len(names))
+
     # E: already on LinkedIn/Naukri -> keep that job, give it the ATS link.
     from src.state.models import AllJobs
 
     portal = ats_poller.portal_jobs(session, now, int(a.get("dedupe_days", 30)))
+    # D2: the same requisition on another board or site (#186): applying to
+    # one is applying to all, so the later copy is never parsed or sent.
+    repeats = ats_dedupe.repeat_requisitions(session, candidates, now)
     fresh = []
     for p, board in candidates:
+        if p.job_id in repeats:
+            stats.repeat_requisitions += 1
+            ats_poller.mark_skipped(session, p, f"duplicate_req:{repeats[p.job_id]}")
+            continue
         dup = ats_poller.portal_duplicate(portal, board.company_key or ats.key(p.company or board.board_id), p.title)
         if dup:
             stats.duplicates += 1
@@ -338,20 +358,29 @@ def log_db_size(session, log, *, warn_mb: float) -> float:
     return mb
 
 
+def _named(board: ats_poller.Board, name: str | None) -> ats_poller.Board:
+    if not name:
+        return board
+    return dataclasses.replace(board, name=name, company_key=ats.key(name) or board.board_id)
+
+
 def company_name(board: ats_poller.Board, p: ats.Posting) -> str:
-    """The board's company name; else the posting's; else the id, tidied
-    ("acme-labs" -> "Acme Labs")."""
-    name = board.name or p.company
+    """The board's company name; else the posting's; else the name
+    config/ats_company_names.yaml gives the Workday tenant / Oracle pod;
+    else the id, tidied ("acme-labs" -> "Acme Labs", "gh" -> "GH")."""
+    name = board.name or p.company or ats.known_name(board.ats, board.board_id)
     if name:
         return name
     ident = board.board_id
     # Workday "accenture/wd103/AccentureCareers" -> its tenant, "Accenture";
     # Oracle "jpmc.fa.oraclecloud.com/CX_1001" -> its pod, the best there is
-    # until ats_boards.company is filled for it.
+    # until the board's careers page names it (fetch_names, #182).
     if board.ats == "workday":
         ident = ats.workday_parts(ident)[0]
     elif board.ats == "oracle":
         ident = ats.oracle_parts(ident)[0].split(".")[0]
+    if len(ident) <= 3 and ident.isalpha():   # an initialism: "wf" -> "WF", not "Wf"
+        return ident.upper()
     words = re.split(r"[-_.\s/]+", ident)
     return " ".join(w[:1].upper() + w[1:] for w in words if w) or board.board_id
 
@@ -408,6 +437,96 @@ def _report_end_of_run(stats, *, new: int, backlog: int, matched: int, skipped: 
             log.error("telegram_summary_error", error=str(exc))
 
 
+def _role_key(job) -> tuple[str, str]:
+    return ats_dedupe.group_key(ats.key(job.company or ""), job.role)
+
+
+def _share(head, siblings_of: dict, reason: str) -> list:
+    """The verdicts of ``head``'s siblings: they have its description, so
+    they share its verdict (reason SIBLING, detail the head's job id)."""
+    return [(j, reason, head.job_id, None) for j in siblings_of.get(head.job_id) or []]
+
+
+def _opening(job) -> tuple:
+    """(location, apply url) of a sibling, as its role's message lists it."""
+    return (job.location, job.job_url_direct or job.job_url)
+
+
+def _sent_parents(session, clusters: list, now) -> dict:
+    """{head job_id: the earlier sent match it is a sibling of}, for roles
+    whose match went out in an earlier run (last SIBLING_DAYS days): same
+    company key and title, and the same description. Only matches: a
+    sibling of a rejected job is judged on its own (its posting date, and so
+    its score, can differ)."""
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from sqlalchemy import text
+
+    heads = [c.head for c in clusters]
+    if not heads:
+        return {}
+    companies = sorted({(j.company or "").lower() for j in heads})
+    rows = session.execute(text("""
+        SELECT a.job_id, a.company, a.role, a.location, a.jd_text, a.job_url, a.job_url_direct,
+               ap.user_status, ap.telegram_message, ap.built_at
+        FROM all_jobs a JOIN applied ap ON ap.job_id = a.job_id
+        WHERE a.site LIKE 'ats:%' AND ap.built_at >= :since AND lower(a.company) = ANY(CAST(:cos AS text[]))
+          AND a.job_id <> ALL(CAST(:mine AS text[]))
+        ORDER BY ap.built_at"""), {"since": now - timedelta(days=ats_dedupe.SIBLING_DAYS), "cos": companies,
+                                   "mine": [j.job_id for c in clusters for j in [c.head, *c.siblings]]}).all()
+    by_key: dict = {}
+    for r in rows:
+        by_key.setdefault(_role_key(r), []).append(SimpleNamespace(**r._mapping))
+    out = {}
+    for head in heads:
+        for parent in by_key.get(_role_key(head), []):
+            if ats_dedupe.are_siblings(parent.jd_text, parent.location, head.jd_text, head.location):
+                out[head.job_id] = parent
+                break
+    return out
+
+
+def _tell_late_siblings(session, parent, members: list, log) -> None:
+    """A sent match's role has new openings (#186): rewrite its message to
+    list them all and, for a city it did not list yet, send a silent note
+    threaded under it. Nothing for a match the operator dismissed. A match
+    sent before its message was kept gets only the note."""
+    from sqlalchemy import text
+
+    from src.notifications import send_quiet_note, update_match_siblings
+
+    if parent.user_status == "dismissed":
+        return
+    ids = {m.job_id for m in members}
+    rows = session.execute(text("""
+        SELECT a.job_id, a.location, coalesce(a.job_url_direct, a.job_url) AS url
+        FROM not_applied n JOIN all_jobs a ON a.job_id = n.job_id
+        WHERE n.reason_category = 'SIBLING' AND n.reason_detail = :parent
+        ORDER BY n.job_id"""), {"parent": parent.job_id}).all()
+    openings = [(r.location, r.url) for r in rows]
+    earlier = [parent.location] + [r.location for r in rows if r.job_id not in ids]
+    stored = parent.telegram_message or {}
+    edited = update_match_siblings(stored, parent.location, openings) if stored else False
+    new_cities, known = [], list(earlier)
+    for m in members:
+        if ats_dedupe.is_new_city(m.location, known):
+            new_cities.append(_opening(m))
+            known.append(m.location)
+    log.info("ats_late_siblings", parent=parent.job_id, members=len(members), edited=edited,
+             new_cities=len(new_cities))
+    if not new_cities:
+        return
+    lines = ats_dedupe.sibling_lines(None, new_cities)   # "Also open in: ..."
+    head = f"Same role, {len(new_cities)} more {'city' if len(new_cities) == 1 else 'cities'}"
+    if not stored.get("id"):
+        head += f": *{ats_dedupe._md(parent.role)}* at *{ats_dedupe._md(parent.company)}*"
+    try:
+        send_quiet_note(head + "\n" + "\n".join(lines), reply_to=stored.get("id"))
+    except Exception as exc:  # noqa: BLE001 - the openings are saved; the note is a courtesy
+        log.warning("late_sibling_note_failed", parent=parent.job_id, error=str(exc)[:200])
+
+
 def _detached(job):
     """A session-free copy of an all_jobs row for a worker thread to read."""
     from src.state.models import AllJobs
@@ -452,6 +571,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         JOB_TYPE_DISALLOWED,
         POSTING_TOO_OLD,
         LOW_SCORE,
+        SIBLING,
     )
     from src.scorer.embeddings import embed_documents
     from src.scraper import filters
@@ -516,6 +636,32 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         session.commit()
         passing = newest_first(passing)
 
+        # #186: one role, one message. Postings with the same description
+        # (another city, or another opening) are siblings: only the first
+        # (the head) is parsed, scored and sent; the rest share its verdict
+        # and are listed in its message. A role whose match was already sent
+        # in an earlier run edits that message instead (late siblings).
+        clusters = ats_dedupe.cluster(passing, key=_role_key)
+        parents = _sent_parents(session, clusters, now)
+        for c in clusters:
+            parent = parents.get(c.head.job_id)
+            if parent is not None:
+                queue.extend((j, SIBLING, parent.job_id, None) for j in [c.head, *c.siblings])
+        late = [(parents[c.head.job_id], [c.head, *c.siblings]) for c in clusters if c.head.job_id in parents]
+        clusters = [c for c in clusters if c.head.job_id not in parents]
+        siblings_of = {c.head.job_id: c.siblings for c in clusters}
+        passing = [c.head for c in clusters]
+        if late:
+            _write_not_applied(session, queue, now, dry_run=dry_run)
+            if _safe_commit(session, log):
+                if not dry_run:
+                    for parent, members in late:
+                        _tell_late_siblings(session, parent, members, log)
+            else:
+                queue.clear()   # unsaved: they come back next run
+        log.info("ats_siblings", roles=len(clusters), grouped=sum(len(v) for v in siblings_of.values()),
+                 late=sum(len(m) for _p, m in late))
+
         hours = float(a.get("recency_window_hours", 24))
         budget = 60.0 * float(a.get("process_budget_minutes", 25))
         # The whole run's deadline, from its start: no new job after it, so
@@ -528,7 +674,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
         # must never be reachable from this run.
         allowed_providers = list(a.get("llm_providers") or ["groq", "gemini-free"])
         llm_available = True
-        written = 0  # verdicts in `queue` already saved
+        written = len(queue) if late else 0  # verdicts in `queue` already saved
         # Parses run ahead in worker threads (the LLM call is most of a job's
         # time; ~8 s each, 2026-11-03) while this thread scores, saves and
         # sends in order. Workers get a detached copy of the row (no session,
@@ -614,16 +760,19 @@ def run(dry_run: bool, log, *, atses=None) -> int:
             if routed.decision.route is Route.SKIPPED_FLOOR:
                 apply_to_row(job, routed.parsed)
                 queue.append((job, LOW_SCORE, str(routed.dict_score), routed.dict_result))
+                queue.extend(_share(job, siblings_of, SIBLING))
                 skipped += 1
                 continue
             parsed = routed.parsed
             apply_to_row(job, parsed)
             if filters.job_type_disallowed(parsed.job_type, cfg.filters.get("job_type")):
                 queue.append((job, JOB_TYPE_DISALLOWED, str(parsed.job_type), None))
+                queue.extend(_share(job, siblings_of, SIBLING))
                 skipped += 1
                 continue
             if filters.exceeds_years_ceiling(parsed.years_required, int(cfg.filters.years_ceiling)):
                 queue.append((job, HARD_FILTER_LAYER_3, str(parsed.years_required), None))
+                queue.extend(_share(job, siblings_of, SIBLING))
                 skipped += 1
                 continue
             result = score_job(profile, job, parsed, scrape_window_hours=hours)
@@ -633,6 +782,7 @@ def run(dry_run: bool, log, *, atses=None) -> int:
                      years_required=parsed.years_required, role_level=parsed.role_level)
             if not result.apply:
                 queue.append((job, LOW_SCORE, str(result.final_score), result))
+                queue.extend(_share(job, siblings_of, SIBLING))
                 skipped += 1
                 continue
             built = build_applied(profile, job, parsed, result)
@@ -642,6 +792,8 @@ def run(dry_run: bool, log, *, atses=None) -> int:
                 continue
             session.add(built.applied)
             job.outcome, job.outcome_at = "matched", now
+            group = siblings_of.get(job.job_id) or []
+            queue.extend(_share(job, siblings_of, SIBLING))
             # Saved BEFORE the message goes out: a commit that fails leaves the
             # job unsent and unrecorded (it comes back next run), never sent
             # but unrecorded (which would send it again).
@@ -656,10 +808,13 @@ def run(dry_run: bool, log, *, atses=None) -> int:
             if not dry_run:
                 resume = for_notification(job.job_id, session)
                 try:
-                    send_match_notification(
+                    sent = send_match_notification(
                         job=job, parsed=parsed, result=result, gap_skills=built.gap_skills,
                         endpoint_base_url=resolve_endpoint_base_url(str(cfg.endpoint.base_url)),
-                        title_alias=built.title_alias, **resume)
+                        title_alias=built.title_alias, siblings=[_opening(j) for j in group], **resume)
+                    if sent:
+                        built.applied.telegram_message = sent
+                        _safe_commit(session, log)
                 except Exception as exc:
                     log.error("notification_error", job_id=job.job_id, error=str(exc))
             else:

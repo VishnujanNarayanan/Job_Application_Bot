@@ -39,3 +39,7 @@ PARSE_FAILURE = "PARSE_FAILURE"
 # Layer 4 / 5 — scoring + build outcomes
 LOW_SCORE = "LOW_SCORE"
 BUILD_FAILURE = "BUILD_FAILURE"
+# The same role as another job (same description, another city or another
+# opening, #186): it shares that job's verdict and message. reason_detail is
+# that job's id.
+SIBLING = "SIBLING"

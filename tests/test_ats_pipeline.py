@@ -386,7 +386,8 @@ def test_a_match_is_saved_before_its_message_is_sent():
 def test_company_name_for_workday_and_oracle_boards():
     assert pipe.company_name(poller.Board("workday", "accenture/wd103/AccentureCareers"), _p()) == "Accenture"
     assert pipe.company_name(poller.Board("workday", "warner-bros/wd5/global"), _p()) == "Warner Bros"
-    assert pipe.company_name(poller.Board("oracle", "jpmc.fa.oraclecloud.com/CX_1001"), _p()) == "Jpmc"
+    assert pipe.company_name(poller.Board("oracle", "jpmc.fa.oraclecloud.com/CX_1001"), _p()) == "JPMorganChase"
+    assert pipe.company_name(poller.Board("oracle", "zzzz.fa.us2.oraclecloud.com/CX_1"), _p()) == "Zzzz"
     # A name learned from a portal job's apply link wins.
     assert pipe.company_name(poller.Board("workday", "ntrs/wd1/x", name="Northern Trust"), _p()) == "Northern Trust"
 
