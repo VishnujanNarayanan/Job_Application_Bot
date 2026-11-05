@@ -527,6 +527,12 @@ scoring:
     # LLM parse): "keep" = a keyword until the weekly review labels it, "drop"
     # = left out until approved. Decided on the #179 benchmark.
     pending: keep
+  # Comparable tools (#191, config/comparable_tools.yaml): an advert ask the
+  # profile cannot prove, but a comparable tool it does prove (GCS <- S3,
+  # GitLab <- GitHub), gets this share of the ask's weight through that
+  # tool's bullet; the rest stays a gap. 0 = off. Bullet text never changes.
+  comparable:
+    credit: 0.5
   final:
     # final = min(max_score, fit x success_prob)
     # success_prob is the applicant multiplier (#26): early postings are

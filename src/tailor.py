@@ -92,8 +92,15 @@ def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None,
         title=job.role,
         site=job.site,
     )
-    return evaluate(profile, jd_context, keywords=jd_keywords(parsed, title=job.role, jd_text=job.jd_text),
-                    threshold=threshold_for(job.site), now=now)
+    keywords = jd_keywords(parsed, title=job.role, jd_text=job.jd_text)
+    # Comparable tools (#191): an ask the profile cannot prove is partly met by
+    # the same job done in another product (GCS by S3, GitLab by GitHub).
+    from src.scorer.comparable import with_comparables
+    from src.scorer.keywords import norm
+
+    evidence = [norm(sc.skill) for sc in profile.skills] + list(bullet_texts(profile))
+    keywords = with_comparables(keywords, evidence)
+    return evaluate(profile, jd_context, keywords=keywords, threshold=threshold_for(job.site), now=now)
 
 
 @dataclass
