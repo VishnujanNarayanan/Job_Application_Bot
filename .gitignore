@@ -24,6 +24,8 @@ master_profile_*.yaml
 # master_profile_prev3.yaml.bak, which sat untracked in a public repo carrying
 # the operator's name, phone and email — one `git add -A` from being committed.
 master_profile*
+# Registry entries for terms only in the operator's skills pool (#188).
+config/skills_registry.local.yaml
 *.bak
 # Generated resume material (bullets, skills pool) — personal content.
 bullet_extract*.yaml

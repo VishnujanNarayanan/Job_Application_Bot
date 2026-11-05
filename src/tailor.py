@@ -31,7 +31,8 @@ UNKNOWN = "Unknown"
 # ---------------------------------------------------------------------------
 
 
-def compute_gap_skills(required: list[str], pool: list[str], bullets: tuple[str, ...] = ()) -> list[str]:
+def compute_gap_skills(required: list[str], pool: list[str], bullets: tuple[str, ...] = (),
+                       jd_text: str | None = None) -> list[str]:
     """Required skills the operator shows NOWHERE: not in the skills pool, not in
     any bullet, in any spelling or family form (``keywords.matches``, #23).
 
@@ -48,6 +49,11 @@ def compute_gap_skills(required: list[str], pool: list[str], bullets: tuple[str,
         p.strip(" ;:") for line in required for p in re.split(r"[,()]", line or "")
         if len(p.strip(" ;:")) >= 2
     ))
+    from src.state import registry
+
+    # Only skills can be gaps (#188): "communication", "Computer Science",
+    # "operations" were listed as gaps in most matches.
+    tokens = registry.admitted(tokens, jd_text)
     evidence = [norm(s) for s in pool] + list(bullets)
     return [t for t in tokens if not any(matches(t, e) for e in evidence)]
 
@@ -112,7 +118,8 @@ def build_applied(profile, job, parsed, result) -> Built | None:
     # Gap skills: JD required skills not in operator's pool
     skills_pool = [sc.skill for sc in profile.skills]
     gap_skills = compute_gap_skills(
-        list(parsed.required_skills or []), skills_pool, bullet_texts(profile)
+        list(parsed.required_skills or []), skills_pool, bullet_texts(profile),
+        jd_text=job.jd_text,
     )
     selection = build_selection(
         result=result,

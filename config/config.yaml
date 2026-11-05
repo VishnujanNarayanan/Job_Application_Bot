@@ -514,6 +514,11 @@ selection:
     period_end: "2025-06"     # the month the salaried job started
 
 scoring:
+  # Skills registry (#188): only terms config/skills_registry.yaml admits
+  # become JD keywords (fit, gaps, selection, bolding). false = every term,
+  # as before the registry; kept for before/after replays.
+  registry:
+    enabled: true
   final:
     # final = min(max_score, fit x success_prob)
     # success_prob is the applicant multiplier (#26): early postings are

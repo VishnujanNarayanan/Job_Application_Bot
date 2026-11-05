@@ -139,9 +139,12 @@ def scan_skills(jd_text: str, dictionary: Dictionary) -> list[str]:
     are in ``dictionary.terms()``, so "retrieval-augmented generation" is
     found as itself.
     """
+    from src.state import registry
     from src.state.vocabulary import scan
 
-    return scan(jd_text, dictionary.terms())
+    # Only registry-admitted terms (#188): the scan used to return every
+    # vocabulary word in the advert, company intro and benefits included.
+    return registry.admitted(scan(jd_text, dictionary.terms()), jd_text)
 
 
 def split_required_nice(

@@ -1,0 +1,2025 @@
+# Skills registry (#188): every term the pipeline may treat as a skill, and what it may do.
+#   approve    a specific skill: a keyword (fit, gaps, earns bullets, bolded)
+#   sense      a skill whose name has another meaning: a keyword only where its sense is
+#              shown (qualifiers / casing / requirement line), see src/state/registry.py
+#   reject     never a skill on its own        domain  an industry or field of work
+#   soft       soft skill or spoken language   credential  degree or certification
+# Only approve and sense terms become keywords. Labels come from the operator's review sheet;
+# by: operator marks decisions the operator made by hand. Keys are lower-case terms.
+# Terms only in the operator's skills pool live in skills_registry.local.yaml (gitignored).
+terms:
+  ".net": {label: approve, term: .NET}
+  ".net core": {label: approve, term: .NET Core}
+  ".net framework": {label: approve, term: .NET Framework}
+  "a/b testing": {label: approve, term: A/B testing}
+  "a2a": {label: approve, term: A2A}
+  "ab initio": {label: approve, term: Ab Initio}
+  "abac": {label: approve, term: ABAC}
+  "abap": {label: approve, term: ABAP}
+  "abaqus": {label: approve, term: Abaqus}
+  "above": {label: reject, term: above}
+  "acca": {label: credential, term: ACCA}
+  "access control": {label: approve, term: access control}
+  "access controls": {label: reject, term: access controls}
+  "access management": {label: approve, term: access management}
+  "accessibility": {label: approve, term: Accessibility}
+  "accessibility testing": {label: approve, term: accessibility testing}
+  "accounting": {label: domain, note: Industry, term: accounting}
+  "accruals": {label: domain, note: Industry, term: Accruals}
+  "acls": {label: approve, term: ACLs}
+  "actimize": {label: approve, term: Actimize}
+  "activations": {label: reject, term: Activations}
+  "active directory": {label: approve, term: Active Directory}
+  "adf": {label: approve, term: ADF}
+  "adls": {label: approve, term: ADLS}
+  "adls gen2": {label: approve, term: ADLS Gen2}
+  "ado": {label: reject, term: ADO}
+  "adobe": {label: reject, note: A vendor, term: Adobe}
+  "adobe analytics": {label: approve, term: Adobe Analytics}
+  "adtech": {label: domain, note: Industry, term: AdTech}
+  "advanced analytics": {label: domain, note: Field of work, term: Advanced Analytics}
+  "advanced excel": {label: sense, note: Microsoft Excel, term: Advanced Excel}
+  "aeo": {label: approve, term: AEO}
+  "agent": {label: reject, term: agent}
+  "agent orchestration": {label: approve, term: agent orchestration}
+  "agent-based systems": {label: approve, term: agent-based systems}
+  "agentcore": {label: approve, term: Agentcore}
+  "agentforce": {label: approve, term: Agentforce}
+  "agentic": {label: reject, term: agentic}
+  "agentic ai": {label: domain, note: Field of work, term: Agentic AI}
+  "agentic ai architectures": {label: approve, term: agentic AI architectures}
+  "agentic ai workflows": {label: approve, term: agentic AI workflows}
+  "agentic frameworks": {label: reject, term: agentic frameworks}
+  "agentic systems": {label: approve, term: agentic systems}
+  "agentic tools": {label: reject, term: agentic tools}
+  "agentic workflows": {label: approve, term: agentic workflows}
+  "agents": {label: reject, term: agents}
+  "agile": {label: sense, note: 'Agile methodology, not ''agile'' (nimble)', requirement_line: true, term: Agile}
+  "agile delivery": {label: approve, term: Agile delivery}
+  "agile development": {label: approve, term: Agile development}
+  "agile environments": {label: reject, note: Too vague, term: Agile environments}
+  "agile methodologies": {label: approve, term: Agile methodologies}
+  "agile methodology": {label: approve, term: Agile methodology}
+  "agile practice": {label: approve, term: Agile practice}
+  "agile practices": {label: approve, term: Agile practices}
+  "agile/scrum": {label: approve, term: Agile/Scrum}
+  "agile/scrum methodologies": {label: approve, term: Agile/Scrum methodologies}
+  "ahrefs": {label: approve, term: Ahrefs}
+  "ai": {by: operator, label: sense, note: AI as a skill area in a requirement line; not in company intro text, requirement_line: true, term: AI}
+  "ai & ml": {label: domain, note: Field of work, term: AI & ML}
+  "ai agent": {label: approve, term: AI agent}
+  "ai agents": {label: approve, term: AI agents}
+  "ai and ml": {label: domain, note: Field of work, term: AI and ML}
+  "ai apis": {label: approve, term: AI APIs}
+  "ai applications": {label: reject, term: AI applications}
+  "ai coding agents": {label: reject, term: AI coding agents}
+  "ai coding assistants": {label: approve, term: AI coding assistants}
+  "ai coding tools": {label: approve, term: AI coding tools}
+  "ai concepts": {label: reject, term: AI concepts}
+  "ai copilots": {label: reject, term: AI copilots}
+  "ai evaluation": {label: approve, term: AI evaluation}
+  "ai governance": {label: domain, note: Field of work, term: AI Governance}
+  "ai observability": {label: approve, term: AI observability}
+  "ai orchestration": {label: approve, term: AI orchestration}
+  "ai safety": {label: domain, note: Field of work, term: AI safety}
+  "ai search": {label: approve, term: AI Search}
+  "ai security": {label: domain, note: Field of work, term: AI security}
+  "ai systems": {label: reject, term: AI systems}
+  "ai technologies": {label: reject, term: AI technologies}
+  "ai tooling": {label: reject, term: AI tooling}
+  "ai tools": {label: reject, term: AI tools}
+  "ai workflow orchestration": {label: approve, term: AI workflow orchestration}
+  "ai workflows": {label: reject, term: AI workflows}
+  "ai-assisted development": {label: approve, term: AI-assisted development}
+  "ai-assisted development tools": {label: approve, term: AI-assisted development tools}
+  "ai-driven": {label: reject, term: AI-driven}
+  "ai-driven ux": {label: reject, note: Too vague, term: AI-driven UX}
+  "ai-powered": {label: reject, term: AI-powered}
+  "ai-powered development tools": {label: reject, term: AI-powered development tools}
+  "ai-powered tools": {label: reject, term: AI-powered tools}
+  "ai/ml": {label: domain, note: Field of work, term: AI/ML}
+  "ai/ml techniques": {label: reject, term: AI/ML techniques}
+  "ai/ml technologies": {label: reject, term: AI/ML technologies}
+  "airflow": {label: sense, note: 'Apache Airflow, not physical airflow/cooling', term: Airflow}
+  "aix": {label: approve, term: AIX}
+  "ajax": {label: approve, term: AJAX}
+  "aks": {label: approve, term: AKS}
+  "alation": {label: approve, term: Alation}
+  "alchemer": {label: approve, term: Alchemer}
+  "alerting": {label: approve, term: alerting}
+  "algorithm design": {label: approve, term: algorithm design}
+  "algorithms": {label: approve, term: algorithms}
+  "alloydb": {label: approve, term: AlloyDB}
+  "alsa": {label: approve, term: ALSA}
+  "alteryx": {label: approve, term: Alteryx}
+  "amazon athena": {label: approve, term: Amazon Athena}
+  "amazon bedrock": {label: approve, term: Amazon Bedrock}
+  "amazon eks": {label: approve, term: Amazon EKS}
+  "amazon neptune": {label: approve, term: Amazon Neptune}
+  "amazon quicksight": {label: approve, term: Amazon QuickSight}
+  "amazon rds": {label: approve, term: Amazon RDS}
+  "amazon redshift": {label: approve, term: Amazon Redshift}
+  "amazon s3": {label: approve, term: Amazon S3}
+  "amazon sagemaker": {label: approve, term: Amazon SageMaker}
+  "amazon web": {label: reject, note: Fragment of 'Amazon Web Services', term: Amazon Web}
+  "amazon web services": {label: approve, term: Amazon Web Services}
+  "aml": {label: domain, note: Industry, term: AML}
+  "analysis": {label: reject, term: analysis}
+  "analytical and problem solving skills": {label: soft, term: analytical and problem solving skills}
+  "analytical thinking": {label: soft, term: analytical thinking}
+  "analytics": {label: domain, note: Field of work, term: analytics}
+  "anaplan": {label: approve, term: Anaplan}
+  "android": {label: approve, term: Android}
+  "android sdk": {label: approve, term: Android SDK}
+  "angular": {label: approve, term: Angular}
+  "angular 2": {label: approve, term: Angular 2}
+  "annotation": {label: reject, term: annotation}
+  "anomaly detection": {label: approve, term: anomaly detection}
+  "ansible": {label: approve, term: Ansible}
+  "ansys": {label: approve, term: ANSYS}
+  "ansys fluent": {label: approve, term: Ansys Fluent}
+  "ansys twin builder": {label: approve, term: Ansys Twin Builder}
+  "anthropic": {label: reject, note: A vendor; Claude / Claude Code are the skills, term: Anthropic}
+  "anthropic claude": {label: approve, term: Anthropic Claude}
+  "aop": {label: approve, term: AOP}
+  "apache": {label: sense, note: only as an Apache product name, qualified_only: true, qualifiers: ['\bApache [A-Z][\w-]+'], term: Apache}
+  "apache airflow": {label: approve, term: Apache Airflow}
+  "apache flink": {label: approve, term: Apache Flink}
+  "apache iceberg": {label: approve, term: Apache Iceberg}
+  "apache kafka": {label: approve, term: Apache Kafka}
+  "apache nifi": {label: approve, term: Apache NiFi}
+  "apache spark": {label: approve, term: Apache Spark}
+  "apache subversion": {label: approve, term: Apache Subversion}
+  "apex": {label: approve, term: Apex}
+  "api architecture": {label: approve, term: API architecture}
+  "api automation": {label: approve, term: API automation}
+  "api design": {label: approve, term: API design}
+  "api development": {label: approve, term: API Development}
+  "api gateway": {label: approve, term: API Gateway}
+  "api integration": {label: approve, term: API integration}
+  "api integrations": {label: approve, term: API integrations}
+  "api management": {label: approve, term: API Management}
+  "api security": {label: approve, term: API security}
+  "api test automation": {label: approve, term: API Test Automation}
+  "api testing": {label: approve, term: API testing}
+  "api testing tools": {label: reject, note: Too vague, term: API testing tools}
+  "apis": {label: approve, term: APIs}
+  "apm": {label: approve, term: APM}
+  "app": {label: reject, term: App}
+  "appdynamics": {label: approve, term: AppDynamics}
+  "appian": {label: approve, term: Appian}
+  "appium": {label: approve, term: Appium}
+  "application": {label: reject, term: application}
+  "application insights": {label: approve, term: Application Insights}
+  "application monitoring": {label: approve, term: Application Monitoring}
+  "application security": {label: domain, note: Field of work, term: Application security}
+  "applications": {label: reject, term: applications}
+  "applied ai": {label: domain, note: Field of work, term: applied AI}
+  "applied statistics": {label: domain, note: Field of work, term: Applied Statistics}
+  "apptio cloudability": {label: approve, term: Apptio Cloudability}
+  "arabic": {label: soft, term: Arabic}
+  "argo cd": {label: approve, term: Argo CD}
+  "argocd": {label: approve, term: ArgoCD}
+  "artifactory": {label: approve, term: Artifactory}
+  "artificial intelligence": {label: domain, note: Field of work, term: Artificial Intelligence}
+  "asp.net": {label: approve, term: asp.net}
+  "asp.net core": {label: approve, term: ASP.NET Core}
+  "asp.net mvc": {label: approve, term: ASP.NET MVC}
+  "asr": {label: approve, term: ASR}
+  "asset management": {label: domain, note: Industry, term: asset management}
+  "async programming": {label: approve, term: async programming}
+  "async/await": {label: approve, term: async/await}
+  "asynchronous processing": {label: approve, term: asynchronous processing}
+  "asynchronous programming": {label: approve, term: asynchronous programming}
+  "asyncio": {label: approve, term: asyncio}
+  "athena": {label: sense, note: Amazon Athena, term: Athena}
+  "atlan": {label: approve, term: Atlan}
+  "attribution": {label: reject, term: attribution}
+  "audio": {label: reject, term: audio}
+  "audit logging": {label: approve, term: audit logging}
+  "audit management": {label: approve, term: Audit Management}
+  "audit trails": {label: approve, term: audit trails}
+  "auditability": {label: approve, term: auditability}
+  "aurora": {label: approve, term: Aurora}
+  "authentication": {label: approve, term: authentication}
+  "authentication flows": {label: approve, term: authentication flows}
+  "authorization": {label: approve, term: authorization}
+  "auto scaling": {label: approve, term: Auto Scaling}
+  "autocad": {label: approve, term: AutoCAD}
+  "autogen": {label: approve, term: AutoGen}
+  "automated deployment": {label: approve, term: automated deployment}
+  "automated testing": {label: approve, term: automated testing}
+  "automation frameworks": {label: reject, term: automation frameworks}
+  "automation testing": {label: approve, term: Automation Testing}
+  "automation tooling": {label: reject, term: automation tooling}
+  "automation tools": {label: reject, term: automation tools}
+  "automation workflows": {label: approve, term: automation workflows}
+  "avro": {label: approve, term: Avro}
+  "aws": {label: approve, term: AWS}
+  "aws ai": {label: approve, term: AWS AI}
+  "aws backup": {label: approve, term: AWS Backup}
+  "aws bedrock": {label: approve, term: AWS Bedrock}
+  "aws cdk": {label: approve, term: AWS CDK}
+  "aws certification": {label: credential, term: AWS Certification}
+  "aws certifications": {label: credential, term: AWS certifications}
+  "aws cloud": {label: approve, term: AWS cloud}
+  "aws cloud services": {label: approve, term: AWS cloud services}
+  "aws cloudformation": {label: approve, term: AWS CloudFormation}
+  "aws cloudwatch": {label: approve, term: AWS CloudWatch}
+  "aws codepipeline": {label: approve, term: AWS CodePipeline}
+  "aws ec2": {label: approve, term: AWS EC2}
+  "aws eks": {label: approve, term: AWS EKS}
+  "aws emr": {label: approve, term: AWS EMR}
+  "aws eventbridge": {label: approve, term: AWS EventBridge}
+  "aws glue": {label: approve, term: AWS Glue}
+  "aws govcloud": {label: approve, term: AWS GovCloud}
+  "aws iam": {label: approve, term: AWS IAM}
+  "aws kinesis": {label: approve, term: AWS Kinesis}
+  "aws lambda": {label: sense, note: AWS Lambda, term: AWS Lambda}
+  "aws networking": {label: approve, term: AWS networking}
+  "aws rds": {label: approve, term: AWS RDS}
+  "aws redshift": {label: approve, term: AWS Redshift}
+  "aws s3": {label: approve, term: AWS S3}
+  "aws sagemaker": {label: approve, term: AWS SageMaker}
+  "aws sam": {label: approve, term: AWS SAM}
+  "aws secrets manager": {label: approve, term: AWS Secrets Manager}
+  "aws step functions": {label: approve, term: AWS Step Functions}
+  "aws/gcp/azure": {label: approve, term: AWS/GCP/Azure}
+  "azure": {by: operator, label: approve, term: Azure}
+  "azure ad": {label: approve, term: Azure AD}
+  "azure ai": {label: approve, term: Azure AI}
+  "azure ai foundry": {label: approve, term: Azure AI Foundry}
+  "azure ai search": {label: approve, term: Azure AI Search}
+  "azure api management": {label: approve, term: Azure API Management}
+  "azure app": {label: approve, term: Azure App}
+  "azure certifications": {label: credential, term: Azure certifications}
+  "azure cli": {label: approve, term: Azure CLI}
+  "azure cloud": {label: approve, term: Azure cloud}
+  "azure data": {label: reject, term: Azure data}
+  "azure data factory": {label: approve, term: Azure Data Factory}
+  "azure data lake": {label: approve, term: Azure Data Lake}
+  "azure data services": {label: reject, note: Too vague, term: Azure Data Services}
+  "azure databricks": {label: approve, term: Azure Databricks}
+  "azure devops": {label: approve, term: Azure DevOps}
+  "azure event hubs": {label: approve, term: Azure Event Hubs}
+  "azure functions": {label: approve, term: Azure Functions}
+  "azure key vault": {label: approve, term: Azure Key Vault}
+  "azure logic apps": {label: approve, term: Azure Logic Apps}
+  "azure machine learning": {label: approve, term: Azure Machine Learning}
+  "azure ml": {label: approve, term: Azure ML}
+  "azure monitor": {label: approve, term: Azure Monitor}
+  "azure openai": {label: approve, term: Azure OpenAI}
+  "azure service bus": {label: approve, term: Azure Service Bus}
+  "azure sql": {label: approve, term: Azure SQL}
+  "azure sql database": {label: approve, term: Azure SQL Database}
+  "azure synapse": {label: approve, term: Azure Synapse}
+  "azure synapse analytics": {label: approve, term: Azure Synapse Analytics}
+  "back-end development": {label: domain, note: Field of work, term: Back-end development}
+  "backend apis": {label: approve, term: backend APIs}
+  "backend development": {label: domain, note: Field of work, term: Backend Development}
+  "backend engineering": {label: domain, note: Field of work, term: backend engineering}
+  "backend services": {label: approve, term: backend services}
+  "backend software engineering": {label: domain, note: Field of work, term: backend software engineering}
+  "backend systems": {label: approve, term: backend systems}
+  "backend testing": {label: approve, term: backend testing}
+  "background jobs": {label: approve, term: Background jobs}
+  "backup": {label: reject, term: Backup}
+  "banking": {label: domain, note: Industry, term: Banking}
+  "banking domain": {label: domain, note: Industry, term: banking domain}
+  "bash": {label: approve, term: Bash}
+  "bash scripting": {label: approve, term: Bash scripting}
+  "batch": {label: reject, term: batch}
+  "bazel": {label: approve, term: Bazel}
+  "bdd": {label: approve, term: BDD}
+  "bedrock": {label: sense, note: 'Amazon Bedrock, not ''bedrock of''', term: Bedrock}
+  "benefits": {label: reject, term: benefits}
+  "bert": {label: approve, term: BERT}
+  "best practices": {label: reject, term: best practices}
+  "bgp": {label: approve, term: BGP}
+  "bi": {label: domain, note: Field of work, term: BI}
+  "bi publisher": {label: approve, term: BI Publisher}
+  "bi tools": {label: reject, term: BI tools}
+  "bicc": {label: approve, term: BICC}
+  "bicep": {label: sense, note: Azure Bicep (IaC), term: Bicep}
+  "big data": {label: domain, note: Field of work, term: Big Data}
+  "big data technologies": {label: reject, term: big data technologies}
+  "bigquery": {label: approve, term: BigQuery}
+  "billing": {label: reject, term: billing}
+  "birt tool": {label: approve, term: BIRT tool}
+  "bitbucket": {label: approve, term: Bitbucket}
+  "bobcat": {label: reject, note: Not a known skill, term: Bobcat}
+  "boomi": {label: approve, term: Boomi}
+  "boomi certification": {label: credential, term: Boomi certification}
+  "bootstrap": {label: sense, note: 'Bootstrap CSS, not bootstrapping/statistics', term: Bootstrap}
+  "bpmn": {label: approve, term: BPMN}
+  "branching strategies": {label: approve, term: branching strategies}
+  "bug tracking": {label: approve, term: bug tracking}
+  "build automation": {label: approve, term: Build automation}
+  "build tools": {label: reject, term: build tools}
+  "bullmq": {label: approve, term: BullMQ}
+  "business acumen": {label: soft, term: Business Acumen}
+  "business analysis": {label: domain, note: Field of work, term: business analysis}
+  "business analytics": {label: domain, note: Field of work, term: Business Analytics}
+  "business continuity": {label: domain, note: Field of work, term: business continuity}
+  "business intelligence": {label: domain, note: Field of work, term: business intelligence}
+  "business rules": {label: reject, term: Business rules}
+  "business structure setup": {label: reject, term: Business Structure Setup}
+  "c sharp": {label: approve, term: C Sharp}
+  "c#": {label: approve, term: C#}
+  "c++": {label: approve, term: C++}
+  "c/c++": {label: approve, term: C/C++}
+  "caches": {label: approve, term: Caches}
+  "caching": {label: approve, term: caching}
+  "caching strategies": {label: approve, term: Caching strategies}
+  "cadence": {label: sense, note: 'Cadence (workflow engine), not ''cadence''', term: Cadence}
+  "calculated insights": {label: reject, term: Calculated Insights}
+  "canary deployments": {label: approve, term: canary deployments}
+  "capacity planning": {label: approve, term: Capacity Planning}
+  "capital markets": {label: domain, note: Industry, term: capital markets}
+  "cassandra": {label: approve, term: Cassandra}
+  "ccpa": {label: domain, note: Industry, term: CCPA}
+  "ccsp": {label: credential, term: CCSP}
+  "cdc": {label: approve, term: CDC}
+  "cdk": {label: approve, term: CDK}
+  "cdp": {label: approve, term: CDP}
+  "celery": {label: sense, note: Celery (task queue), term: Celery}
+  "celonis": {label: approve, term: Celonis}
+  "certificates": {label: reject, term: Certificates}
+  "certifications": {label: credential, term: certifications}
+  "cfd": {label: approve, term: CFD}
+  "cfd simulation": {label: approve, term: CFD simulation}
+  "cgmps": {label: domain, note: Industry, term: cGMPs}
+  "change management": {label: soft, term: change management}
+  "channels": {label: reject, term: Channels}
+  "chaos engineering": {label: approve, term: chaos engineering}
+  "chargebee": {label: approve, term: Chargebee}
+  "chatbot": {label: approve, term: chatbot}
+  "chatbot applications": {label: approve, term: chatbot applications}
+  "chatgpt": {label: approve, term: ChatGPT}
+  "checkpointing": {label: approve, term: checkpointing}
+  "chef": {label: sense, note: 'Chef (config management), not a cook', term: Chef}
+  "chroma": {label: sense, note: Chroma (vector DB), term: Chroma}
+  "chromadb": {label: approve, term: ChromaDB}
+  "chunking": {label: approve, term: chunking}
+  "ci": {label: approve, term: CI}
+  "ci cd": {label: approve, term: CI CD}
+  "ci/cd": {by: operator, label: approve, term: CI/CD}
+  "ci/cd automation": {label: approve, term: CI/CD automation}
+  "ci/cd for ml": {label: approve, term: CI/CD for ML}
+  "ci/cd pipeline": {label: approve, term: CI/CD pipeline}
+  "ci/cd pipelines": {label: approve, term: CI/CD pipelines}
+  "ci/cd practices": {label: approve, term: CI/CD practices}
+  "ci/cd processes": {label: approve, term: CI/CD processes}
+  "ci/cd tooling": {label: reject, note: Too vague, term: CI/CD tooling}
+  "ci/cd tools": {label: reject, term: CI/CD tools}
+  "ci/cd workflows": {label: approve, term: CI/CD workflows}
+  "cia": {label: reject, term: CIA}
+  "cicd": {label: approve, term: CICD}
+  "cipp/us": {label: credential, term: CIPP/US}
+  "circleci": {label: approve, term: CircleCI}
+  "cisa": {label: credential, term: CISA}
+  "cisco": {label: approve, term: Cisco}
+  "cism": {label: credential, term: CISM}
+  "cissp": {label: credential, term: CISSP}
+  "cka": {label: credential, term: CKA}
+  "ckad": {label: credential, term: CKAD}
+  "claims": {label: domain, note: Industry, term: Claims}
+  "classes": {label: reject, term: Classes}
+  "classification": {label: sense, note: ML classification, requirement_line: true, term: Classification}
+  "claude": {label: sense, note: 'Anthropic Claude, not a name', term: Claude}
+  "claude code": {label: approve, term: Claude Code}
+  "clay": {label: reject, term: Clay}
+  "clean": {label: reject, term: clean}
+  "clean code": {label: approve, term: clean code}
+  "cli": {label: approve, term: CLI}
+  "clickhouse": {label: approve, term: ClickHouse}
+  "client scripts": {label: approve, term: Client Scripts}
+  "clients": {label: reject, term: clients}
+  "cloud build": {label: approve, term: Cloud Build}
+  "cloud certifications": {label: credential, term: Cloud certifications}
+  "cloud computing": {label: domain, note: Field of work, term: cloud computing}
+  "cloud data": {label: reject, term: cloud data}
+  "cloud deployment": {label: approve, term: Cloud deployment}
+  "cloud environments": {label: reject, term: cloud environments}
+  "cloud functions": {label: approve, term: Cloud Functions}
+  "cloud infrastructure": {label: reject, term: cloud infrastructure}
+  "cloud logging": {label: approve, term: Cloud Logging}
+  "cloud migration": {label: approve, term: Cloud migration}
+  "cloud monitoring": {label: approve, term: Cloud Monitoring}
+  "cloud networking": {label: approve, term: cloud networking}
+  "cloud platform": {label: reject, note: Too vague, term: cloud platform}
+  "cloud platforms": {label: reject, term: cloud platforms}
+  "cloud run": {label: approve, term: Cloud Run}
+  "cloud security": {label: domain, note: Field of work, term: cloud security}
+  "cloud services": {label: reject, term: cloud services}
+  "cloud software": {label: reject, term: cloud software}
+  "cloud sql": {label: approve, term: Cloud SQL}
+  "cloud storage": {label: approve, term: Cloud Storage}
+  "cloud technologies": {label: reject, term: cloud technologies}
+  "cloud-native": {label: domain, note: Field of work, term: Cloud-native}
+  "cloud-native application": {label: approve, term: cloud-native application}
+  "cloud-native applications": {label: approve, term: cloud-native applications}
+  "cloudflare": {label: approve, term: Cloudflare}
+  "cloudformation": {label: approve, term: CloudFormation}
+  "cloudfront": {label: approve, term: CloudFront}
+  "cloudtrail": {label: approve, term: CloudTrail}
+  "cloudwatch": {label: approve, term: CloudWatch}
+  "clustering": {label: approve, term: clustering}
+  "cmake": {label: approve, term: Cmake}
+  "cmdb": {label: approve, term: CMDB}
+  "cni": {label: approve, term: CNI}
+  "coaching": {label: soft, term: coaching}
+  "cobol": {label: approve, term: COBOL}
+  "code quality": {label: approve, term: code quality}
+  "code review": {label: approve, term: Code review}
+  "code reviews": {label: approve, term: code reviews}
+  "codex": {label: sense, note: OpenAI Codex, term: Codex}
+  "coding": {label: reject, term: coding}
+  "collaboration skills": {label: soft, term: collaboration skills}
+  "collections": {label: reject, term: collections}
+  "collibra": {label: approve, term: Collibra}
+  "communication": {label: soft, term: communication}
+  "communication skills": {label: soft, term: communication skills}
+  "complexity analysis": {label: approve, term: complexity analysis}
+  "compliance": {label: domain, note: Industry, term: compliance}
+  "compliance best practices": {label: approve, term: compliance best practices}
+  "compliance requirements": {label: domain, note: Industry, term: compliance requirements}
+  "component architecture": {label: approve, term: Component architecture}
+  "component lifecycle": {label: reject, term: component lifecycle}
+  "comptia a+": {label: credential, term: CompTIA A+}
+  "comptia security+": {label: credential, term: CompTIA Security+}
+  "compute": {label: reject, term: compute}
+  "computer engineering": {label: credential, term: Computer Engineering}
+  "computer science": {label: credential, term: Computer Science}
+  "computer vision": {label: domain, note: Field of work, term: Computer Vision}
+  "comsol": {label: approve, term: COMSOL}
+  "concurrency": {label: approve, term: concurrency}
+  "configmaps": {label: approve, term: ConfigMaps}
+  "configuration management": {label: approve, term: configuration management}
+  "confluence": {label: sense, note: 'Atlassian Confluence, not ''confluence of''', term: Confluence}
+  "connectors": {label: reject, term: connectors}
+  "consulting": {label: reject, term: consulting}
+  "container orchestration": {label: approve, term: container orchestration}
+  "containerisation": {label: approve, term: containerisation}
+  "containerised": {label: approve, term: containerised}
+  "containerization": {label: approve, term: containerization}
+  "containerization tools": {label: reject, note: Too vague, term: Containerization tools}
+  "containerized": {label: approve, term: containerized}
+  "containerized applications": {label: approve, term: containerized applications}
+  "containerized deployments": {label: approve, term: containerized deployments}
+  "containers": {label: sense, note: software containers, requirement_line: true, term: containers}
+  "context api": {label: approve, term: Context API}
+  "context engineering": {label: approve, term: context engineering}
+  "context management": {label: approve, term: Context management}
+  "continuous delivery": {label: approve, term: continuous delivery}
+  "continuous deployment": {label: approve, term: continuous deployment}
+  "continuous improvement": {label: soft, term: continuous improvement}
+  "continuous integration": {label: approve, term: continuous integration}
+  "contract testing": {label: approve, term: contract testing}
+  "control center": {label: approve, term: Control Center}
+  "control tower": {label: approve, term: Control Tower}
+  "control-m": {label: approve, term: Control-M}
+  "conversational ai": {label: domain, note: Field of work, term: Conversational AI}
+  "copado": {label: approve, term: Copado}
+  "copilot": {label: sense, note: 'the named Copilot: GitHub Copilot ≠ Microsoft Copilot Studio', qualified_only: true, qualifiers: [\b(GitHub|Microsoft|MS|M365) Copilot\b], term: Copilot}
+  "copilot studio": {label: approve, term: Copilot Studio}
+  "copilots": {label: reject, term: copilots}
+  "core data": {label: approve, term: Core Data}
+  "core java": {label: approve, term: Core Java}
+  "corepoint": {label: approve, term: Corepoint}
+  "cortex analyst": {label: approve, term: Cortex Analyst}
+  "cortex search": {label: approve, term: Cortex Search}
+  "cosmos db": {label: approve, term: Cosmos DB}
+  "cost optimization": {label: approve, term: cost optimization}
+  "coupa": {label: approve, term: Coupa}
+  "cpp": {label: approve, term: CPP}
+  "cpq": {label: approve, term: CPQ}
+  "creation of segments": {label: reject, term: creation of Segments}
+  "credit assessment": {label: domain, note: Industry, term: credit assessment}
+  "credit bureau": {label: domain, note: Industry, term: Credit Bureau}
+  "credit risk": {label: domain, note: Industry, term: credit risk}
+  "crewai": {label: approve, term: CrewAI}
+  "crisc": {label: credential, term: CRISC}
+  "crm": {label: domain, note: Industry, term: CRM}
+  "crowdstrike": {label: approve, term: CrowdStrike}
+  "crt tables": {label: approve, term: CRT tables}
+  "crypto": {label: reject, term: crypto}
+  "csam": {label: approve, term: CSAM}
+  "csharp": {label: approve, term: CSharp}
+  "cspm": {label: approve, term: CSPM}
+  "css": {label: approve, term: CSS}
+  "css3": {label: approve, term: CSS3}
+  "csv": {label: approve, term: CSV}
+  "cucumber": {label: sense, note: Cucumber (BDD tool), term: Cucumber}
+  "cucumber bdd": {label: approve, term: Cucumber BDD}
+  "cuda": {label: approve, term: CUDA}
+  "current good manufacturing": {label: domain, note: Industry, term: Current Good Manufacturing}
+  "cursor": {label: sense, note: 'the Cursor editor, not a SQL/UI cursor', term: Cursor}
+  "custom connectors": {label: approve, term: custom connectors}
+  "customer": {label: reject, term: Customer}
+  "customer support": {label: domain, note: Field of work, term: customer support}
+  "cybersecurity": {label: domain, note: Field of work, term: cybersecurity}
+  "cypress": {label: sense, note: Cypress test tool, term: Cypress}
+  "dagger": {label: sense, note: Dagger (CI / Android DI), term: Dagger}
+  "dagster": {label: approve, term: Dagster}
+  "dashboard development": {label: approve, term: dashboard development}
+  "dashboards": {label: approve, term: Dashboards}
+  "dast": {label: approve, term: DAST}
+  "dat streams": {label: reject, term: Dat Streams}
+  "data 360": {label: approve, term: Data 360}
+  "data analysis": {label: domain, note: Field of work, term: Data analysis}
+  "data analytics": {label: domain, note: Field of work, term: data analytics}
+  "data annotation": {label: approve, term: data annotation}
+  "data cataloging": {label: approve, term: data cataloging}
+  "data cleaning": {label: approve, term: data cleaning}
+  "data cleansing": {label: approve, term: data cleansing}
+  "data collection": {label: approve, term: data collection}
+  "data design": {label: reject, term: data design}
+  "data discovery": {label: approve, term: Data discovery}
+  "data engineering": {by: operator, label: domain, term: Data Engineering}
+  "data extraction": {label: approve, term: data extraction}
+  "data factory": {label: approve, term: Data Factory}
+  "data flow diagrams": {label: approve, term: data flow diagrams}
+  "data governance": {label: domain, note: Field of work, term: Data Governance}
+  "data ingestion": {label: approve, term: Data ingestion}
+  "data integration": {label: approve, term: data integration}
+  "data lake": {label: approve, term: data lake}
+  "data lakes": {label: approve, term: data lakes}
+  "data lineage": {label: approve, term: data lineage}
+  "data loader": {label: approve, term: Data Loader}
+  "data management": {label: domain, note: Field of work, term: Data Management}
+  "data mapping": {label: approve, term: data mapping}
+  "data migration": {label: approve, term: data migration}
+  "data mining": {label: approve, term: data mining}
+  "data modeling": {label: approve, term: data modeling}
+  "data modelling": {label: approve, term: data modelling}
+  "data models": {label: approve, term: data models}
+  "data observability": {label: approve, term: data observability}
+  "data parsing": {label: approve, term: Data Parsing}
+  "data pipeline": {label: approve, term: data pipeline}
+  "data pipeline development": {label: approve, term: data pipeline development}
+  "data pipelines": {label: approve, term: Data pipelines}
+  "data preparation": {label: approve, term: data preparation}
+  "data preprocessing": {label: approve, term: Data preprocessing}
+  "data privacy": {label: domain, note: Industry, term: data privacy}
+  "data processing": {label: approve, term: data processing}
+  "data profiling": {label: approve, term: data profiling}
+  "data protection": {label: approve, term: data protection}
+  "data quality": {label: approve, term: data quality}
+  "data quality checks": {label: approve, term: Data quality checks}
+  "data quality frameworks": {label: reject, term: Data Quality frameworks}
+  "data quality validation": {label: approve, term: data quality validation}
+  "data querying": {label: approve, term: data querying}
+  "data reconciliation": {label: approve, term: data reconciliation}
+  "data science": {label: domain, note: Field of work, term: data science}
+  "data security": {label: approve, term: data security}
+  "data streams": {label: approve, term: Data Streams}
+  "data structure": {label: reject, term: data structure}
+  "data structures": {label: approve, term: data structures}
+  "data structures and algorithms": {label: approve, term: data structures and algorithms}
+  "data testing": {label: approve, term: data testing}
+  "data transformation": {label: approve, term: Data transformation}
+  "data validation": {label: approve, term: data validation}
+  "data vault": {label: approve, term: Data Vault}
+  "data views setup": {label: reject, term: Data Views Setup}
+  "data visualisation": {label: approve, term: data visualisation}
+  "data visualization": {label: approve, term: Data visualization}
+  "data visualization tools": {label: approve, term: data visualization tools}
+  "data viz": {label: approve, term: data viz}
+  "data warehouse": {label: approve, term: data warehouse}
+  "data warehouses": {label: approve, term: data warehouses}
+  "data warehousing": {label: approve, term: Data warehousing}
+  "data warehousing concepts": {label: approve, term: data warehousing concepts}
+  "data workflows": {label: reject, term: data workflows}
+  "data wrangling": {label: approve, term: data wrangling}
+  "data-migration concepts": {label: reject, term: data-migration concepts}
+  "database design": {label: approve, term: database design}
+  "database design principles": {label: approve, term: database design principles}
+  "database management": {label: approve, term: database management}
+  "database management systems": {label: approve, term: database management systems}
+  "database technologies": {label: reject, term: database technologies}
+  "databases": {label: approve, term: databases}
+  "databricks": {label: approve, term: Databricks}
+  "databricks certification": {label: credential, term: Databricks certification}
+  "databricks certifications": {label: credential, term: Databricks certifications}
+  "databricks workflows": {label: approve, term: Databricks Workflows}
+  "datadog": {label: approve, term: Datadog}
+  "dataflow": {label: approve, term: Dataflow}
+  "dataform": {label: approve, term: Dataform}
+  "dataops": {label: domain, note: Field of work, term: DataOps}
+  "dataproc": {label: approve, term: Dataproc}
+  "datastage": {label: approve, term: DataStage}
+  "dataverse": {label: approve, term: Dataverse}
+  "dax": {label: approve, term: DAX}
+  "db2": {label: approve, term: DB2}
+  "dba": {label: approve, term: DBA}
+  "dbt": {label: approve, term: dbt}
+  "ddd": {label: approve, term: DDD}
+  "debezium": {label: approve, term: Debezium}
+  "debugging": {label: approve, term: debugging}
+  "debugging skills": {label: soft, term: debugging skills}
+  "debugging tools": {label: reject, term: debugging tools}
+  "decision trees": {label: approve, term: decision trees}
+  "deep learning": {label: domain, note: Field of work, term: Deep Learning}
+  "dell boomi": {label: approve, term: Dell Boomi}
+  "delta lake": {label: approve, term: Delta Lake}
+  "delta live tables": {label: approve, term: Delta Live Tables}
+  "demand forecasting": {label: approve, term: demand forecasting}
+  "demos": {label: reject, term: demos}
+  "dependency injection": {label: approve, term: Dependency injection}
+  "dependency management": {label: approve, term: dependency management}
+  "dependency scanning": {label: approve, term: dependency scanning}
+  "deployed model": {label: approve, term: deployed model}
+  "deployed models": {label: approve, term: deployed models}
+  "deploying models": {label: approve, term: deploying models}
+  "deployment automation": {label: approve, term: deployment automation}
+  "design pattern": {label: approve, term: design pattern}
+  "design patterns": {label: approve, term: design patterns}
+  "design reviews": {label: approve, term: design reviews}
+  "design system": {label: approve, term: design system}
+  "design systems": {label: approve, term: design systems}
+  "design thinking": {label: soft, term: Design Thinking}
+  "developer tools": {label: reject, term: developer tools}
+  "devexpress": {label: approve, term: DevExpress}
+  "device management": {label: approve, term: device management}
+  "devops": {label: domain, note: Field of work, term: DevOps}
+  "devops practices": {label: domain, note: Field of work, term: DevOps practices}
+  "devops principles": {label: domain, note: Field of work, term: DevOps principles}
+  "devops tools": {label: reject, note: Too vague, term: DevOps tools}
+  "devsecops": {label: domain, note: Field of work, term: DevSecOps}
+  "dhcp": {label: approve, term: DHCP}
+  "digital marketing": {label: domain, note: Industry, term: digital marketing}
+  "digital payments": {label: domain, note: Industry, term: Digital Payments}
+  "dimensional modeling": {label: approve, term: dimensional modeling}
+  "dimensions": {label: reject, term: dimensions}
+  "disaster recovery": {label: approve, term: disaster recovery}
+  "discovery": {label: reject, term: discovery}
+  "display profiles setup": {label: reject, term: Display Profiles Setup}
+  "distillation": {label: approve, term: distillation}
+  "distributed": {label: reject, note: Bare adjective, term: distributed}
+  "distributed computing": {label: approve, term: distributed computing}
+  "distributed data processing": {label: approve, term: distributed data processing}
+  "distributed systems": {label: approve, term: distributed systems}
+  "distributed tracing": {label: approve, term: distributed tracing}
+  "distributed training": {label: approve, term: distributed training}
+  "django": {label: approve, term: Django}
+  "django rest": {label: approve, term: Django REST}
+  "dlp": {label: approve, term: DLP}
+  "dlt": {label: approve, term: DLT}
+  "dns": {label: approve, term: DNS}
+  "docker": {label: approve, term: Docker}
+  "docker compose": {label: approve, term: Docker Compose}
+  "document intelligence": {label: approve, term: Document Intelligence}
+  "document parsing": {label: approve, term: document parsing}
+  "documentation": {label: sense, note: technical documentation, requirement_line: true, term: documentation}
+  "domain-driven design": {label: approve, term: Domain-Driven Design}
+  "domo": {label: approve, term: Domo}
+  "dotnet": {label: approve, term: dotnet}
+  "drift detection": {label: approve, term: drift detection}
+  "dropwizard": {label: approve, term: DropWizard}
+  "dsa": {label: approve, term: DSA}
+  "dsp": {label: approve, term: DSP}
+  "dynamodb": {label: approve, term: DynamoDB}
+  "dynatrace": {label: approve, term: Dynatrace}
+  "e-commerce": {label: domain, note: Industry, term: E-commerce}
+  "ebs": {label: approve, term: EBS}
+  "ec2": {label: approve, term: EC2}
+  "ecmascript": {label: approve, term: ECMAScript}
+  "ecn": {label: reject, term: ECN}
+  "ecommerce": {label: domain, note: Industry, term: eCommerce}
+  "econometrics": {label: approve, term: econometrics}
+  "ecs": {label: approve, term: ECS}
+  "ecs/eks": {label: approve, term: ECS/EKS}
+  "eda": {label: approve, term: EDA}
+  "edge": {label: sense, note: 'Microsoft Edge / edge computing named as such, not ''edge''', qualified_only: true, qualifiers: [\bMicrosoft Edge\b, '\b[Ee]dge (computing|devices|AI|inference)\b'], term: Edge}
+  "edge computing": {label: domain, note: Field of work, term: edge computing}
+  "edr": {label: approve, term: EDR}
+  "ef": {label: reject, term: EF}
+  "efs": {label: approve, term: EFS}
+  "eks": {label: approve, term: EKS}
+  "elastic": {label: sense, note: 'Elastic / Elasticsearch, not ''elastic''', term: Elastic}
+  "elastic search": {label: approve, term: Elastic Search}
+  "elasticsearch": {label: approve, term: Elasticsearch}
+  "elb": {label: approve, term: ELB}
+  "electron": {label: sense, note: 'Electron (desktop apps), not the particle', term: Electron}
+  "elk": {label: approve, term: ELK}
+  "elk stack": {label: approve, term: ELK stack}
+  "eloquent orm": {label: approve, term: Eloquent ORM}
+  "elt": {label: approve, term: ELT}
+  "elt pipelines": {label: approve, term: ELT pipelines}
+  "embedded analytics": {label: approve, term: Embedded Analytics}
+  "embedded c++": {label: approve, term: Embedded C++}
+  "embedding": {label: approve, term: embedding}
+  "embedding models": {label: approve, term: embedding models}
+  "embeddings": {label: approve, term: embeddings}
+  "emerging ai technologies": {label: reject, term: emerging AI technologies}
+  "emr": {label: approve, term: EMR}
+  "encryption": {label: approve, term: encryption}
+  "end-to-end testing": {label: approve, term: end-to-end testing}
+  "engineering standards": {label: reject, term: engineering standards}
+  "english": {label: soft, term: English}
+  "english communication": {label: soft, term: English communication}
+  "ensemble methods": {label: approve, term: ensemble methods}
+  "enterprise": {label: reject, term: enterprise}
+  "enterprise ai": {label: domain, note: Field of work, term: enterprise AI}
+  "enterprise applications": {label: reject, term: enterprise applications}
+  "enterprise data": {label: reject, term: enterprise data}
+  "enterprise integrations": {label: reject, term: enterprise integrations}
+  "enterprise reporting": {label: approve, term: Enterprise reporting}
+  "enterprise saas": {label: reject, term: enterprise SaaS}
+  "enterprise software": {label: reject, term: enterprise software}
+  "entra id": {label: approve, term: Entra ID}
+  "environment promotion": {label: approve, term: environment promotion}
+  "epic systems": {label: approve, term: Epic Systems}
+  "equipment maintenance": {label: domain, note: Industry, term: Equipment Maintenance}
+  "erp": {label: domain, note: Industry, term: ERP}
+  "erp systems": {label: domain, note: Industry, term: ERP systems}
+  "error budgets": {label: approve, term: error budgets}
+  "error handling": {label: approve, term: Error handling}
+  "es6": {label: approve, term: ES6}
+  "es6+": {label: approve, term: ES6+}
+  "esb": {label: approve, term: ESB}
+  "etl": {label: approve, term: ETL}
+  "etl / elt": {label: approve, term: ETL / ELT}
+  "etl development": {label: approve, term: ETL development}
+  "etl pipelines": {label: approve, term: ETL pipelines}
+  "etl processes": {label: approve, term: ETL processes}
+  "etl testing": {label: approve, term: ETL testing}
+  "etl tools": {label: reject, term: ETL tools}
+  "etl/elt": {label: approve, term: ETL/ELT}
+  "etl/elt development": {label: approve, term: ETL/ELT development}
+  "etl/elt pipeline development": {label: approve, term: ETL/ELT pipeline development}
+  "etl/elt pipelines": {label: approve, term: ETL/ELT pipelines}
+  "etl/elt processes": {label: approve, term: ETL/ELT processes}
+  "evaluation frameworks": {label: reject, term: evaluation frameworks}
+  "event grid": {label: approve, term: Event Grid}
+  "event hub": {label: approve, term: Event Hub}
+  "event hubs": {label: approve, term: Event Hubs}
+  "event streaming": {label: approve, term: event streaming}
+  "event-driven": {label: approve, term: event-driven}
+  "event-driven systems": {label: approve, term: event-driven systems}
+  "eventbridge": {label: approve, term: EventBridge}
+  "events": {label: reject, term: Events}
+  "excel": {label: sense, note: 'Microsoft Excel, not ''excel at/in''', qualified_only: false, qualifiers: [\b(MS|Microsoft|Advanced|advanced) Excel\b], term: Excel}
+  "exception handling": {label: approve, term: exception handling}
+  "executive presence": {label: soft, term: Executive Presence}
+  "experience cloud": {label: approve, term: Experience Cloud}
+  "experiment tracking": {label: approve, term: experiment tracking}
+  "experimental design": {label: approve, term: experimental design}
+  "experimentation": {label: approve, term: experimentation}
+  "explainability": {label: approve, term: explainability}
+  "exploratory data analysis": {label: approve, term: Exploratory data analysis}
+  "express": {label: sense, note: 'Express.js, not ''express interest''', term: Express}
+  "express.js": {label: approve, term: Express.js}
+  "f1": {label: reject, term: F1}
+  "facts": {label: reject, term: facts}
+  "faiss": {label: approve, term: FAISS}
+  "fargate": {label: approve, term: Fargate}
+  "fastapi": {label: approve, term: FastAPI}
+  "fastify": {label: approve, term: Fastify}
+  "fault tolerance": {label: approve, term: fault tolerance}
+  "fbdi": {label: approve, term: FBDI}
+  "fcc": {label: domain, note: Industry, term: FCC}
+  "fea simulation": {label: approve, term: FEA Simulation}
+  "feature engineering": {label: approve, term: Feature engineering}
+  "feature flags": {label: approve, term: feature flags}
+  "feature stores": {label: approve, term: feature stores}
+  "fedramp": {label: domain, note: Industry, term: FedRAMP}
+  "ffmpeg": {label: approve, term: ffmpeg}
+  "fhir": {label: approve, term: FHIR}
+  "figma": {label: approve, term: Figma}
+  "file systems": {label: approve, term: file systems}
+  "finance": {label: domain, note: Industry, term: Finance}
+  "financial": {label: reject, term: financial}
+  "financial analysis": {label: domain, note: Industry, term: financial analysis}
+  "financial crime": {label: domain, note: Industry, term: financial crime}
+  "financial data": {label: domain, note: Industry, term: financial data}
+  "financial industry": {label: domain, note: Industry, term: financial industry}
+  "financial modeling": {label: domain, note: Industry, term: financial modeling}
+  "financial planning": {label: domain, note: Industry, term: financial planning}
+  "financial services": {label: domain, note: Industry, term: financial services}
+  "financial services domain": {label: domain, note: Industry, term: financial services domain}
+  "financial statements": {label: domain, note: Industry, term: financial statements}
+  "financial technology": {label: domain, note: Industry, term: financial technology}
+  "fine-tuning": {label: approve, term: fine-tuning}
+  "finite volume method": {label: approve, term: Finite volume method}
+  "finops": {label: domain, note: Field of work, term: FinOps}
+  "fintech": {label: domain, note: Industry, term: fintech}
+  "firebase": {label: approve, term: Firebase}
+  "firestore": {label: approve, term: Firestore}
+  "firewall": {label: approve, term: firewall}
+  "firewalls": {label: approve, term: firewalls}
+  "fivetran": {label: approve, term: Fivetran}
+  "flask": {label: sense, note: 'Flask framework, not a bottle', term: Flask}
+  "flexera": {label: approve, term: Flexera}
+  "flexera one": {label: approve, term: Flexera One}
+  "flink": {label: approve, term: Flink}
+  "flow": {label: reject, term: Flow}
+  "flow designer": {label: approve, term: Flow designer}
+  "flows": {label: reject, term: Flows}
+  "fluency in english": {label: soft, term: Fluency in English}
+  "flutter": {label: sense, note: Flutter (mobile framework), term: Flutter}
+  "flux": {label: sense, note: 'Flux (GitOps), not ''in flux''', term: Flux}
+  "fmi/fmu standard": {label: approve, term: FMI/FMU standard}
+  "forecasting": {label: approve, term: forecasting}
+  "foundation models": {label: approve, term: foundation models}
+  "fraud": {label: reject, term: fraud}
+  "fraud detection": {label: approve, term: fraud detection}
+  "french": {label: soft, term: French}
+  "front-end development": {label: domain, note: Field of work, term: Front-end development}
+  "frontend development": {label: domain, note: Field of work, term: Frontend development}
+  "frontend engineering": {label: domain, note: Field of work, term: frontend engineering}
+  "full stack": {label: domain, note: Field of work, term: full stack}
+  "full stack development": {label: domain, note: Field of work, term: Full stack development}
+  "full-stack": {label: domain, note: Field of work, term: full-stack}
+  "full-stack development": {label: domain, note: Field of work, term: Full-stack development}
+  "fullstack": {label: domain, note: Field of work, term: fullstack}
+  "function calling": {label: approve, term: function calling}
+  "functional components": {label: approve, term: functional components}
+  "functional interfaces": {label: approve, term: Functional Interfaces}
+  "functional programming": {label: approve, term: Functional programming}
+  "functional testing": {label: approve, term: functional testing}
+  "functions": {label: sense, note: Azure / Cloud / AWS Step Functions only, requirement_line: true, term: Functions}
+  "ga4": {label: approve, term: GA4}
+  "gcfa": {label: credential, term: GCFA}
+  "gcia": {label: credential, term: GCIA}
+  "gcih": {label: credential, term: GCIH}
+  "gcp": {label: approve, term: GCP}
+  "gcp bigquery": {label: approve, term: GCP BigQuery}
+  "gcp cloud storage": {label: approve, term: GCP Cloud Storage}
+  "gcs": {label: approve, term: GCS}
+  "gdb": {label: approve, term: gdb}
+  "gdpr": {label: domain, note: Industry, term: GDPR}
+  "gearset": {label: approve, term: Gearset}
+  "gemini": {label: sense, note: 'Google Gemini, not the zodiac', term: Gemini}
+  "gen ai": {label: domain, note: Field of work, term: Gen AI}
+  "gen ai tools": {label: reject, term: Gen AI tools}
+  "genai": {label: domain, note: Field of work, term: GenAI}
+  "genai tools": {label: reject, term: GenAI tools}
+  "generative ai": {label: domain, note: Field of work, term: Generative AI}
+  "generative ai tools": {label: reject, term: Generative AI tools}
+  "geo": {label: sense, note: 'Generative Engine Optimization (GEO), not geography', term: GEO}
+  "geospatial data": {label: domain, note: Field of work, term: geospatial data}
+  "german": {label: soft, term: German}
+  "giac": {label: credential, term: GIAC}
+  "gis": {label: approve, term: GIS}
+  "git": {label: approve, term: Git}
+  "git version control": {label: approve, term: Git version control}
+  "git workflows": {label: approve, term: Git workflows}
+  "git/github": {label: approve, term: Git/GitHub}
+  "github": {label: approve, term: GitHub}
+  "github actions": {label: approve, term: GitHub Actions}
+  "github copilot": {label: approve, term: GitHub Copilot}
+  "github flow": {label: approve, term: GitHub Flow}
+  "github/gitlab": {label: approve, term: GitHub/GitLab}
+  "gitlab": {label: approve, term: GitLab}
+  "gitlab ci": {label: approve, term: GitLab CI}
+  "gitlab ci/cd": {label: approve, term: GitLab CI/CD}
+  "gitops": {label: approve, term: GitOps}
+  "gke": {label: approve, term: GKE}
+  "glue": {label: sense, note: 'AWS Glue, not ''glue''', term: Glue}
+  "go": {label: sense, note: 'Go / Golang the language, not the verb', qualified_only: false, qualifiers: [\bGolang\b], term: Go}
+  "golang": {label: approve, term: Golang}
+  "google": {label: reject, note: 'A vendor; its products (GCP, BigQuery...) are the skills', term: Google}
+  "google adk": {label: approve, term: Google ADK}
+  "google analytics": {label: approve, term: Google Analytics}
+  "google bigquery": {label: approve, term: Google BigQuery}
+  "google cloud": {label: approve, term: Google Cloud}
+  "google cloud platform": {label: approve, term: Google Cloud Platform}
+  "google cloud storage": {label: approve, term: Google Cloud Storage}
+  "google gemini": {label: approve, term: Google Gemini}
+  "google search console": {label: approve, term: Google Search Console}
+  "google secops": {label: approve, term: Google SecOps}
+  "google sheets": {label: approve, term: Google Sheets}
+  "google tag manager": {label: approve, term: Google Tag Manager}
+  "google workspace": {label: approve, term: Google Workspace}
+  "governance": {label: reject, term: governance}
+  "gpt": {label: approve, term: GPT}
+  "gpu": {label: approve, term: GPU}
+  "gradient boosting": {label: approve, term: gradient boosting}
+  "gradio": {label: approve, term: Gradio}
+  "gradle": {label: approve, term: Gradle}
+  "grafana": {label: approve, term: Grafana}
+  "graph databases": {label: approve, term: Graph Databases}
+  "graphic design": {label: domain, note: Field of work, term: Graphic Design}
+  "graphql": {label: approve, term: GraphQL}
+  "graphql apis": {label: approve, term: GraphQL APIs}
+  "graphrag": {label: approve, term: GraphRAG}
+  "grc": {label: approve, term: GRC}
+  "groovy": {label: sense, note: the Groovy language, term: Groovy}
+  "grounding": {label: sense, note: 'LLM grounding, not electrical grounding', requirement_line: true, term: grounding}
+  "grpc": {label: approve, term: gRPC}
+  "guardrails": {label: approve, term: guardrails}
+  "gxp": {label: domain, note: Industry, term: GxP}
+  "h5py": {label: approve, term: h5py}
+  "hadoop": {label: approve, term: Hadoop}
+  "hallucination mitigation": {label: approve, term: hallucination mitigation}
+  "harness": {label: sense, note: 'Harness CI/CD, not the verb', term: Harness}
+  "haystack": {label: sense, note: Haystack (LLM framework), term: Haystack}
+  "hbase": {label: approve, term: HBase}
+  "hdfs": {label: approve, term: HDFS}
+  "hdl": {label: approve, term: HDL}
+  "health checks": {label: approve, term: Health checks}
+  "healthcare": {label: domain, note: Industry, term: Healthcare}
+  "healthcare data": {label: domain, note: Industry, term: healthcare data}
+  "healthcare domain": {label: domain, note: Industry, term: Healthcare domain}
+  "helm": {label: sense, note: 'Helm (Kubernetes), not ''at the helm''', term: Helm}
+  "helm charts": {label: approve, term: Helm charts}
+  "hibernate": {label: approve, term: Hibernate}
+  "hibernate/jpa": {label: approve, term: Hibernate/JPA}
+  "high availability": {label: approve, term: high availability}
+  "hilt": {label: sense, note: Hilt (Android DI), term: Hilt}
+  "hipaa": {label: domain, note: Industry, term: HIPAA}
+  "hive": {label: sense, note: 'Apache Hive / Hive DB, not ''hive''', term: Hive}
+  "hl7": {label: approve, term: HL7}
+  "hooks": {label: sense, note: React hooks / git hooks, requirement_line: true, term: hooks}
+  "hr tech": {label: domain, note: Industry, term: HR tech}
+  "html": {label: approve, term: HTML}
+  "html/css": {label: approve, term: HTML/CSS}
+  "html5": {label: approve, term: HTML5}
+  "http": {label: sense, note: 'the HTTP protocol, never a URL', term: HTTP}
+  "http/https": {label: approve, term: HTTP/HTTPS}
+  "hubspot": {label: approve, term: HubSpot}
+  "hudi": {label: approve, term: Hudi}
+  "hugging face": {label: approve, term: Hugging Face}
+  "hugging face transformers": {label: approve, term: Hugging Face Transformers}
+  "huggingface": {label: approve, term: HuggingFace}
+  "huggingface transformers": {label: approve, term: HuggingFace Transformers}
+  "human-in-the-loop review": {label: approve, term: human-in-the-loop review}
+  "hyperparameter optimization": {label: approve, term: hyperparameter optimization}
+  "hypothesis testing": {label: approve, term: hypothesis testing}
+  "iaas": {label: approve, term: IaaS}
+  "iac": {label: approve, term: IaC}
+  "iam": {label: approve, term: IAM}
+  "ibm mq": {label: approve, term: IBM MQ}
+  "iceberg": {label: sense, note: 'Apache Iceberg, not an iceberg', term: Iceberg}
+  "ide": {label: approve, term: IDE}
+  "idempotency": {label: approve, term: idempotency}
+  "identity": {label: reject, term: identity}
+  "iis": {label: approve, term: IIS}
+  "incident management": {label: domain, note: Field of work, term: Incident Management}
+  "incident response": {label: approve, term: incident response}
+  "indexing": {label: approve, term: indexing}
+  "inference optimization": {label: approve, term: inference optimization}
+  "informatica": {label: approve, term: Informatica}
+  "informatica powercenter": {label: approve, term: Informatica PowerCenter}
+  "information retrieval": {label: approve, term: Information retrieval}
+  "information security": {label: domain, note: Field of work, term: information security}
+  "information technology": {label: credential, term: Information Technology}
+  "infrastructure as code": {label: approve, term: Infrastructure as Code}
+  "infrastructure automation": {label: approve, term: infrastructure automation}
+  "infrastructure engineering": {label: domain, note: Field of work, term: Infrastructure Engineering}
+  "infrastructure security": {label: domain, note: Field of work, term: infrastructure security}
+  "infrastructure-as-code": {label: approve, term: Infrastructure-as-Code}
+  "innovation": {label: reject, term: innovation}
+  "input validation": {label: approve, term: Input validation}
+  "installation": {label: reject, term: installation}
+  "instructor": {label: sense, note: 'the Instructor library, not a teacher', term: Instructor}
+  "insurance": {label: domain, note: Industry, term: Insurance}
+  "insurance domain": {label: domain, note: Industry, term: Insurance domain}
+  "integration": {label: reject, term: integration}
+  "integration testing": {label: approve, term: Integration testing}
+  "integrations": {label: reject, term: integrations}
+  "intelligent automation": {label: approve, term: intelligent automation}
+  "interaction design": {label: approve, term: Interaction Design}
+  "internal tools": {label: reject, term: internal tools}
+  "intersystem networking": {label: approve, term: intersystem networking}
+  "intune": {label: approve, term: Intune}
+  "inventory": {label: reject, term: inventory}
+  "ios": {label: approve, term: iOS}
+  "ipsec": {label: approve, term: IPSec}
+  "isaac sim": {label: approve, term: Isaac Sim}
+  "iso": {label: credential, term: ISO}
+  "iso 27001": {label: credential, term: ISO 27001}
+  "istio": {label: approve, term: Istio}
+  "itil": {label: approve, term: ITIL}
+  "itil foundation": {label: credential, term: ITIL Foundation}
+  "itsm": {label: approve, term: ITSM}
+  "j2ee": {label: approve, term: J2EE}
+  "jasmine": {label: sense, note: Jasmine (test framework), term: Jasmine}
+  "java": {label: approve, term: Java}
+  "java 11/17+": {label: approve, term: Java 11/17+}
+  "java 17+": {label: approve, term: Java 17+}
+  "java 8": {label: approve, term: Java 8}
+  "javascript": {label: approve, term: JavaScript}
+  "javascript/typescript": {label: approve, term: JavaScript/TypeScript}
+  "jax": {label: approve, term: JAX}
+  "jdbc": {label: approve, term: JDBC}
+  "jenkins": {label: approve, term: Jenkins}
+  "jenkins ci/cd": {label: approve, term: Jenkins CI/CD}
+  "jest": {label: sense, note: Jest test runner, term: Jest}
+  "jira": {label: approve, term: Jira}
+  "jira service management": {label: approve, term: Jira Service Management}
+  "jmeter": {label: approve, term: JMeter}
+  "jms": {label: approve, term: JMS}
+  "jpa": {label: approve, term: JPA}
+  "jquery": {label: approve, term: JQuery}
+  "js": {label: approve, term: JS}
+  "json": {label: approve, term: JSON}
+  "junit": {label: approve, term: JUnit}
+  "jupyter": {label: approve, term: Jupyter}
+  "jwt": {label: approve, term: JWT}
+  "k6": {label: approve, term: k6}
+  "k8s": {label: approve, term: K8s}
+  "kafka": {label: approve, term: Kafka}
+  "kafka connect": {label: approve, term: Kafka Connect}
+  "kafka streams": {label: approve, term: Kafka Streams}
+  "kanban": {label: approve, term: Kanban}
+  "karate": {label: sense, note: Karate (API test tool), term: Karate}
+  "karma": {label: sense, note: Karma (test runner), term: Karma}
+  "keras": {label: approve, term: Keras}
+  "key vault": {label: approve, term: Key Vault}
+  "kibana": {label: approve, term: Kibana}
+  "kimball": {label: approve, term: Kimball}
+  "kinesis": {label: approve, term: Kinesis}
+  "knowledge bases": {label: approve, term: knowledge bases}
+  "knowledge graphs": {label: approve, term: knowledge graphs}
+  "knowledge management": {label: soft, term: knowledge management}
+  "kotlin": {label: approve, term: Kotlin}
+  "kpis": {label: reject, term: KPIs}
+  "kronos": {label: approve, term: Kronos}
+  "ksqldb": {label: approve, term: KsqlDB}
+  "kubeflow": {label: approve, term: Kubeflow}
+  "kubernetes": {label: approve, term: Kubernetes}
+  "kubernetes administration": {label: approve, term: Kubernetes Administration}
+  "kubernetes operators": {label: approve, term: Kubernetes operators}
+  "kubevirt": {label: approve, term: KubeVirt}
+  "kvm": {label: approve, term: KVM}
+  "kyc": {label: domain, note: Industry, term: KYC}
+  "lab instrument interfaces": {label: approve, term: Lab Instrument Interfaces}
+  "labeling": {label: reject, term: labeling}
+  "labor category setup": {label: reject, term: Labor Category Setup}
+  "lake formation": {label: approve, term: Lake Formation}
+  "lakehouse": {label: approve, term: Lakehouse}
+  "lambda": {label: sense, note: 'AWS Lambda, not a lambda expression in maths', term: Lambda}
+  "lambdas": {label: sense, note: AWS Lambda functions, term: Lambdas}
+  "langchain": {label: approve, term: LangChain}
+  "langfuse": {label: approve, term: Langfuse}
+  "langgraph": {label: approve, term: LangGraph}
+  "langsmith": {label: approve, term: LangSmith}
+  "laravel": {label: approve, term: Laravel}
+  "large datasets": {label: reject, term: large datasets}
+  "large language model": {label: approve, term: large language model}
+  "large language models": {label: approve, term: Large Language Models}
+  "ldap": {label: approve, term: LDAP}
+  "lean": {label: sense, note: 'Lean methodology, not ''lean''', requirement_line: true, term: Lean}
+  "lean methodologies": {label: approve, term: Lean Methodologies}
+  "lean six sigma": {label: approve, term: Lean Six Sigma}
+  "learning": {label: reject, term: Learning}
+  "least-privilege access": {label: approve, term: least-privilege access}
+  "lending": {label: domain, note: Industry, term: lending}
+  "life sciences": {label: domain, note: Industry, term: Life Sciences}
+  "lifecycle management": {label: reject, term: lifecycle management}
+  "lightgbm": {label: approve, term: LightGBM}
+  "lightning web components": {label: approve, term: Lightning Web Components}
+  "lineage": {label: approve, term: lineage}
+  "linear algebra": {label: approve, term: Linear algebra}
+  "linear regression": {label: approve, term: Linear Regression}
+  "linkerd": {label: approve, term: Linkerd}
+  "linux": {label: approve, term: Linux}
+  "linux administration": {label: approve, term: Linux Administration}
+  "linux systems": {label: approve, term: Linux systems}
+  "linux systems administration": {label: approve, term: Linux systems administration}
+  "linux/unix": {label: approve, term: Linux/Unix}
+  "litellm": {label: approve, term: LiteLLM}
+  "llama": {label: sense, note: Meta Llama, term: Llama}
+  "llamaindex": {label: approve, term: LlamaIndex}
+  "llm": {label: approve, term: LLM}
+  "llm apis": {label: approve, term: LLM APIs}
+  "llm evaluation": {label: approve, term: LLM evaluation}
+  "llm frameworks": {label: reject, term: LLM frameworks}
+  "llm integration": {label: approve, term: LLM integration}
+  "llm integrations": {label: approve, term: LLM integrations}
+  "llm orchestration": {label: approve, term: LLM orchestration}
+  "llmops": {label: domain, note: Field of work, term: LLMOps}
+  "llms": {label: approve, term: LLMs}
+  "lms": {label: approve, term: LMS}
+  "load balancers": {label: approve, term: load balancers}
+  "load balancing": {label: approve, term: load balancing}
+  "load testing": {label: approve, term: load testing}
+  "loadrunner": {label: approve, term: LoadRunner}
+  "locust": {label: sense, note: Locust (load testing), term: Locust}
+  "log analysis": {label: approve, term: log analysis}
+  "log analytics": {label: approve, term: Log Analytics}
+  "logging": {label: approve, term: Logging}
+  "logic analyzer": {label: approve, term: Logic Analyzer}
+  "logic apps": {label: approve, term: Logic Apps}
+  "logical reasoning": {label: soft, term: logical reasoning}
+  "logistic regression": {label: approve, term: logistic regression}
+  "logistics": {label: domain, note: Industry, term: logistics}
+  "logs": {label: reject, term: logs}
+  "loki": {label: sense, note: Grafana Loki, term: Loki}
+  "looker": {label: sense, note: Looker (BI), term: Looker}
+  "lookml": {label: approve, term: LookML}
+  "lora": {label: approve, term: LoRA}
+  "los": {label: reject, note: Not a known skill, term: LOS}
+  "lwc": {label: approve, term: LWC}
+  "maay": {label: soft, term: Maay}
+  "machine learning": {label: domain, note: Field of work, term: Machine Learning}
+  "machine learning (ml)": {label: domain, note: Field of work, term: Machine Learning (ML)}
+  "machine learning algorithms": {label: domain, note: Field of work, term: machine learning algorithms}
+  "machine learning concepts": {label: domain, note: Field of work, term: Machine Learning concepts}
+  "machine learning fundamentals": {label: domain, note: Field of work, term: machine learning fundamentals}
+  "machine learning models": {label: domain, note: Field of work, term: machine learning models}
+  "machine learning operations": {label: domain, note: Field of work, term: machine learning operations}
+  "macos": {label: approve, term: macOS}
+  "macros": {label: sense, note: Excel/VBA macros, requirement_line: true, term: macros}
+  "maintainability": {label: reject, term: maintainability}
+  "maintenance": {label: reject, term: maintenance}
+  "make": {label: sense, note: 'Make.com / Integromat (automation tool), not the verb', qualified_only: false, qualifiers: [\bMake\.com\b, \bIntegromat\b, '\b(n8n|Zapier),? (and |or )?Make\b', '\bMake,? (and |or )?(n8n|Zapier)\b'], term: Make}
+  "makefiles": {label: approve, term: Makefiles}
+  "manual testing": {label: approve, term: manual testing}
+  "manufacturing": {label: domain, note: Industry, term: manufacturing}
+  "mariadb": {label: approve, term: MariaDB}
+  "market research": {label: domain, note: Industry, term: Market Research}
+  "marketing": {label: domain, note: Industry, term: marketing}
+  "master data management": {label: approve, term: master data management}
+  "master's degree": {label: credential, term: Master's degree}
+  "masters": {label: credential, term: Masters}
+  "material ui": {label: approve, term: Material UI}
+  "mathematics": {label: domain, note: Field of work, term: Mathematics}
+  "matillion": {label: approve, term: Matillion}
+  "matlab": {label: approve, term: MATLAB}
+  "matplotlib": {label: approve, term: Matplotlib}
+  "maven": {label: sense, note: 'Apache Maven, not ''a maven''', term: Maven}
+  "mba": {label: credential, term: MBA}
+  "mba in finance": {label: credential, term: MBA in Finance}
+  "mcp": {label: approve, term: MCP}
+  "mcp server": {label: approve, term: MCP server}
+  "mcp servers": {label: approve, term: MCP servers}
+  "mcps": {label: approve, term: MCPs}
+  "mdm": {label: approve, term: MDM}
+  "medallion": {label: sense, note: medallion architecture (data lakes) only, term: Medallion}
+  "memory management": {label: approve, term: memory management}
+  "mentorship": {label: soft, term: mentorship}
+  "mes": {label: approve, term: MES}
+  "message queues": {label: approve, term: message queues}
+  "message queuing": {label: approve, term: Message Queuing}
+  "messaging": {label: reject, term: messaging}
+  "messaging systems": {label: approve, term: messaging systems}
+  "metabase": {label: approve, term: Metabase}
+  "metadata": {label: reject, term: metadata}
+  "metadata management": {label: approve, term: metadata management}
+  "methodologies": {label: reject, term: methodologies}
+  "metrics": {label: reject, term: metrics}
+  "mfa": {label: approve, term: MFA}
+  "micro": {label: reject, term: Micro}
+  "micro-frontend": {label: approve, term: micro-frontend}
+  "microservice": {label: approve, term: microservice}
+  "microservice architecture": {label: approve, term: microservice architecture}
+  "microservices": {label: approve, term: microservices}
+  "microservices architecture": {label: approve, term: microservices architecture}
+  "microservices design patterns": {label: approve, term: microservices design patterns}
+  "microsoft": {label: reject, note: 'A vendor; its products (Azure, Excel...) are the skills', term: Microsoft}
+  "microsoft 365": {label: approve, term: Microsoft 365}
+  "microsoft azure": {label: approve, term: Microsoft Azure}
+  "microsoft azure certifications": {label: credential, term: Microsoft Azure certifications}
+  "microsoft azure data": {label: reject, note: Too vague, term: Microsoft Azure Data}
+  "microsoft copilot": {label: approve, term: Microsoft Copilot}
+  "microsoft copilot studio": {label: approve, term: Microsoft Copilot Studio}
+  "microsoft dynamics": {label: approve, term: Microsoft Dynamics}
+  "microsoft entra id": {label: approve, term: Microsoft Entra ID}
+  "microsoft excel": {label: approve, term: Microsoft Excel}
+  "microsoft fabric": {label: approve, term: Microsoft Fabric}
+  "microsoft office": {label: approve, term: Microsoft Office}
+  "microsoft office suite": {label: approve, term: Microsoft Office Suite}
+  "microsoft power bi": {label: approve, term: Microsoft Power BI}
+  "microsoft purview": {label: approve, term: Microsoft Purview}
+  "microsoft sentinel": {label: approve, term: Microsoft Sentinel}
+  "microsoft sql server": {label: approve, term: Microsoft SQL Server}
+  "microsoft word": {label: approve, term: Microsoft Word}
+  "microstrategy": {label: approve, term: MicroStrategy}
+  "middleware": {label: approve, term: middleware}
+  "milvus": {label: approve, term: Milvus}
+  "miro": {label: approve, term: Miro}
+  "mistral": {label: sense, note: 'Mistral AI, not the wind', term: Mistral}
+  "mitre att&ck": {label: approve, term: MITRE ATT&CK}
+  "ml": {label: domain, note: Field of work, term: ML}
+  "ml frameworks": {label: reject, term: ML frameworks}
+  "ml ops": {label: domain, note: Field of work, term: ML Ops}
+  "ml workflows": {label: approve, term: ML workflows}
+  "ml/ai": {label: domain, note: Field of work, term: ML/AI}
+  "mlflow": {label: approve, term: MLflow}
+  "mlops": {label: domain, note: Field of work, term: MLOps}
+  "mlops practices": {label: domain, note: Field of work, term: MLOps practices}
+  "mlops tooling": {label: reject, note: Too vague, term: MLOps tooling}
+  "mobile": {label: reject, term: mobile}
+  "mockito": {label: approve, term: Mockito}
+  "modbus": {label: approve, term: Modbus}
+  "model context protocol": {label: approve, term: Model Context Protocol}
+  "model deployment": {label: approve, term: Model deployment}
+  "model development": {label: approve, term: model development}
+  "model evaluation": {label: approve, term: model evaluation}
+  "model fine-tuning": {label: approve, term: Model fine-tuning}
+  "model governance": {label: approve, term: model governance}
+  "model management": {label: approve, term: model management}
+  "model monitoring": {label: approve, term: model monitoring}
+  "model optimization": {label: approve, term: model optimization}
+  "model risk management": {label: approve, term: model risk management}
+  "model routing": {label: approve, term: model routing}
+  "model serving": {label: approve, term: Model Serving}
+  "model training": {label: approve, term: model training}
+  "model validation": {label: approve, term: model validation}
+  "model versioning": {label: approve, term: model versioning}
+  "modelica": {label: approve, term: Modelica}
+  "modern data": {label: reject, term: modern data}
+  "mongo": {label: approve, term: Mongo}
+  "mongodb": {label: approve, term: MongoDB}
+  "monitoring": {label: sense, note: system/service monitoring, requirement_line: true, term: monitoring}
+  "monitoring dashboards": {label: approve, term: monitoring dashboards}
+  "monitoring tools": {label: reject, term: monitoring tools}
+  "monitors": {label: reject, term: Monitors}
+  "mq": {label: approve, term: MQ}
+  "mqtt": {label: approve, term: MQTT}
+  "ms excel": {label: sense, note: Microsoft Excel, term: MS Excel}
+  "ms office": {label: approve, term: MS Office}
+  "ms sql": {label: approve, term: MS SQL}
+  "ms sql databases": {label: approve, term: MS SQL Databases}
+  "ms unit": {label: approve, term: MS Unit}
+  "msbuild": {label: approve, term: MSBuild}
+  "msk": {label: approve, term: MSK}
+  "msmq": {label: approve, term: MSMQ}
+  "mssql": {label: approve, term: MSSQL}
+  "mtls": {label: approve, term: mTLS}
+  "mulesoft": {label: approve, term: MuleSoft}
+  "multi-agent systems": {label: approve, term: Multi-Agent Systems}
+  "multi-cloud": {label: approve, term: multi-cloud}
+  "multicast": {label: approve, term: multicast}
+  "multithreading": {label: approve, term: multithreading}
+  "mvc": {label: approve, term: MVC}
+  "mvp": {label: reject, note: Not a skill, term: MVP}
+  "mvvm": {label: approve, term: MVVM}
+  "mysql": {label: approve, term: MySQL}
+  "n-tier": {label: approve, term: n-tier}
+  "n8n": {label: approve, term: n8n}
+  "nagios": {label: approve, term: Nagios}
+  "nat": {label: approve, term: NAT}
+  "nats": {label: approve, term: NATS}
+  "natural language processing": {label: domain, note: Field of work, term: natural language processing}
+  "neo4j": {label: approve, term: Neo4j}
+  "nestjs": {label: approve, term: NestJS}
+  "net": {label: approve, term: NET}
+  "net core": {label: approve, term: NET Core}
+  "netsuite": {label: approve, term: NetSuite}
+  "network security": {label: domain, note: Field of work, term: network security}
+  "network troubleshooting": {label: approve, term: network troubleshooting}
+  "networking": {label: domain, note: Field of work, term: networking}
+  "networking concepts": {label: domain, note: Field of work, term: networking concepts}
+  "networking fundamentals": {label: domain, note: Field of work, term: networking fundamentals}
+  "neural network": {label: approve, term: Neural Network}
+  "neural networks": {label: approve, term: Neural networks}
+  "new relic": {label: approve, term: New Relic}
+  "newrelic": {label: approve, term: NewRelic}
+  "next.js": {label: approve, term: Next.js}
+  "nginx": {label: approve, term: Nginx}
+  "nice actimize": {label: approve, term: NICE Actimize}
+  "nice cxone": {label: approve, term: NICE CXone}
+  "nice incontact": {label: approve, term: NICE InContact}
+  "nice incontact cxone": {label: approve, term: Nice InContact CXone}
+  "nist": {label: approve, term: NIST}
+  "nlp": {label: domain, note: Field of work, term: NLP}
+  "nlp techniques": {label: domain, note: Field of work, term: NLP techniques}
+  "no-sql": {label: approve, term: NO-SQL}
+  "node": {label: sense, note: 'Node.js, not a graph/network node', term: Node}
+  "node.js": {label: approve, term: Node.js}
+  "nodejs": {label: approve, term: NodeJS}
+  "normalization": {label: approve, term: Normalization}
+  "nosql": {label: approve, term: NoSQL}
+  "nosql databases": {label: approve, term: NoSQL databases}
+  "nosql technologies": {label: reject, note: Too vague, term: NoSQL technologies}
+  "notion": {label: sense, note: 'the Notion app, not ''notion''', term: Notion}
+  "npm": {label: approve, term: NPM}
+  "numerical optimization": {label: approve, term: Numerical Optimization}
+  "numerical skills": {label: soft, term: Numerical Skills}
+  "numpy": {label: approve, term: NumPy}
+  "nunit": {label: approve, term: nUnit}
+  "nvidia omniverse": {label: approve, term: NVIDIA Omniverse}
+  "nx": {label: reject, term: NX}
+  "nydfs": {label: domain, note: Industry, term: NYDFS}
+  "oauth": {label: approve, term: OAuth}
+  "oauth 2.0": {label: approve, term: OAuth 2.0}
+  "oauth2": {label: approve, term: OAuth2}
+  "object oriented programming": {label: approve, term: object oriented programming}
+  "object storage": {label: approve, term: object storage}
+  "object-oriented design": {label: approve, term: object-oriented design}
+  "object-oriented programming": {label: approve, term: object-oriented programming}
+  "observability": {label: approve, term: observability}
+  "observability stack experience": {label: reject, note: Too vague, term: Observability stack experience}
+  "observability tools": {label: reject, term: observability tools}
+  "oci": {label: approve, term: OCI}
+  "ocr": {label: approve, term: OCR}
+  "odata": {label: approve, term: OData}
+  "oic": {label: approve, term: OIC}
+  "oidc": {label: approve, term: OIDC}
+  "okta": {label: approve, term: Okta}
+  "onedrive": {label: approve, term: OneDrive}
+  "onelake": {label: approve, term: OneLake}
+  "onnx": {label: approve, term: ONNX}
+  "oop": {label: approve, term: OOP}
+  "oop concepts": {label: approve, term: OOP concepts}
+  "oops": {label: approve, term: OOPs}
+  "opc ua": {label: approve, term: OPC UA}
+  "open-source": {label: reject, term: open-source}
+  "open-source contributions": {label: reject, note: Not a skill, term: open-source contributions}
+  "openai": {label: approve, term: OpenAI}
+  "openai api": {label: approve, term: OpenAI API}
+  "openai apis": {label: approve, term: OpenAI APIs}
+  "openai gpt": {label: approve, term: OpenAI GPT}
+  "openapi": {label: approve, term: OpenAPI}
+  "opencv": {label: approve, term: OpenCV}
+  "openfoam": {label: approve, term: OpenFOAM}
+  "openid connect": {label: approve, term: OpenID Connect}
+  "openmax": {label: approve, term: OpenMax}
+  "openmodelica": {label: approve, term: OpenModelica}
+  "opensearch": {label: approve, term: OpenSearch}
+  "openshift": {label: approve, term: OpenShift}
+  "opentelemetry": {label: approve, term: OpenTelemetry}
+  "openusd": {label: approve, term: OpenUSD}
+  "operating systems": {label: approve, term: operating systems}
+  "operational excellence": {label: soft, term: operational excellence}
+  "operations": {label: reject, term: operations}
+  "operations research": {label: domain, note: Field of work, term: Operations Research}
+  "opsgenie": {label: approve, term: OpsGenie}
+  "optimization techniques": {label: reject, term: optimization techniques}
+  "oracle": {label: sense, note: 'Oracle DB / Oracle Cloud, not Oracle the company in boilerplate', qualified_only: true, qualifiers: [\bOracle (DB|Database|SQL|Cloud|Fusion|EBS|PL/SQL|Integration|APEX|Forms)\b, '\bOracle(?=[,/] ?(and |or )?(MySQL|PostgreSQL|SQL Server|MongoDB|Postgres|DB2))', '(MySQL|PostgreSQL|SQL Server|MongoDB|Postgres|DB2),? (and |or )?Oracle\b'], term: Oracle}
+  "oracle cloud": {label: approve, term: Oracle Cloud}
+  "oracle database": {label: approve, term: Oracle Database}
+  "oracle fusion": {label: approve, term: Oracle Fusion}
+  "oracle integration cloud": {label: approve, term: Oracle Integration Cloud}
+  "oracle pl/sql": {label: approve, term: Oracle PL/SQL}
+  "oracle sql": {label: approve, term: Oracle SQL}
+  "orc": {label: approve, term: ORC}
+  "orchestration": {label: approve, term: orchestration}
+  "orchestration tools": {label: reject, note: Too vague, term: orchestration tools}
+  "organizational": {label: reject, term: organizational}
+  "organizational skills": {label: soft, term: organizational skills}
+  "orm": {label: approve, term: ORM}
+  "ospf": {label: approve, term: OSPF}
+  "otbi": {label: approve, term: OTBI}
+  "outlook": {label: sense, note: 'Microsoft Outlook, not ''outlook''', qualified_only: true, qualifiers: [\b(Microsoft|MS) Outlook\b, '\bOutlook(,| and| or) (Excel|Word|Teams)\b', '\b(Excel|Word),? (and |or )?Outlook\b'], term: Outlook}
+  "outreach": {label: sense, note: Outreach (sales platform), term: Outreach}
+  "owasp": {label: approve, term: OWASP}
+  "owasp top 10": {label: approve, term: OWASP Top 10}
+  "paas": {label: approve, term: PaaS}
+  "pagerduty": {label: approve, term: PagerDuty}
+  "pagination": {label: approve, term: Pagination}
+  "palantir foundry": {label: approve, term: Palantir Foundry}
+  "pandas": {label: approve, term: pandas}
+  "parquet": {label: approve, term: Parquet}
+  "partitioning": {label: approve, term: partitioning}
+  "patching": {label: approve, term: patching}
+  "payments": {label: domain, note: Industry, term: payments}
+  "payroll": {label: domain, note: Industry, term: Payroll}
+  "pci dss": {label: domain, note: Industry, term: PCI DSS}
+  "pci qsa": {label: credential, term: PCI QSA}
+  "peft": {label: approve, term: PEFT}
+  "peft/lora": {label: approve, term: PEFT/LoRA}
+  "performance": {label: reject, term: performance}
+  "performance monitoring": {label: approve, term: performance monitoring}
+  "performance optimisation": {label: approve, term: performance optimisation}
+  "performance optimization": {label: approve, term: Performance Optimization}
+  "performance testing": {label: approve, term: performance testing}
+  "performance tuning": {label: approve, term: performance tuning}
+  "perl": {label: approve, term: Perl}
+  "perplexity": {label: sense, note: 'Perplexity (AI tool), not the metric or the word', term: Perplexity}
+  "personalization": {label: domain, note: Field of work, term: personalization}
+  "pgvector": {label: approve, term: pgvector}
+  "pharmaceutical": {label: domain, note: Industry, term: pharmaceutical}
+  "php": {label: approve, term: PHP}
+  "pinecone": {label: sense, note: Pinecone (vector DB), term: Pinecone}
+  "pipelines": {label: sense, note: data or CI/CD pipelines named as such, requirement_line: true, term: pipelines}
+  "pivot tables": {label: approve, term: pivot tables}
+  "pkce": {label: approve, term: PKCE}
+  "pl/sql": {label: approve, term: PL/SQL}
+  "planning": {label: reject, term: planning}
+  "platform": {label: reject, term: platform}
+  "platform developer ii": {label: credential, term: Platform Developer II}
+  "platform engineering": {label: domain, note: Field of work, term: platform engineering}
+  "platform events": {label: approve, term: Platform Events}
+  "platform security": {label: reject, term: Platform Security}
+  "platform technologies": {label: reject, term: platform technologies}
+  "playwright": {label: approve, term: Playwright}
+  "plsql": {label: approve, term: PLSQL}
+  "pmp": {label: credential, term: PMP}
+  "pnpm": {label: approve, term: pnpm}
+  "polars": {label: approve, term: Polars}
+  "postgis": {label: approve, term: PostGIS}
+  "postgraduate degree": {label: credential, term: Postgraduate Degree}
+  "postgres": {label: approve, term: Postgres}
+  "postgresql": {label: approve, term: PostgreSQL}
+  "postman": {label: sense, note: the Postman tool, term: Postman}
+  "power": {label: sense, note: only as Power BI / Power Automate / Power Apps, qualified_only: true, qualifiers: [\bPower (BI|Automate|Apps|Query|Platform|Pivot)\b], term: Power}
+  "power apps": {label: approve, term: Power Apps}
+  "power automate": {label: approve, term: Power Automate}
+  "power bi": {label: approve, term: Power BI}
+  "power query": {label: approve, term: Power Query}
+  "powerbi": {label: approve, term: PowerBI}
+  "powerpoint": {label: approve, term: PowerPoint}
+  "powershell": {label: approve, term: PowerShell}
+  "precision": {label: reject, term: precision}
+  "predictive analytics": {label: approve, term: predictive analytics}
+  "predictive maintenance": {label: approve, term: predictive maintenance}
+  "predictive modeling": {label: approve, term: Predictive modeling}
+  "predictive modelling": {label: approve, term: predictive modelling}
+  "predictive models": {label: approve, term: predictive models}
+  "prefect": {label: sense, note: Prefect (orchestrator), term: Prefect}
+  "presentation": {label: soft, term: presentation}
+  "presto": {label: sense, note: Presto (SQL engine), term: Presto}
+  "pricing": {label: reject, term: pricing}
+  "pricing analytics": {label: domain, note: Industry, term: pricing analytics}
+  "principles": {label: reject, term: principles}
+  "privacy": {label: domain, note: Industry, term: privacy}
+  "pro wfm": {label: approve, term: Pro WFM}
+  "probability": {label: approve, term: probability}
+  "problem solving": {label: soft, term: problem solving}
+  "problem solving skills": {label: soft, term: problem solving skills}
+  "problem-solving skills": {label: soft, term: problem-solving skills}
+  "process flows": {label: reject, term: process flows}
+  "process improvement": {label: soft, term: process improvement}
+  "process optimization": {label: soft, term: process optimization}
+  "procurement": {label: domain, note: Industry, term: Procurement}
+  "product": {by: operator, label: reject, term: product}
+  "product management": {label: soft, term: product management}
+  "product thinking": {label: soft, term: Product Thinking}
+  "production support": {label: domain, note: Field of work, term: production support}
+  "production troubleshooting": {label: approve, term: production troubleshooting}
+  "profilers": {label: approve, term: profilers}
+  "programming": {label: reject, term: programming}
+  "programming skills": {label: soft, term: Programming Skills}
+  "project management": {label: soft, term: project management}
+  "prometheus": {label: approve, term: Prometheus}
+  "prompt design": {label: approve, term: prompt design}
+  "prompt engineering": {label: approve, term: Prompt Engineering}
+  "prompt injection": {label: approve, term: prompt injection}
+  "prompt management": {label: approve, term: prompt management}
+  "prompt optimization": {label: approve, term: prompt optimization}
+  "prompt orchestration": {label: approve, term: prompt orchestration}
+  "prompting": {label: approve, term: prompting}
+  "protobuf": {label: approve, term: Protobuf}
+  "protocol buffers": {label: approve, term: Protocol Buffers}
+  "proxies": {label: sense, note: network proxies, requirement_line: true, term: proxies}
+  "proxy": {label: sense, note: network proxy, requirement_line: true, term: proxy}
+  "psql": {label: approve, term: PSQL}
+  "pub/sub": {label: approve, term: Pub/Sub}
+  "public cloud": {label: reject, note: Too vague, term: public cloud}
+  "publications": {label: reject, term: publications}
+  "pulumi": {label: approve, term: Pulumi}
+  "pumble": {label: approve, term: Pumble}
+  "puppet": {label: sense, note: Puppet (config management), term: Puppet}
+  "pydantic": {label: approve, term: Pydantic}
+  "pyfluent": {label: approve, term: PyFluent}
+  "pyfoam": {label: approve, term: PyFOAM}
+  "pyspark": {label: approve, term: PySpark}
+  "pytest": {label: approve, term: pytest}
+  "python": {by: operator, label: approve, term: Python}
+  "python development": {label: approve, term: Python development}
+  "python programming": {label: approve, term: Python programming}
+  "python scripting": {label: approve, term: Python scripting}
+  "pytorch": {label: approve, term: PyTorch}
+  "pyvista": {label: approve, term: PyVista}
+  "qa": {label: domain, note: Field of work, term: QA}
+  "qdrant": {label: approve, term: Qdrant}
+  "qlik": {label: approve, term: Qlik}
+  "qlora": {label: approve, term: QLoRA}
+  "quality": {label: reject, term: quality}
+  "quality assurance": {label: domain, note: Field of work, term: Quality assurance}
+  "qualtrics": {label: approve, term: Qualtrics}
+  "quantitative analysis": {label: approve, term: quantitative analysis}
+  "quantitative analytics": {label: approve, term: quantitative analytics}
+  "quantization": {label: approve, term: quantization}
+  "quarkus": {label: approve, term: Quarkus}
+  "query optimization": {label: approve, term: query optimization}
+  "queues": {label: reject, term: Queues}
+  "rabbitmq": {label: approve, term: RabbitMQ}
+  "rag": {label: approve, term: RAG}
+  "rag architecture": {label: approve, term: RAG Architecture}
+  "rag frameworks": {label: reject, note: Too vague, term: RAG frameworks}
+  "rag systems": {label: approve, term: RAG systems}
+  "ragas": {label: approve, term: RAGAS}
+  "rancher": {label: sense, note: Rancher (Kubernetes), term: Rancher}
+  "random forests": {label: approve, term: random forests}
+  "ranking": {label: approve, term: ranking}
+  "rap": {label: reject, term: RAP}
+  "rate limiting": {label: approve, term: Rate limiting}
+  "ray": {label: sense, note: 'Ray (distributed compute), not a name', term: Ray}
+  "rbac": {label: approve, term: RBAC}
+  "rca": {label: approve, term: RCA}
+  "rdbms": {label: approve, term: RDBMS}
+  "rds": {label: approve, term: RDS}
+  "react": {label: sense, note: 'React the library, not ''react to''', term: React}
+  "react hooks": {label: approve, term: React Hooks}
+  "react js": {label: approve, term: React JS}
+  "react native": {label: approve, term: React Native}
+  "react router": {label: approve, term: React Router}
+  "react testing library": {label: approve, term: React Testing Library}
+  "react.js": {label: approve, term: React.js}
+  "reactive programming": {label: approve, term: reactive programming}
+  "reactjs": {label: approve, term: ReactJS}
+  "real-time analytics": {label: approve, term: real-time analytics}
+  "real-time communication": {label: reject, note: Too vague, term: real-time communication}
+  "recall": {label: reject, term: recall}
+  "recommendation": {label: sense, note: recommendation systems, requirement_line: true, term: recommendation}
+  "recommendation systems": {label: approve, term: recommendation systems}
+  "reconciliation": {label: sense, note: 'data reconciliation, not accounting', requirement_line: true, term: reconciliation}
+  "reconciliations": {label: sense, note: 'data reconciliation, not accounting', requirement_line: true, term: reconciliations}
+  "recovery": {label: reject, term: recovery}
+  "red hat openshift": {label: approve, term: Red Hat OpenShift}
+  "redis": {label: approve, term: Redis}
+  "redshift": {label: approve, term: Redshift}
+  "reduced order modeling": {label: approve, term: Reduced Order Modeling}
+  "redux": {label: approve, term: Redux}
+  "regression": {label: sense, note: regression testing or regression models, requirement_line: true, term: Regression}
+  "regression analysis": {label: approve, term: regression analysis}
+  "regression testing": {label: approve, term: Regression testing}
+  "regulated": {label: reject, term: regulated}
+  "regulatory": {label: reject, term: regulatory}
+  "regulatory compliance": {label: domain, note: Industry, term: Regulatory Compliance}
+  "regulatory reporting": {label: domain, note: Industry, term: regulatory reporting}
+  "regulatory requirements": {label: domain, note: Industry, term: regulatory requirements}
+  "reinforcement learning": {label: approve, term: reinforcement learning}
+  "relational": {label: reject, term: relational}
+  "relational database": {label: approve, term: relational database}
+  "relational database concepts": {label: approve, term: relational database concepts}
+  "relational databases": {label: approve, term: relational databases}
+  "release management": {label: domain, note: Field of work, term: release management}
+  "reliability": {label: reject, term: reliability}
+  "reliability engineering": {label: domain, note: Field of work, term: reliability engineering}
+  "replication": {label: approve, term: replication}
+  "reporting": {label: sense, note: 'BI/MIS reporting, not ''reporting to''', requirement_line: true, term: Reporting}
+  "reporting tools": {label: reject, term: reporting tools}
+  "reports": {label: reject, term: Reports}
+  "reproducibility": {label: approve, term: Reproducibility}
+  "requests": {label: reject, term: requests}
+  "responsible ai": {label: domain, note: Field of work, term: responsible AI}
+  "responsible ai controls": {label: approve, term: responsible AI controls}
+  "responsible ai practices": {label: approve, term: responsible AI practices}
+  "responsible ai principles": {label: approve, term: Responsible AI principles}
+  "responsive design": {label: approve, term: responsive design}
+  "rest": {label: sense, note: 'REST APIs, never ''the rest''', term: REST}
+  "rest api": {label: approve, term: REST API}
+  "rest api design": {label: approve, term: REST API design}
+  "rest api development": {label: approve, term: REST API development}
+  "rest api integration": {label: approve, term: REST API integration}
+  "rest apis": {label: approve, term: REST APIs}
+  "rest assured": {label: approve, term: Rest Assured}
+  "rest endpoints": {label: approve, term: REST endpoints}
+  "rest services": {label: approve, term: REST services}
+  "restassured": {label: approve, term: RestAssured}
+  "restful": {label: approve, term: RESTful}
+  "restful api": {label: approve, term: RESTful API}
+  "restful api design": {label: approve, term: RESTful API design}
+  "restful apis": {label: approve, term: RESTful APIs}
+  "restful services": {label: approve, term: RESTful services}
+  "restful web": {label: approve, term: RESTful Web}
+  "retail": {label: domain, note: Industry, term: retail}
+  "retention": {label: reject, term: retention}
+  "retraining": {label: sense, note: 'ML model retraining, not staff retraining', requirement_line: true, term: retraining}
+  "retries": {label: approve, term: retries}
+  "retrieval": {label: reject, term: retrieval}
+  "retrieval augmented generation": {label: approve, term: retrieval augmented generation}
+  "retrieval-augmented generation": {label: approve, term: Retrieval-Augmented Generation}
+  "rhel": {label: approve, term: RHEL}
+  "risk": {label: reject, term: risk}
+  "risk controls": {label: domain, note: Industry, term: Risk Controls}
+  "risk identification": {label: soft, term: Risk Identification}
+  "risk management": {label: domain, note: Field of work, term: Risk Management}
+  "rlhf": {label: approve, term: RLHF}
+  "robotics": {label: domain, note: Field of work, term: Robotics}
+  "rom": {label: sense, note: reduced-order modeling, term: ROM}
+  "root cause analysis": {label: approve, term: Root Cause Analysis}
+  "root-cause analysis": {label: approve, term: root-cause analysis}
+  "route 53": {label: approve, term: Route 53}
+  "route53": {label: approve, term: Route53}
+  "routing": {label: reject, term: routing}
+  "rpa": {label: approve, term: RPA}
+  "rpg": {label: sense, note: 'IBM RPG language, not role-playing games', term: RPG}
+  "rtos": {label: approve, term: RTOS}
+  "ruby": {label: sense, note: 'the Ruby language, not the gem', term: Ruby}
+  "ruby on rails": {label: approve, term: Ruby on Rails}
+  "runbooks": {label: approve, term: runbooks}
+  "rust": {label: sense, note: 'the Rust language, not corrosion', term: Rust}
+  "s3": {label: approve, term: S3}
+  "s4 hana": {label: approve, term: S4 HANA}
+  "saas": {label: domain, note: Field of work, term: SaaS}
+  "sac": {label: reject, term: SAC}
+  "safe": {label: sense, note: 'SAFe (Scaled Agile), never ''safe''', term: SAFe}
+  "safety": {label: reject, term: safety}
+  "sagemaker": {label: approve, term: SageMaker}
+  "sales": {label: domain, note: Industry, term: Sales}
+  "sales cloud": {label: approve, term: Sales Cloud}
+  "salesforce": {label: approve, term: Salesforce}
+  "salesforce cli": {label: approve, term: Salesforce CLI}
+  "salesforce cpq": {label: approve, term: Salesforce CPQ}
+  "salesforce data": {label: approve, term: Salesforce Data}
+  "salesforce data 360": {label: approve, term: Salesforce Data 360}
+  "salesforce data cloud": {label: approve, term: Salesforce Data Cloud}
+  "salesforce development": {label: approve, term: Salesforce Development}
+  "salesforce ecosystem": {label: approve, term: Salesforce ecosystem}
+  "salesforce marketing cloud": {label: approve, term: Salesforce Marketing Cloud}
+  "salesforce security": {label: approve, term: Salesforce security}
+  "salesforce security model": {label: approve, term: Salesforce security model}
+  "saml": {label: approve, term: SAML}
+  "sanctions screening": {label: domain, note: Industry, term: sanctions screening}
+  "sap": {label: approve, term: SAP}
+  "sap analytics cloud": {label: approve, term: SAP Analytics Cloud}
+  "sap ecc": {label: approve, term: SAP ECC}
+  "sap s/4hana": {label: approve, term: SAP S/4HANA}
+  "sas": {label: approve, term: SAS}
+  "sase": {label: approve, term: SASE}
+  "sass": {label: approve, term: SASS}
+  "sast": {label: approve, term: SAST}
+  "sawtooth": {label: approve, term: Sawtooth}
+  "scada": {label: approve, term: SCADA}
+  "scala": {label: approve, term: Scala}
+  "scalability": {label: reject, term: scalability}
+  "scalable": {label: reject, term: scalable}
+  "scalable data": {label: reject, term: scalable data}
+  "scaling": {label: reject, term: scaling}
+  "sccm": {label: approve, term: SCCM}
+  "scheduler": {label: reject, term: Scheduler}
+  "scheduling": {label: sense, note: 'job/workflow scheduling (cron, schedulers), not work shifts', requirement_line: true, term: scheduling}
+  "schema design": {label: approve, term: Schema design}
+  "schema evolution": {label: approve, term: schema evolution}
+  "schema registry": {label: approve, term: Schema Registry}
+  "schema validation": {label: approve, term: Schema validation}
+  "scikit-learn": {label: approve, term: scikit-learn}
+  "scipy": {label: approve, term: SciPy}
+  "screaming frog": {label: approve, term: Screaming Frog}
+  "script includes": {label: approve, term: Script Includes}
+  "scripting": {label: approve, term: scripting}
+  "scripting in bash": {label: approve, term: scripting in Bash}
+  "scripting languages": {label: approve, term: scripting languages}
+  "scrum": {label: approve, term: Scrum}
+  "scss": {label: approve, term: SCSS}
+  "sdks": {label: approve, term: SDKs}
+  "sdlc": {label: approve, term: SDLC}
+  "seaborn": {label: approve, term: seaborn}
+  "secrets management": {label: approve, term: Secrets management}
+  "secrets manager": {label: approve, term: Secrets Manager}
+  "secure coding": {label: approve, term: secure coding}
+  "secure coding practices": {label: approve, term: secure coding practices}
+  "secure sdlc": {label: approve, term: secure SDLC}
+  "security": {label: domain, note: Field of work, term: Security}
+  "security best": {label: reject, term: security best}
+  "security best practices": {label: approve, term: security best practices}
+  "security controls": {label: approve, term: security controls}
+  "security engineering": {label: domain, note: Field of work, term: security engineering}
+  "security fundamentals": {label: reject, note: Too vague, term: security fundamentals}
+  "security groups": {label: approve, term: security groups}
+  "security operations": {label: domain, note: Field of work, term: security operations}
+  "security testing": {label: approve, term: security testing}
+  "segmentation": {label: reject, term: segmentation}
+  "selenium": {label: approve, term: Selenium}
+  "selenium webdriver": {label: approve, term: Selenium WebDriver}
+  "semantic kernel": {label: approve, term: Semantic Kernel}
+  "semantic layers": {label: approve, term: semantic layers}
+  "semantic models": {label: approve, term: semantic models}
+  "semantic search": {label: approve, term: semantic search}
+  "semrush": {label: approve, term: Semrush}
+  "sensor data": {label: domain, note: Field of work, term: sensor data}
+  "sentence embeddings": {label: approve, term: sentence embeddings}
+  "sentiment analysis": {label: approve, term: sentiment analysis}
+  "sentinelone": {label: approve, term: SentinelOne}
+  "sentry": {label: sense, note: the Sentry tool, term: Sentry}
+  "seo": {label: approve, term: SEO}
+  "server-side development": {label: domain, note: Field of work, term: server-side development}
+  "serverless": {label: approve, term: serverless}
+  "service bus": {label: approve, term: Service Bus}
+  "service cloud": {label: approve, term: Service Cloud}
+  "service mesh": {label: approve, term: service mesh}
+  "service mesh technologies": {label: reject, note: Too vague, term: service mesh technologies}
+  "service-oriented": {label: approve, term: service-oriented}
+  "servicenow": {label: approve, term: ServiceNow}
+  "sftp": {label: approve, term: SFTP}
+  "sharepoint": {label: approve, term: SharePoint}
+  "sharing rules": {label: reject, term: sharing rules}
+  "shell": {label: sense, note: 'shell scripting, not Shell the company', term: Shell}
+  "shell scripting": {label: approve, term: Shell scripting}
+  "shell scripts": {label: approve, term: shell scripts}
+  "shield": {label: reject, note: Not a known skill, term: SHIELD}
+  "siem": {label: approve, term: SIEM}
+  "sigma": {label: sense, note: 'Sigma Computing (BI), not Six Sigma or statistics', term: Sigma}
+  "sip": {label: approve, term: SIP}
+  "site reliability": {label: domain, note: Field of work, term: site reliability}
+  "site reliability engineering": {label: domain, note: Field of work, term: Site Reliability Engineering}
+  "six sigma": {label: approve, term: Six Sigma}
+  "sketch": {label: sense, note: Sketch (design tool), term: Sketch}
+  "sklearn": {label: approve, term: sklearn}
+  "slack": {label: sense, note: 'the Slack app, not ''slack''', term: Slack}
+  "slis": {label: approve, term: SLIs}
+  "slo": {label: approve, term: SLO}
+  "slos": {label: approve, term: SLOs}
+  "slowly changing dimensions": {label: approve, term: slowly changing dimensions}
+  "snow": {label: reject, term: Snow}
+  "snowflake": {label: sense, note: 'Snowflake data warehouse, not ''snowflake schema'' alone', term: Snowflake}
+  "snowflake cortex": {label: approve, term: Snowflake Cortex}
+  "snowflake data warehouse": {label: approve, term: Snowflake Data Warehouse}
+  "snowflake schema": {label: approve, term: snowflake schema}
+  "snowpark": {label: approve, term: Snowpark}
+  "snowpipe": {label: approve, term: Snowpipe}
+  "sns": {label: approve, term: SNS}
+  "snyk": {label: approve, term: Snyk}
+  "soa": {label: approve, term: SOA}
+  "soap": {label: approve, term: SOAP}
+  "soap apis": {label: approve, term: SOAP APIs}
+  "soc 2": {label: credential, term: SOC 2}
+  "soc2": {label: credential, term: SOC2}
+  "sof": {label: reject, note: Not a known skill, term: SOF}
+  "software asset management": {label: approve, term: Software Asset Management}
+  "software composition analysis": {label: approve, term: software composition analysis}
+  "software design": {label: approve, term: software design}
+  "software design principles": {label: approve, term: software design principles}
+  "software development": {label: domain, note: Field of work, term: software development}
+  "software development life cycle": {label: approve, term: software development life cycle}
+  "software development lifecycle": {label: approve, term: software development lifecycle}
+  "software engineering": {label: domain, note: Field of work, term: software engineering}
+  "software quality": {label: reject, term: software quality}
+  "solace": {label: approve, term: Solace}
+  "solution": {label: reject, term: Solution}
+  "solution delivery": {label: reject, term: solution delivery}
+  "somali": {label: soft, term: Somali}
+  "sonarqube": {label: approve, term: SonarQube}
+  "sops": {label: reject, term: SOPs}
+  "soql": {label: approve, term: SOQL}
+  "source control": {label: approve, term: source control}
+  "sox": {label: domain, note: Industry, term: SOX}
+  "spacy": {label: approve, term: spaCy}
+  "spanish": {label: soft, term: Spanish}
+  "spark": {label: sense, note: 'Apache Spark, not ''spark interest''', term: Spark}
+  "spark jobs": {label: approve, term: Spark jobs}
+  "spark sql": {label: approve, term: Spark SQL}
+  "spark streaming": {label: approve, term: Spark Streaming}
+  "spark structured streaming": {label: approve, term: Spark Structured Streaming}
+  "spark/pyspark": {label: approve, term: Spark/PySpark}
+  "sparql": {label: approve, term: SPARQL}
+  "specimen management systems": {label: approve, term: Specimen Management Systems}
+  "splunk": {label: approve, term: Splunk}
+  "spotfire": {label: approve, term: Spotfire}
+  "spreadsheets": {label: approve, term: spreadsheets}
+  "spring": {label: sense, note: 'Spring framework, not the season', term: Spring}
+  "spring boot": {label: approve, term: Spring Boot}
+  "spring cloud": {label: approve, term: Spring Cloud}
+  "spring data jpa": {label: approve, term: Spring Data JPA}
+  "spring framework": {label: approve, term: Spring Framework}
+  "spring mvc": {label: approve, term: Spring MVC}
+  "spring security": {label: approve, term: Spring Security}
+  "springboot": {label: approve, term: SpringBoot}
+  "sprint planning": {label: approve, term: sprint planning}
+  "spss": {label: approve, term: SPSS}
+  "sql": {by: operator, label: approve, term: SQL}
+  "sql databases": {label: approve, term: SQL databases}
+  "sql queries": {label: approve, term: SQL queries}
+  "sql reporting": {label: approve, term: SQL Reporting}
+  "sql scripting": {label: approve, term: SQL scripting}
+  "sql server": {label: approve, term: SQL Server}
+  "sqlalchemy": {label: approve, term: SQLAlchemy}
+  "sqlite": {label: approve, term: SQLite}
+  "sqs": {label: approve, term: SQS}
+  "sqs/sns": {label: approve, term: SQS/SNS}
+  "sre": {label: domain, note: Field of work, term: SRE}
+  "sse": {label: approve, term: SSE}
+  "ssis": {label: approve, term: SSIS}
+  "ssl": {label: approve, term: SSL}
+  "ssl/tls": {label: approve, term: SSL/TLS}
+  "sso": {label: approve, term: SSO}
+  "stakeholder management skills": {label: soft, term: stakeholder management skills}
+  "star schema": {label: approve, term: Star Schema}
+  "star-ccm+": {label: approve, term: STAR-CCM+}
+  "starlims": {label: approve, term: STARLiMS}
+  "state management": {label: approve, term: State management}
+  "static analysis": {label: approve, term: static analysis}
+  "statistical analysis": {label: approve, term: Statistical analysis}
+  "statistical methods": {label: approve, term: statistical methods}
+  "statistical modeling": {label: approve, term: Statistical modeling}
+  "statistical modelling": {label: approve, term: statistical modelling}
+  "statistics": {label: domain, note: Field of work, term: statistics}
+  "step functions": {label: approve, term: Step Functions}
+  "stlc": {label: approve, term: STLC}
+  "storage": {label: reject, term: storage}
+  "stored procedures": {label: approve, term: stored procedures}
+  "storybook": {label: sense, note: Storybook (UI tool), term: Storybook}
+  "storytelling": {label: soft, term: Storytelling}
+  "strategic thinking": {label: soft, term: strategic thinking}
+  "streaming": {label: sense, note: data/event streaming, requirement_line: true, term: streaming}
+  "streamlit": {label: approve, term: Streamlit}
+  "streams": {label: sense, note: Kafka Streams / Snowflake Streams only, requirement_line: true, term: Streams}
+  "stress testing": {label: approve, term: stress testing}
+  "stripe": {label: approve, term: Stripe}
+  "structured data": {label: reject, term: structured data}
+  "structured logging": {label: approve, term: Structured logging}
+  "structured output": {label: approve, term: structured output}
+  "structured outputs": {label: approve, term: structured outputs}
+  "styled components": {label: approve, term: Styled Components}
+  "supervised learning": {label: approve, term: supervised learning}
+  "supply chain": {label: domain, note: Industry, term: supply chain}
+  "surrogate modeling": {label: approve, term: surrogate modeling}
+  "survival analysis": {label: approve, term: survival analysis}
+  "svm": {label: approve, term: SVM}
+  "svms": {label: approve, term: SVMs}
+  "swift": {label: sense, note: 'Apple''s Swift language, not ''swiftly''', term: Swift}
+  "switching": {label: reject, term: Switching}
+  "synapse": {label: approve, term: Synapse}
+  "synthetic data generation": {label: approve, term: synthetic data generation}
+  "system": {label: reject, term: system}
+  "system design": {label: approve, term: system design}
+  "system design principles": {label: approve, term: system design principles}
+  "system integration": {label: approve, term: system integration}
+  "system integrations": {label: approve, term: system integrations}
+  "systems engineering": {label: domain, note: Field of work, term: systems engineering}
+  "systemverilog": {label: approve, term: SystemVerilog}
+  "tableau": {label: approve, term: Tableau}
+  "tableau desktop": {label: approve, term: Tableau Desktop}
+  "tailwind": {label: approve, term: Tailwind}
+  "tailwind css": {label: approve, term: Tailwind CSS}
+  "talend": {label: approve, term: Talend}
+  "tanstack query": {label: approve, term: TanStack Query}
+  "tasks": {label: reject, term: Tasks}
+  "tcp/ip": {label: approve, term: TCP/IP}
+  "tdd": {label: approve, term: TDD}
+  "team collaboration": {label: soft, term: team collaboration}
+  "team management": {label: soft, term: team management}
+  "teams": {by: operator, label: sense, note: Microsoft Teams / MS Teams only; never 'teams', qualified_only: true, qualifiers: [\b(Microsoft|MS) Teams\b], term: Teams}
+  "technical documentation": {label: approve, term: Technical documentation}
+  "technical seo": {label: approve, term: Technical SEO}
+  "technical support": {label: domain, note: Field of work, term: technical support}
+  "technical writing": {label: approve, term: Technical writing}
+  "telemetry": {label: approve, term: telemetry}
+  "telephony technologies": {label: domain, note: Industry, term: telephony technologies}
+  "temporal": {label: sense, note: 'Temporal (workflow engine), not ''temporal''', term: Temporal}
+  "tensorflow": {label: approve, term: TensorFlow}
+  "tensorrt": {label: approve, term: TensorRT}
+  "teradata": {label: approve, term: Teradata}
+  "terraform": {label: approve, term: Terraform}
+  "terraform cloud": {label: approve, term: Terraform Cloud}
+  "test automation": {label: domain, note: Field of work, term: test automation}
+  "test automation tools": {label: reject, note: Too vague, term: test automation tools}
+  "test cases": {label: approve, term: test cases}
+  "test driven development": {label: approve, term: test driven development}
+  "test-driven development": {label: approve, term: test-driven development}
+  "testcontainers": {label: approve, term: Testcontainers}
+  "testflight": {label: approve, term: TestFlight}
+  "testing methodologies": {label: reject, note: Too vague, term: testing methodologies}
+  "testing strategies": {label: approve, term: testing strategies}
+  "testng": {label: approve, term: TestNG}
+  "testrail": {label: approve, term: TestRail}
+  "text": {label: reject, term: text}
+  "text classification": {label: approve, term: text classification}
+  "text embeddings": {label: approve, term: text embeddings}
+  "tfs": {label: approve, term: TFS}
+  "third-party ai/ml integrations": {label: reject, note: Too vague, term: third-party AI/ML integrations}
+  "threat intelligence": {label: approve, term: threat intelligence}
+  "throughput": {label: reject, term: Throughput}
+  "ticketing": {label: reject, term: Ticketing}
+  "ticketing systems": {label: reject, note: Too vague, term: ticketing systems}
+  "tiles setup": {label: reject, term: Tiles Setup}
+  "time series analysis": {label: approve, term: Time series analysis}
+  "timekeeping": {label: domain, note: Industry, term: Timekeeping}
+  "tls": {label: approve, term: TLS}
+  "togaf": {label: approve, term: TOGAF}
+  "tokenization": {label: approve, term: Tokenization}
+  "tomcat": {label: approve, term: Tomcat}
+  "tool calling": {label: approve, term: tool calling}
+  "tool use": {label: approve, term: tool use}
+  "tooling": {label: reject, term: tooling}
+  "tracing": {label: approve, term: tracing}
+  "trading": {label: domain, note: Industry, term: trading}
+  "trading systems": {label: domain, note: Industry, term: trading systems}
+  "training": {label: reject, term: training}
+  "transfer learning": {label: approve, term: transfer learning}
+  "transformation": {label: reject, term: transformation}
+  "transformer": {label: sense, note: 'transformer models, not electrical', term: transformer}
+  "transformer models": {label: approve, term: transformer models}
+  "transformers": {label: sense, note: 'transformer models / HF Transformers, not electrical', term: Transformers}
+  "trend analysis": {label: approve, term: trend analysis}
+  "triggers": {label: sense, note: database or CI triggers, requirement_line: true, term: triggers}
+  "trino": {label: approve, term: Trino}
+  "troubleshooting": {label: approve, term: Troubleshooting}
+  "ts": {label: approve, term: TS}
+  "tts": {label: approve, term: TTS}
+  "typescript": {label: approve, term: TypeScript}
+  "ui": {label: approve, term: UI}
+  "ui development": {label: approve, term: UI development}
+  "ui test automation": {label: approve, term: UI Test Automation}
+  "ui testing": {label: approve, term: UI testing}
+  "ui/ux": {label: approve, term: UI/UX}
+  "uikit": {label: approve, term: UIKit}
+  "uipath": {label: approve, term: UiPath}
+  "ukg pro": {label: approve, term: UKG Pro}
+  "uml": {label: approve, term: UML}
+  "unit testing": {label: approve, term: Unit testing}
+  "unit tests": {label: approve, term: unit tests}
+  "unittest": {label: approve, term: unittest}
+  "unity catalog": {label: approve, term: Unity Catalog}
+  "unix": {label: approve, term: Unix}
+  "unix shell scripting": {label: approve, term: Unix shell scripting}
+  "unix/linux": {label: approve, term: Unix/Linux}
+  "unsupervised learning": {label: approve, term: unsupervised learning}
+  "upgrades": {label: reject, term: upgrades}
+  "usability testing": {label: approve, term: usability testing}
+  "user research": {label: soft, term: user research}
+  "user stories": {label: approve, term: user stories}
+  "ux": {label: approve, term: UX}
+  "valgrind": {label: approve, term: Valgrind}
+  "validation": {label: reject, term: validation}
+  "vault": {label: sense, note: 'HashiCorp Vault / Key Vault, not ''vault''', term: Vault}
+  "vba": {label: approve, term: VBA}
+  "vector database": {label: approve, term: vector database}
+  "vector databases": {label: approve, term: vector databases}
+  "vector db": {label: approve, term: vector DB}
+  "vector embeddings": {label: approve, term: vector embeddings}
+  "vector search": {label: approve, term: Vector search}
+  "vector store": {label: approve, term: vector store}
+  "vector stores": {label: approve, term: vector stores}
+  "vendor evaluation": {label: approve, term: Vendor evaluation}
+  "verbal": {label: soft, term: verbal}
+  "verbal and written communication": {label: soft, term: verbal and written communication}
+  "verbal communication": {label: soft, term: verbal communication}
+  "vercel": {label: approve, term: Vercel}
+  "verilog": {label: approve, term: Verilog}
+  "version control": {label: approve, term: Version Control}
+  "version control (git)": {label: approve, term: version control (Git)}
+  "version control systems": {label: approve, term: version control systems}
+  "version control tools": {label: reject, term: version control tools}
+  "versioning": {label: approve, term: versioning}
+  "versive": {label: approve, term: Versive}
+  "vertex": {label: sense, note: Vertex AI only, term: Vertex}
+  "vertex ai": {label: approve, term: Vertex AI}
+  "viper": {label: approve, term: VIPER}
+  "virtualization": {label: approve, term: virtualization}
+  "visio": {label: approve, term: Visio}
+  "visual": {label: sense, note: only as Visual Studio / Visual Basic, qualified_only: true, qualifiers: [\bVisual (Studio|Basic)\b], term: Visual}
+  "visual studio": {label: approve, term: Visual Studio}
+  "visual studio code": {label: approve, term: Visual Studio Code}
+  "visualization": {label: approve, term: visualization}
+  "visualization tools": {label: reject, term: visualization tools}
+  "vite": {label: approve, term: Vite}
+  "vitest": {label: approve, term: Vitest}
+  "vllm": {label: approve, term: vLLM}
+  "vlms": {label: approve, term: VLMs}
+  "vlookup": {label: approve, term: VLOOKUP}
+  "vmware": {label: approve, term: VMware}
+  "voice": {label: reject, term: voice}
+  "voice integrations": {label: reject, note: Too vague, term: voice integrations}
+  "vpc": {label: approve, term: VPC}
+  "vpcs": {label: approve, term: VPCs}
+  "vpn": {label: approve, term: VPN}
+  "vpns": {label: approve, term: VPNs}
+  "vue": {label: approve, term: Vue}
+  "vue.js": {label: approve, term: Vue.js}
+  "vulnerability management": {label: domain, note: Field of work, term: vulnerability management}
+  "vxlan": {label: approve, term: VXLAN}
+  "waf": {label: approve, term: WAF}
+  "wan": {label: approve, term: WAN}
+  "warehouse": {label: reject, term: Warehouse}
+  "wcag": {label: approve, term: WCAG}
+  "wcf rest": {label: approve, term: WCF Rest}
+  "wealth management": {label: domain, note: Industry, term: Wealth Management}
+  "weaviate": {label: approve, term: Weaviate}
+  "web": {label: reject, term: Web}
+  "web api": {label: approve, term: Web API}
+  "web apis": {label: approve, term: web APIs}
+  "web app": {label: reject, note: Too vague, term: web app}
+  "web application development": {label: domain, note: Field of work, term: Web application development}
+  "web applications": {label: reject, term: web applications}
+  "web apps": {label: reject, note: Too vague, term: web apps}
+  "web scraping": {label: approve, term: web scraping}
+  "web security": {label: domain, note: Field of work, term: web security}
+  "web services": {label: approve, term: web services}
+  "webapi": {label: approve, term: WebAPI}
+  "webhooks": {label: approve, term: Webhooks}
+  "webpack": {label: approve, term: Webpack}
+  "websockets": {label: approve, term: WebSockets}
+  "weights & biases": {label: approve, term: Weights & Biases}
+  "whisper": {label: approve, term: Whisper}
+  "wi-fi": {label: approve, term: Wi-Fi}
+  "windows": {label: sense, note: 'Windows OS, never SQL ''window'' functions', term: Windows}
+  "windows internals": {label: approve, term: Windows internals}
+  "windows server": {label: approve, term: Windows Server}
+  "windsurf": {label: sense, note: Windsurf (AI editor), term: Windsurf}
+  "wiz": {label: sense, note: Wiz (cloud security), term: Wiz}
+  "word": {label: sense, note: 'Microsoft Word, not ''word''', qualified_only: true, qualifiers: [\b(Microsoft|MS) Word\b, '\bWord(,| and| or) (Excel|PowerPoint)\b', '\b(Excel|PowerPoint),? (and |or )?Word\b'], term: Word}
+  "workato": {label: approve, term: Workato}
+  "workday": {label: sense, note: 'Workday the platform, not ''a working day''', qualified_only: true, qualifiers: ['\bWorkday (HCM|Financials|Studio|Adaptive|integrations?|Extend|Prism|Report Writer|EIB)\b'], term: Workday}
+  "workday studio": {label: approve, term: Workday Studio}
+  "workflow automation": {label: approve, term: workflow automation}
+  "workflow design": {label: approve, term: workflow design}
+  "workflow orchestration": {label: approve, term: workflow orchestration}
+  "workflows": {label: reject, term: Workflows}
+  "workforce management": {label: domain, note: Industry, term: Workforce Management}
+  "workload identity": {label: approve, term: workload identity}
+  "wpf": {label: approve, term: WPF}
+  "written": {label: reject, term: written}
+  "written and verbal communication": {label: soft, term: written and verbal communication}
+  "written communication": {label: soft, term: written communication}
+  "xgboost": {label: approve, term: XGBoost}
+  "xml": {label: approve, term: XML}
+  "yaml": {label: approve, term: YAML}
+  "yarn": {label: approve, term: YARN}
+  "zapier": {label: approve, term: Zapier}
+  "zendesk": {label: approve, term: Zendesk}
+  "zero trust": {label: approve, term: Zero Trust}
+  "zod": {label: approve, term: Zod}
+  "zookeeper": {label: approve, term: Zookeeper}
+  "zoom": {label: sense, note: 'the Zoom app, not ''zoom''', term: Zoom}
+  "ztna": {label: approve, term: ZTNA}
+  "zustand": {label: approve, term: Zustand}

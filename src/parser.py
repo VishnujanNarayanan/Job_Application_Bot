@@ -130,6 +130,9 @@ def with_pool_skills(
         if re.search(rf"(?<![\w+#.]){re.escape(key)}(?![\w+#]|\.\w)", haystack):
             added.append(term)
             present.add(key)
+    from src.state import registry
+
+    added = registry.admitted(added, jd_text)
     if added:
         log.info("pool_skills_recovered", count=len(added), skills=added[:12])
     return skills + added
@@ -175,7 +178,11 @@ def with_vocabulary_skills(skills: list[str], jd_text: str) -> list[str]:
     if not terms:
         return skills
     present = {s.casefold() for s in skills}
-    added = [t for t in scan(jd_text, terms) if t.casefold() not in present]
+    from src.state import registry
+
+    # The vocabulary holds everyday words learned from past adverts ("quality",
+    # "make", "system"); only registry-admitted terms are added (#188).
+    added = registry.admitted([t for t in scan(jd_text, terms) if t.casefold() not in present], jd_text)
     if added:
         log.info("vocabulary_skills_recovered", count=len(added), skills=added[:12])
     return skills + added

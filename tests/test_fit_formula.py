@@ -17,6 +17,13 @@ from src.scorer import apply_decision as ad
 from src.scorer import keywords as kw
 
 
+@pytest.fixture(autouse=True)
+def _no_registry(monkeypatch):
+    """These tests are about weights; which terms are keywords at all is the
+    skills registry's job (#188, tests/test_skills_registry.py)."""
+    monkeypatch.setattr("src.state.registry.enabled", lambda: False)
+
+
 @pytest.fixture
 def weighted(monkeypatch):
     monkeypatch.setitem(settings.scoring.fit.as_dict(), "formula", "weighted_count")

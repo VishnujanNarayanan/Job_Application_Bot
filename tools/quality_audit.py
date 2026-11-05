@@ -521,6 +521,11 @@ def run(args) -> int:
     import structlog
 
     structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(40))
+    if args.no_registry:
+        # The pre-#188 behaviour, for a before/after on the same inputs.
+        import src.state.registry as _registry
+
+        _registry.enabled = lambda: False
     profile, parses, extras, evidence = _wire(set_dir)
     jobs = []
     recs = load_jobs(set_dir)
@@ -586,6 +591,7 @@ def main(argv=None) -> int:
     p.add_argument("--label", required=True)
     p.add_argument("--limit", type=int)
     p.add_argument("--unfrozen", action="store_true")
+    p.add_argument("--no-registry", action="store_true", help="run as before the skills registry (#188)")
     p = sub.add_parser("compare")
     p.add_argument("before")
     p.add_argument("after")
