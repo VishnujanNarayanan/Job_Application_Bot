@@ -35,7 +35,7 @@ never:
   ARM: [ARM Templates]
   C: [C Sharp]
   Sigma: [Six Sigma]
-  # React Native is a separate skill from web React (operator to confirm).
+  # React Native is a separate skill from web React (the operator, 2026-11-06).
   React: [React Native]
 
   # --- another field ---------------------------------------------------------------
