@@ -264,3 +264,45 @@ def test_sense_skills_in_profile_lines_need_their_sense(reg):
     reg_mod.remember_profile_text("Ran Agile sprints with the team.")
     assert kw.matches("Agile", kw.norm("Ran Agile sprints with the team."))
     kw.match_keys.cache_clear()
+
+
+# --- longest match (#188): a skill inside a longer skill name is not a skill too --
+
+def _terms(*names):
+    return tuple(sorted(((n, n.casefold()) for n in names), key=lambda p: len(p[1]), reverse=True))
+
+
+def test_a_term_inside_a_longer_skill_name_is_not_read_again():
+    from src.state.vocabulary import scan
+
+    terms = _terms("SQL", "Spark", "Spark SQL", "Apache", "Apache Druid", "APIs", "RESTful APIs")
+    yes = lambda t: True  # noqa: E731
+    assert scan("Experience with Spark SQL and Apache Druid.", terms, admit=yes) == ["Spark SQL", "Apache Druid"]
+    assert scan("Design RESTful APIs.", terms, admit=yes) == ["RESTful APIs"]
+
+
+def test_a_term_named_on_its_own_elsewhere_still_counts():
+    from src.state.vocabulary import scan
+
+    terms = _terms("SQL", "Spark SQL")
+    assert scan("Strong SQL; Spark SQL a plus.", terms, admit=lambda t: True) == ["SQL", "Spark SQL"]
+
+
+def test_a_blocked_phrase_does_not_hide_the_skill_inside_it(reg):
+    from src.state.vocabulary import scan
+
+    terms = _terms("Python", "Python developer", "Data Engineering", "Kafka")
+    # "Python developer" has no label here (pending) only if pending terms are
+    # kept; make it a reject so it may not claim its words.
+    jd = "We need a Python developer for Data Engineering with Kafka."
+    out = scan(jd, terms, admit=lambda t: t not in ("Python developer", "Data Engineering"))
+    assert "Python" in out and "Kafka" in out
+
+
+def test_pool_top_up_skips_a_pool_skill_inside_a_longer_name(monkeypatch):
+    from src import parser
+
+    monkeypatch.setattr(parser, "_vocabulary", lambda: (("Spark SQL", "spark sql"),))
+    monkeypatch.setattr(reg_mod, "enabled", lambda: False)
+    assert parser.with_pool_skills([], "Hands-on Spark SQL.", pool=("SQL",)) == []
+    assert parser.with_pool_skills([], "Hands-on Spark SQL and plain SQL.", pool=("SQL",)) == ["SQL"]

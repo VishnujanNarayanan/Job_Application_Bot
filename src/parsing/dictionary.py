@@ -67,26 +67,30 @@ class Dictionary:
       ``src.state.vocabulary.load_terms`` returns them.
     * ``pool``       -- the operator's skills_pool, as ``parser._pool_terms``.
     * ``families``   -- every head and variant in config/keyword_families.yaml.
+    * ``registry``   -- the skills registry's approved and sense terms (#188).
     """
 
     vocabulary: tuple[tuple[str, str], ...] = ()
     pool: tuple[str, ...] = ()
     families: tuple[str, ...] = ()
+    registry: tuple[str, ...] = ()
 
     @classmethod
     def load(cls) -> Dictionary:
         """Load all three sources. A source that fails to load is empty and
         logged by its loader, never fatal."""
         from src.parser import _pool_terms, _vocabulary
+        from src.state import registry
 
-        return cls(vocabulary=_vocabulary(), pool=_pool_terms(), families=_family_terms())
+        return cls(vocabulary=_vocabulary(), pool=_pool_terms(), families=_family_terms(),
+                   registry=registry.skill_terms())
 
     def terms(self) -> tuple[tuple[str, str], ...]:
         """All three merged and de-duplicated by key, longest first, in the
         ``(term, key)`` shape ``vocabulary.scan`` takes. Pool spelling wins a
         tie so the operator's own wording reaches the scorer."""
         merged: dict[str, str] = {}
-        for term in (*self.pool, *(t for t, _ in self.vocabulary), *self.families):
+        for term in (*self.pool, *(t for t, _ in self.vocabulary), *self.families, *self.registry):
             term = term.strip()
             if term:
                 merged.setdefault(term.casefold(), term)
@@ -160,12 +164,16 @@ def split_required_nice(
     section and off a "nice to have" line; otherwise it is nice-to-have.
     """
     from src.scorer.keywords import canonical_key
+    from src.state import registry
     from src.state.vocabulary import scan
 
     preamble, secs = sections
     rest = [preamble] + [body for cat, body in secs if cat not in rules.nice_categories]
     rest_lines = [ln for ln in "\n".join(rest).splitlines() if not rules.nice_inline.search(ln)]
-    required_keys = {canonical_key(s) for s in scan("\n".join(rest_lines), dictionary.terms())}
+    # Longest match, judged on the whole advert: "Spark SQL" on a required
+    # line makes Spark SQL required, not also a plain SQL from a "nice" line.
+    required_keys = {canonical_key(s) for s in registry.named_keys(
+        scan("\n".join(rest_lines), dictionary.terms(), admit=lambda t: registry.admits(t, jd_text)))}
     required = [s for s in skills if canonical_key(s) in required_keys]
     nice = [s for s in skills if canonical_key(s) not in required_keys]
     return required, nice

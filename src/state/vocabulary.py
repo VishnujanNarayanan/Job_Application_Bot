@@ -143,21 +143,42 @@ def load_terms(session: Session) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(((r[0], r[1]) for r in rows), key=lambda p: len(p[1]), reverse=True))
 
 
-def scan(jd_text: str, terms: tuple[tuple[str, str], ...]) -> list[str]:
+def scan(jd_text: str, terms: tuple[tuple[str, str], ...], admit=None) -> list[str]:
     """Vocabulary terms the JD names literally, in the order they appear.
 
     Word-boundary matching only. A dot blocks the match only when a word
     follows it, so "Node" does not match inside "Node.js" while a term ending a
     sentence ("...and FastAPI.") still does.
+
+    Longest match (#188): a term found only inside a longer term the advert
+    names is not returned. "Spark SQL" is one skill, not also SQL and Spark;
+    "Apache Druid" does not add Apache. A term the advert also names on its
+    own elsewhere is still returned. Only terms ``admit`` accepts (default:
+    the skills registry, given the advert) claim their words, so a rejected
+    phrase such as "Python developer" never hides the Python inside it.
     """
     if not jd_text or not terms:
         return []
+    if admit is None:
+        from src.state import registry
+
+        def admit(term: str) -> bool:
+            return registry.admits(term, jd_text)
     # Markdown escapes ("C\+\+") and typographic hyphens hid known terms (#73).
     haystack = clean_ad_text(jd_text).casefold()
+    claimed: list[tuple[int, int]] = []
     found: list[tuple[int, str]] = []
-    for term, key in terms:
-        match = re.search(rf"(?<![\w+#.]){re.escape(key)}(?![\w+#]|\.\w)", haystack)
-        if match:
-            found.append((match.start(), term))
+    # terms come longest first, so a longer name claims its words before any
+    # term inside it is looked at.
+    for term, key in sorted(terms, key=lambda p: len(p[1]), reverse=True):
+        if key not in haystack:
+            continue
+        spans = [m.span() for m in re.finditer(rf"(?<![\w+#.]){re.escape(key)}(?![\w+#]|\.\w)", haystack)]
+        free = [(a, b) for a, b in spans if not any(a < y and x < b for x, y in claimed)]
+        if not free:
+            continue
+        found.append((free[0][0], term))
+        if admit(term):
+            claimed.extend(free)
     found.sort()
     return [term for _, term in found]

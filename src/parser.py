@@ -117,18 +117,24 @@ def with_pool_skills(
     )
     if not jd_text or not terms:
         return skills
-    haystack = clean_ad_text(jd_text).casefold()
     present = {s.casefold() for s in skills}
+    # Word-bounded, longest match (vocabulary.scan): "R" does not fire on every
+    # word containing r, "Go" not inside "Google", "Node" not inside
+    # "Node.js", and a pool term found only inside a longer skill the advert
+    # names ("SQL" in "Spark SQL") is not added (#188).
+    from src.parsing.dictionary import _family_terms
+
+    pool_keys = {t.casefold() for t in terms}
+    from src.state import registry as _registry
+
+    others = tuple((t, t.casefold()) for t in (*(v for v, _ in _vocabulary()), *_family_terms(),
+                                               *_registry.skill_terms())
+                   if t.casefold() not in pool_keys)
+    named = _registry.named_keys(scan(jd_text, tuple((t, t.casefold()) for t in terms) + others))
     added: list[str] = []
     for term in terms:
         key = term.casefold()
-        if key in present:
-            continue
-        # Word-boundary match so "R" does not fire on every word containing r
-        # and "Go" does not fire inside "Google". A dot only blocks the match
-        # when a word follows it, so "Node.js" is not matched by "Node" while
-        # a term ending a sentence ("...and FastAPI.") still matches.
-        if re.search(rf"(?<![\w+#.]){re.escape(key)}(?![\w+#]|\.\w)", haystack):
+        if key in named and key not in present:
             added.append(term)
             present.add(key)
     from src.state import registry
@@ -183,7 +189,20 @@ def with_vocabulary_skills(skills: list[str], jd_text: str) -> list[str]:
 
     # The vocabulary holds everyday words learned from past adverts ("quality",
     # "make", "system"); only registry-admitted terms are added (#188).
-    added = registry.admitted([t for t in scan(jd_text, terms) if t.casefold() not in present], jd_text)
+    # Longest match over the vocabulary and the operator's pool together, so a
+    # pool term's longer name claims its words too (#188).
+    from src.parsing.dictionary import _family_terms
+
+    known = {k for _t, k in terms}
+    extra = tuple((t, t.casefold()) for t in (*_pool_terms(), *_family_terms(), *registry.skill_terms())
+                  if t.casefold() not in known)
+    spelled = {k: t for t, k in terms}
+    order: list[str] = []
+    for found in scan(jd_text, terms + extra):  # advert order
+        for k in (found.casefold(), *sorted(registry.named_keys([found]) - {found.casefold()})):
+            if k in spelled and k not in present and k not in order:
+                order.append(k)
+    added = registry.admitted([spelled[k] for k in order], jd_text)
     if added:
         log.info("vocabulary_skills_recovered", count=len(added), skills=added[:12])
     return skills + added

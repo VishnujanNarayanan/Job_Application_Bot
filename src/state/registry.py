@@ -178,6 +178,33 @@ def enabled() -> bool:
     return bool(reg.get("enabled", True)) if reg is not None else True
 
 
+def skill_terms() -> tuple[str, ...]:
+    """Every term the registry approves or reads by sense: the hand-reviewed
+    skill names, a dictionary source of its own (#188), so a long name such
+    as "Apache Druid" is read as itself rather than as "Apache".
+
+    Off unless ``scoring.registry.as_dictionary`` is true: on the #179
+    benchmark it lifts skill recall 75% -> 81% but also reads weak past-match
+    terms ("deployment", "Prototyping") as asks; those want a review first."""
+    from src.config import settings
+
+    if not enabled() or not (settings.scoring.get("registry") or {}).get("as_dictionary", False):
+        return ()
+    return tuple(e.term for e in load().exact.values() if e.label in (APPROVE, SENSE))
+
+
+def named_keys(terms) -> set[str]:
+    """Lower-cased ``terms`` plus the skills each is mapped to by hand: a
+    longer name the advert uses ("on AWS", "AWS Glue") also names the skills
+    written for it, for top-ups that look for one skill by name."""
+    out = {str(t).casefold() for t in terms}
+    if enabled():
+        reg = load()
+        for t in terms:
+            out.update(s.casefold() for s in reg.skills(t))
+    return out
+
+
 def admits(term: str, jd_text: str | None = None) -> bool:
     """``load().admits`` when the registry is enabled, else always True."""
     return load().admits(term, jd_text) if enabled() else True
