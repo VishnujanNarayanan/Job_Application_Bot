@@ -1280,20 +1280,51 @@ def select_top(
         if s.id in featured and s not in selected:
             selected.append(s)
     shown: set[str] = set().union(*(s.covered for s in selected))
+    # Repetition is evidence too: a project that again shows skills the advert
+    # asks for tells a recruiter the operator has used them more than once. A
+    # required skill shown in fewer than ``repetition_cap`` entries adds
+    # ``entry_repeat_credit`` of its weight; an entry joining on repetition
+    # alone must repeat at least ``entry_repeat_min`` such skills (one shared
+    # word such as "Python" is not enough).
+    times: dict[str, int] = {}
+    for e in selected:
+        for t in e.covered:
+            times[t] = times.get(t, 0) + 1
+    rep_cap = max(1, int(settings.scoring.fit.repetition_cap))
+    rep_credit = float(getattr(cfg, "entry_repeat_credit", 0.0) or 0.0)
+    rep_min = int(getattr(cfg, "entry_repeat_min", 2) or 1)
+    required = {k.token for k in keywords if k.required}
+
+    def _gain(s: SelectedEntry) -> float:
+        new = weight_of(s.covered - shown, keywords)
+        repeats = {t for t in s.covered & shown & required if times.get(t, 0) < rep_cap}
+        if rep_credit <= 0 or (new <= 0 and len(repeats) < rep_min):
+            return new
+        return new + rep_credit * weight_of(repeats, keywords)
+
+    # A page budget for entries that join on repetition alone: page 1 full,
+    # spilling onto page 2 is fine, a third page is not.
+    budget = int(getattr(cfg, "repeat_bullet_budget", 0) or 0)
+
+    def _fits(s: SelectedEntry) -> bool:
+        if not budget or weight_of(s.covered - shown, keywords) > 0:
+            return True
+        return sum(len(e.bullets) for e in selected) + len(s.bullets) <= budget
 
     while len(selected) < max_n:
         best, best_key = None, None
         for s in ranked:
-            if s in selected or s.score < floor:
+            if s in selected or s.score < floor or not _fits(s):
                 continue
-            gain = weight_of(s.covered - shown, keywords)
-            key = (round(gain, 9), s.score)
+            key = (round(_gain(s), 9), s.score)
             if best_key is None or key > best_key:
                 best, best_key = s, key
         if best is None or best_key[0] <= 0.0:
             break
         selected.append(best)
         shown |= best.covered
+        for t in best.covered:
+            times[t] = times.get(t, 0) + 1
 
     for s in ranked:  # top up to the minimum, best score first
         if len(selected) >= min_n:

@@ -6154,7 +6154,7 @@ terms:
   "version control systems": {label: approve, means: [Version Control], term: version control systems}
   "version control tools": {label: reject, term: version control tools}
   "version control tools like git": {label: approve, means: [Git], term: version control tools like Git}
-  "versioning": {label: approve, term: versioning}
+  "versioning": {label: reject, note: 'too generic alone ("versioned in Git" is version control); API / data / model versioning are their own entries', term: versioning}
   "versive": {label: approve, term: Versive}
   "vertex": {label: sense, note: Vertex AI only, term: Vertex}
   "vertex ai": {label: approve, term: Vertex AI}

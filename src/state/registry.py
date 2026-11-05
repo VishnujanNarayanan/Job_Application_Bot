@@ -404,11 +404,14 @@ def _occurrence_is_skill(e: Entry, text: str, start: int, end: int) -> bool:
         return True
     if _section_at(text, start) in ("req", "nice"):
         return True
-    # A capitalised name anywhere counts only in an advert with no requirement
-    # sections of its own: where it has them, the company blurb ("the cloud
-    # and AI era") and a team heading ("Testing & Validation Utility") are
-    # not asks (#188).
-    if any(cat in ("req", "nice") for _a, _b, cat in _sections(text)):
+    # A capitalised name counts in an advert with no requirement sections of
+    # its own, or in a duties section: the company blurb ("the cloud and AI
+    # era") and a team heading ("Testing & Validation Utility") are not asks
+    # (#188).
+    # In an advert with sections, only a duties section still counts ("REST
+    # APIs in Go (HTTP handlers...)", "unit tests (Go + Jest)"); the company
+    # intro and other sections do not.
+    if any(cat in ("req", "nice") for _a, _b, cat in _sections(text)) and _section_at(text, start) != "duty":
         return False
     return text[start].isupper() and head.pos_ == "PROPN"
 
