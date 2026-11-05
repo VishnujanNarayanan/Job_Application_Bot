@@ -54,6 +54,8 @@ data/index/*
 !data/index/.gitkeep
 data/reports/*
 !data/reports/.gitkeep
+# Match-quality benchmark (#179): JD text, the profile and gold labels.
+data/benchmark/
 data/tailored/*
 !data/tailored/.gitkeep
 # Saved role_category/role_level classifier models (local, regenerable)

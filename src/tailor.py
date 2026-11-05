@@ -62,8 +62,12 @@ def bullet_texts(profile) -> tuple[str, ...]:
     ))
 
 
-def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None):
-    """Layer 4: embed the parsed advert and score it against the profile."""
+def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None,
+              now: datetime | None = None):
+    """Layer 4: embed the parsed advert and score it against the profile.
+
+    ``now`` pins the clock (the #179 benchmark replays at its snapshot time);
+    None is the current time."""
     from src.scorer.apply_decision import evaluate, threshold_for
     from src.scorer.keywords import jd_keywords
     from src.scorer.selector import build_jd_context
@@ -83,7 +87,7 @@ def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None)
         site=job.site,
     )
     return evaluate(profile, jd_context, keywords=jd_keywords(parsed, title=job.role, jd_text=job.jd_text),
-                    threshold=threshold_for(job.site))
+                    threshold=threshold_for(job.site), now=now)
 
 
 @dataclass
