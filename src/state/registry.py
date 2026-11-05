@@ -349,10 +349,20 @@ def _listed_with_approved(term: str, line: str) -> bool:
     return False
 
 
+#: A line about the candidate's own equipment, not a skill.
+_EQUIPMENT = re.compile(
+    r"(?i)\b(own (pc|laptop|computer|system|device)|laptop|desktop|\d+\s*gb ram|\bram\b|processor"
+    r"|core i[3579]|ryzen|internet (connection|speed)|broadband|webcam|headset|mbps)\b")
+
+
 def _occurrence_is_skill(e: Entry, text: str, start: int, end: int) -> bool:
     line_start = text.rfind("\n", 0, start) + 1
     line_end = text.find("\n", end)
     line = text[line_start: line_end if line_end >= 0 else len(text)]
+    if _EQUIPMENT.search(line):
+        # The candidate's own kit ("Own laptop with 8GB RAM, Windows 10 or
+        # above") is not a skill line.
+        return False
     if _listed_with_approved(text[start:end], line):
         return True
     if _section_at(text, start) == "drop":
@@ -381,6 +391,12 @@ def _occurrence_is_skill(e: Entry, text: str, start: int, end: int) -> bool:
         return True
     if _section_at(text, start) in ("req", "nice"):
         return True
+    # A capitalised name anywhere counts only in an advert with no requirement
+    # sections of its own: where it has them, the company blurb ("the cloud
+    # and AI era") and a team heading ("Testing & Validation Utility") are
+    # not asks (#188).
+    if any(cat in ("req", "nice") for _a, _b, cat in _sections(text)):
+        return False
     return text[start].isupper() and head.pos_ == "PROPN"
 
 

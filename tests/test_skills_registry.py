@@ -324,3 +324,24 @@ def test_an_advert_without_its_own_sections_is_read_whole():
 
     ad = ABOUT + "We run on AWS and Kafka; you will build our Python services."
     assert skill_text(ad) == ad
+
+
+# --- sense: blurbs, headings and equipment lines are not asks (#188) -----------
+
+def test_a_capitalised_name_in_a_blurb_is_not_an_ask_when_the_advert_has_requirements(reg):
+    jd = ("We are a leader in security for the cloud and AI era.\n\n" + REQ +
+          "Python and Kafka in production.")
+    assert not reg.admits("AI", jd)
+
+
+def test_a_capitalised_name_counts_in_an_advert_with_no_sections(reg):
+    assert reg.admits("AI", "We are hiring an engineer to build AI features in Python.")
+
+
+def test_an_equipment_line_is_not_a_skill_line(monkeypatch):
+    from src.state.registry import Entry, build
+
+    r = build({"windows": (Entry(term="Windows", label="sense"), False),
+               "python": (Entry(term="Python", label="approve"), False)})
+    jd = REQ + "* Own PC/laptop with 8GB RAM, Windows 10 or above.\n* Python."
+    assert not r.admits("Windows", jd)
