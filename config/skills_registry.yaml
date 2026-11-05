@@ -40,7 +40,7 @@ terms:
   "advanced analytics": {label: domain, note: Field of work, term: Advanced Analytics}
   "advanced excel": {label: sense, note: Microsoft Excel, term: Advanced Excel}
   "aeo": {label: approve, term: AEO}
-  "agent": {label: reject, term: agent}
+  "agent": {label: sense, note: 'AI/LLM agent, not a sales or support agent', term: agent}
   "agent orchestration": {label: approve, term: agent orchestration}
   "agent-based systems": {label: approve, term: agent-based systems}
   "agentcore": {label: approve, term: Agentcore}
@@ -53,7 +53,7 @@ terms:
   "agentic systems": {label: approve, term: agentic systems}
   "agentic tools": {label: reject, term: agentic tools}
   "agentic workflows": {label: approve, term: agentic workflows}
-  "agents": {label: reject, term: agents}
+  "agents": {label: sense, note: 'AI/LLM agents, not sales or support agents', term: agents}
   "agile": {label: sense, note: 'Agile methodology, not ''agile'' (nimble)', term: Agile}
   "agile delivery": {label: approve, term: Agile delivery}
   "agile development": {label: approve, term: Agile development}
@@ -283,7 +283,7 @@ terms:
   "backend systems": {label: approve, term: backend systems}
   "backend testing": {label: approve, term: backend testing}
   "background jobs": {label: approve, term: Background jobs}
-  "backup": {label: reject, term: Backup}
+  "backup": {label: sense, note: backup and recovery as an IT/data skill, term: backup}
   "banking": {label: domain, note: Industry, term: Banking}
   "banking domain": {label: domain, note: Industry, term: banking domain}
   "bash": {label: approve, term: Bash}
@@ -402,7 +402,7 @@ terms:
   "cloud deployment": {label: approve, term: Cloud deployment}
   "cloud environments": {label: reject, term: cloud environments}
   "cloud functions": {label: approve, term: Cloud Functions}
-  "cloud infrastructure": {label: reject, term: cloud infrastructure}
+  "cloud infrastructure": {label: approve, term: cloud infrastructure}
   "cloud logging": {label: approve, term: Cloud Logging}
   "cloud migration": {label: approve, term: Cloud migration}
   "cloud monitoring": {label: approve, term: Cloud Monitoring}
@@ -1425,7 +1425,7 @@ terms:
   "prefect": {label: sense, note: Prefect (orchestrator), term: Prefect}
   "presentation": {label: soft, term: presentation}
   "presto": {label: sense, note: Presto (SQL engine), term: Presto}
-  "pricing": {label: reject, term: pricing}
+  "pricing": {label: domain, note: Industry, term: pricing}
   "pricing analytics": {label: domain, note: Industry, term: pricing analytics}
   "principles": {label: reject, term: principles}
   "privacy": {label: domain, note: Industry, term: privacy}
@@ -1590,7 +1590,7 @@ terms:
   "root-cause analysis": {label: approve, term: root-cause analysis}
   "route 53": {label: approve, term: Route 53}
   "route53": {label: approve, term: Route53}
-  "routing": {label: reject, term: routing}
+  "routing": {label: sense, note: 'network/API/call routing, not ''routing a request to a team''', term: routing}
   "rpa": {label: approve, term: RPA}
   "rpg": {label: sense, note: 'IBM RPG language, not role-playing games', term: RPG}
   "rtos": {label: approve, term: RTOS}
@@ -1980,7 +1980,7 @@ terms:
   "web apis": {label: approve, term: web APIs}
   "web app": {label: reject, note: Too vague, term: web app}
   "web application development": {label: domain, note: Field of work, term: Web application development}
-  "web applications": {label: reject, term: web applications}
+  "web applications": {label: sense, note: 'building web applications, not ''web'' boilerplate', term: web applications}
   "web apps": {label: reject, note: Too vague, term: web apps}
   "web scraping": {label: approve, term: web scraping}
   "web security": {label: domain, note: Field of work, term: web security}
