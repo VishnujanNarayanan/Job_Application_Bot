@@ -1,7 +1,7 @@
 # Skills registry (#188): every term the pipeline may treat as a skill, and what it may do.
 #   approve    a specific skill: a keyword (fit, gaps, earns bullets, bolded)
 #   sense      a skill whose name has another meaning: a keyword only where its sense is
-#              shown (qualifiers / casing / requirement line), see src/state/registry.py
+#              uses it as a skill (read from context), see src/state/registry.py
 #   reject     never a skill on its own        domain  an industry or field of work
 #   soft       soft skill or spoken language   credential  degree or certification
 # Only approve and sense terms become keywords. Labels come from the operator's review sheet;
@@ -54,7 +54,7 @@ terms:
   "agentic tools": {label: reject, term: agentic tools}
   "agentic workflows": {label: approve, term: agentic workflows}
   "agents": {label: reject, term: agents}
-  "agile": {label: sense, note: 'Agile methodology, not ''agile'' (nimble)', requirement_line: true, term: Agile}
+  "agile": {label: sense, note: 'Agile methodology, not ''agile'' (nimble)', term: Agile}
   "agile delivery": {label: approve, term: Agile delivery}
   "agile development": {label: approve, term: Agile development}
   "agile environments": {label: reject, note: Too vague, term: Agile environments}
@@ -65,7 +65,7 @@ terms:
   "agile/scrum": {label: approve, term: Agile/Scrum}
   "agile/scrum methodologies": {label: approve, term: Agile/Scrum methodologies}
   "ahrefs": {label: approve, term: Ahrefs}
-  "ai": {by: operator, label: sense, note: AI as a skill area in a requirement line; not in company intro text, requirement_line: true, term: AI}
+  "ai": {by: operator, label: sense, note: AI as a skill area in a requirement line; not in company intro text, term: AI}
   "ai & ml": {label: domain, note: Field of work, term: AI & ML}
   "ai agent": {label: approve, term: AI agent}
   "ai agents": {label: approve, term: AI agents}
@@ -142,7 +142,7 @@ terms:
   "anthropic": {label: reject, note: A vendor; Claude / Claude Code are the skills, term: Anthropic}
   "anthropic claude": {label: approve, term: Anthropic Claude}
   "aop": {label: approve, term: AOP}
-  "apache": {label: sense, note: only as an Apache product name, qualified_only: true, qualifiers: ['\bApache [A-Z][\w-]+'], term: Apache}
+  "apache": {label: sense, note: only as an Apache product name, term: Apache}
   "apache airflow": {label: approve, term: Apache Airflow}
   "apache flink": {label: approve, term: Apache Flink}
   "apache iceberg": {label: approve, term: Apache Iceberg}
@@ -385,7 +385,7 @@ terms:
   "ckad": {label: credential, term: CKAD}
   "claims": {label: domain, note: Industry, term: Claims}
   "classes": {label: reject, term: Classes}
-  "classification": {label: sense, note: ML classification, requirement_line: true, term: Classification}
+  "classification": {label: sense, note: ML classification, term: Classification}
   "claude": {label: sense, note: 'Anthropic Claude, not a name', term: Claude}
   "claude code": {label: approve, term: Claude Code}
   "clay": {label: reject, term: Clay}
@@ -467,7 +467,7 @@ terms:
   "containerized": {label: approve, term: containerized}
   "containerized applications": {label: approve, term: containerized applications}
   "containerized deployments": {label: approve, term: containerized deployments}
-  "containers": {label: sense, note: software containers, requirement_line: true, term: containers}
+  "containers": {label: sense, note: software containers, term: containers}
   "context api": {label: approve, term: Context API}
   "context engineering": {label: approve, term: context engineering}
   "context management": {label: approve, term: Context management}
@@ -481,7 +481,7 @@ terms:
   "control-m": {label: approve, term: Control-M}
   "conversational ai": {label: domain, note: Field of work, term: Conversational AI}
   "copado": {label: approve, term: Copado}
-  "copilot": {label: sense, note: 'the named Copilot: GitHub Copilot ≠ Microsoft Copilot Studio', qualified_only: true, qualifiers: [\b(GitHub|Microsoft|MS|M365) Copilot\b], term: Copilot}
+  "copilot": {label: sense, note: 'the named Copilot: GitHub Copilot ≠ Microsoft Copilot Studio', term: Copilot}
   "copilot studio": {label: approve, term: Copilot Studio}
   "copilots": {label: reject, term: copilots}
   "core data": {label: approve, term: Core Data}
@@ -671,7 +671,7 @@ terms:
   "docker compose": {label: approve, term: Docker Compose}
   "document intelligence": {label: approve, term: Document Intelligence}
   "document parsing": {label: approve, term: document parsing}
-  "documentation": {label: sense, note: technical documentation, requirement_line: true, term: documentation}
+  "documentation": {label: sense, note: technical documentation, term: documentation}
   "domain-driven design": {label: approve, term: Domain-Driven Design}
   "domo": {label: approve, term: Domo}
   "dotnet": {label: approve, term: dotnet}
@@ -691,7 +691,7 @@ terms:
   "ecs": {label: approve, term: ECS}
   "ecs/eks": {label: approve, term: ECS/EKS}
   "eda": {label: approve, term: EDA}
-  "edge": {label: sense, note: 'Microsoft Edge / edge computing named as such, not ''edge''', qualified_only: true, qualifiers: [\bMicrosoft Edge\b, '\b[Ee]dge (computing|devices|AI|inference)\b'], term: Edge}
+  "edge": {label: sense, note: 'Microsoft Edge / edge computing named as such, not ''edge''', term: Edge}
   "edge computing": {label: domain, note: Field of work, term: edge computing}
   "edr": {label: approve, term: EDR}
   "ef": {label: reject, term: EF}
@@ -760,7 +760,7 @@ terms:
   "event-driven systems": {label: approve, term: event-driven systems}
   "eventbridge": {label: approve, term: EventBridge}
   "events": {label: reject, term: Events}
-  "excel": {label: sense, note: 'Microsoft Excel, not ''excel at/in''', qualified_only: false, qualifiers: [\b(MS|Microsoft|Advanced|advanced) Excel\b], term: Excel}
+  "excel": {label: sense, note: 'Microsoft Excel, not ''excel at/in''', term: Excel}
   "exception handling": {label: approve, term: exception handling}
   "executive presence": {label: soft, term: Executive Presence}
   "experience cloud": {label: approve, term: Experience Cloud}
@@ -839,7 +839,7 @@ terms:
   "functional interfaces": {label: approve, term: Functional Interfaces}
   "functional programming": {label: approve, term: Functional programming}
   "functional testing": {label: approve, term: functional testing}
-  "functions": {label: sense, note: Azure / Cloud / AWS Step Functions only, requirement_line: true, term: Functions}
+  "functions": {label: sense, note: Azure / Cloud / AWS Step Functions only, term: Functions}
   "ga4": {label: approve, term: GA4}
   "gcfa": {label: credential, term: GCFA}
   "gcia": {label: credential, term: GCIA}
@@ -878,7 +878,7 @@ terms:
   "gitops": {label: approve, term: GitOps}
   "gke": {label: approve, term: GKE}
   "glue": {label: sense, note: 'AWS Glue, not ''glue''', term: Glue}
-  "go": {label: sense, note: 'Go / Golang the language, not the verb', qualified_only: false, qualifiers: [\bGolang\b], term: Go}
+  "go": {label: sense, note: 'Go / Golang the language, not the verb', term: Go}
   "golang": {label: approve, term: Golang}
   "google": {label: reject, note: 'A vendor; its products (GCP, BigQuery...) are the skills', term: Google}
   "google adk": {label: approve, term: Google ADK}
@@ -907,7 +907,7 @@ terms:
   "graphrag": {label: approve, term: GraphRAG}
   "grc": {label: approve, term: GRC}
   "groovy": {label: sense, note: the Groovy language, term: Groovy}
-  "grounding": {label: sense, note: 'LLM grounding, not electrical grounding', requirement_line: true, term: grounding}
+  "grounding": {label: sense, note: 'LLM grounding, not electrical grounding', term: grounding}
   "grpc": {label: approve, term: gRPC}
   "guardrails": {label: approve, term: guardrails}
   "gxp": {label: domain, note: Industry, term: GxP}
@@ -932,7 +932,7 @@ terms:
   "hipaa": {label: domain, note: Industry, term: HIPAA}
   "hive": {label: sense, note: 'Apache Hive / Hive DB, not ''hive''', term: Hive}
   "hl7": {label: approve, term: HL7}
-  "hooks": {label: sense, note: React hooks / git hooks, requirement_line: true, term: hooks}
+  "hooks": {label: sense, note: React hooks / git hooks, term: hooks}
   "hr tech": {label: domain, note: Industry, term: HR tech}
   "html": {label: approve, term: HTML}
   "html/css": {label: approve, term: HTML/CSS}
@@ -1062,7 +1062,7 @@ terms:
   "large language model": {label: approve, term: large language model}
   "large language models": {label: approve, term: Large Language Models}
   "ldap": {label: approve, term: LDAP}
-  "lean": {label: sense, note: 'Lean methodology, not ''lean''', requirement_line: true, term: Lean}
+  "lean": {label: sense, note: 'Lean methodology, not ''lean''', term: Lean}
   "lean methodologies": {label: approve, term: Lean Methodologies}
   "lean six sigma": {label: approve, term: Lean Six Sigma}
   "learning": {label: reject, term: Learning}
@@ -1123,10 +1123,10 @@ terms:
   "machine learning models": {label: domain, note: Field of work, term: machine learning models}
   "machine learning operations": {label: domain, note: Field of work, term: machine learning operations}
   "macos": {label: approve, term: macOS}
-  "macros": {label: sense, note: Excel/VBA macros, requirement_line: true, term: macros}
+  "macros": {label: sense, note: Excel/VBA macros, term: macros}
   "maintainability": {label: reject, term: maintainability}
   "maintenance": {label: reject, term: maintenance}
-  "make": {label: sense, note: 'Make.com / Integromat (automation tool), not the verb', qualified_only: false, qualifiers: [\bMake\.com\b, \bIntegromat\b, '\b(n8n|Zapier),? (and |or )?Make\b', '\bMake,? (and |or )?(n8n|Zapier)\b'], term: Make}
+  "make": {label: sense, note: 'Make.com / Integromat (automation tool), not the verb', term: Make}
   "makefiles": {label: approve, term: Makefiles}
   "manual testing": {label: approve, term: manual testing}
   "manufacturing": {label: domain, note: Industry, term: manufacturing}
@@ -1225,7 +1225,7 @@ terms:
   "modern data": {label: reject, term: modern data}
   "mongo": {label: approve, term: Mongo}
   "mongodb": {label: approve, term: MongoDB}
-  "monitoring": {label: sense, note: system/service monitoring, requirement_line: true, term: monitoring}
+  "monitoring": {label: sense, note: system/service monitoring, term: monitoring}
   "monitoring dashboards": {label: approve, term: monitoring dashboards}
   "monitoring tools": {label: reject, term: monitoring tools}
   "monitors": {label: reject, term: Monitors}
@@ -1341,7 +1341,7 @@ terms:
   "operations research": {label: domain, note: Field of work, term: Operations Research}
   "opsgenie": {label: approve, term: OpsGenie}
   "optimization techniques": {label: reject, term: optimization techniques}
-  "oracle": {label: sense, note: 'Oracle DB / Oracle Cloud, not Oracle the company in boilerplate', qualified_only: true, qualifiers: [\bOracle (DB|Database|SQL|Cloud|Fusion|EBS|PL/SQL|Integration|APEX|Forms)\b, '\bOracle(?=[,/] ?(and |or )?(MySQL|PostgreSQL|SQL Server|MongoDB|Postgres|DB2))', '(MySQL|PostgreSQL|SQL Server|MongoDB|Postgres|DB2),? (and |or )?Oracle\b'], term: Oracle}
+  "oracle": {label: sense, note: 'Oracle DB / Oracle Cloud, not Oracle the company in boilerplate', term: Oracle}
   "oracle cloud": {label: approve, term: Oracle Cloud}
   "oracle database": {label: approve, term: Oracle Database}
   "oracle fusion": {label: approve, term: Oracle Fusion}
@@ -1356,7 +1356,7 @@ terms:
   "orm": {label: approve, term: ORM}
   "ospf": {label: approve, term: OSPF}
   "otbi": {label: approve, term: OTBI}
-  "outlook": {label: sense, note: 'Microsoft Outlook, not ''outlook''', qualified_only: true, qualifiers: [\b(Microsoft|MS) Outlook\b, '\bOutlook(,| and| or) (Excel|Word|Teams)\b', '\b(Excel|Word),? (and |or )?Outlook\b'], term: Outlook}
+  "outlook": {label: sense, note: 'Microsoft Outlook, not ''outlook''', term: Outlook}
   "outreach": {label: sense, note: Outreach (sales platform), term: Outreach}
   "owasp": {label: approve, term: OWASP}
   "owasp top 10": {label: approve, term: OWASP Top 10}
@@ -1387,7 +1387,7 @@ terms:
   "pharmaceutical": {label: domain, note: Industry, term: pharmaceutical}
   "php": {label: approve, term: PHP}
   "pinecone": {label: sense, note: Pinecone (vector DB), term: Pinecone}
-  "pipelines": {label: sense, note: data or CI/CD pipelines named as such, requirement_line: true, term: pipelines}
+  "pipelines": {label: sense, note: data or CI/CD pipelines named as such, term: pipelines}
   "pivot tables": {label: approve, term: pivot tables}
   "pkce": {label: approve, term: PKCE}
   "pl/sql": {label: approve, term: PL/SQL}
@@ -1408,7 +1408,7 @@ terms:
   "postgres": {label: approve, term: Postgres}
   "postgresql": {label: approve, term: PostgreSQL}
   "postman": {label: sense, note: the Postman tool, term: Postman}
-  "power": {label: sense, note: only as Power BI / Power Automate / Power Apps, qualified_only: true, qualifiers: [\bPower (BI|Automate|Apps|Query|Platform|Pivot)\b], term: Power}
+  "power": {label: sense, note: only as Power BI / Power Automate / Power Apps, term: Power}
   "power apps": {label: approve, term: Power Apps}
   "power automate": {label: approve, term: Power Automate}
   "power bi": {label: approve, term: Power BI}
@@ -1457,8 +1457,8 @@ terms:
   "prompting": {label: approve, term: prompting}
   "protobuf": {label: approve, term: Protobuf}
   "protocol buffers": {label: approve, term: Protocol Buffers}
-  "proxies": {label: sense, note: network proxies, requirement_line: true, term: proxies}
-  "proxy": {label: sense, note: network proxy, requirement_line: true, term: proxy}
+  "proxies": {label: sense, note: network proxies, term: proxies}
+  "proxy": {label: sense, note: network proxy, term: proxy}
   "psql": {label: approve, term: PSQL}
   "pub/sub": {label: approve, term: Pub/Sub}
   "public cloud": {label: reject, note: Too vague, term: public cloud}
@@ -1518,17 +1518,17 @@ terms:
   "real-time analytics": {label: approve, term: real-time analytics}
   "real-time communication": {label: reject, note: Too vague, term: real-time communication}
   "recall": {label: reject, term: recall}
-  "recommendation": {label: sense, note: recommendation systems, requirement_line: true, term: recommendation}
+  "recommendation": {label: sense, note: recommendation systems, term: recommendation}
   "recommendation systems": {label: approve, term: recommendation systems}
-  "reconciliation": {label: sense, note: 'data reconciliation, not accounting', requirement_line: true, term: reconciliation}
-  "reconciliations": {label: sense, note: 'data reconciliation, not accounting', requirement_line: true, term: reconciliations}
+  "reconciliation": {label: sense, note: 'data reconciliation, not accounting', term: reconciliation}
+  "reconciliations": {label: sense, note: 'data reconciliation, not accounting', term: reconciliations}
   "recovery": {label: reject, term: recovery}
   "red hat openshift": {label: approve, term: Red Hat OpenShift}
   "redis": {label: approve, term: Redis}
   "redshift": {label: approve, term: Redshift}
   "reduced order modeling": {label: approve, term: Reduced Order Modeling}
   "redux": {label: approve, term: Redux}
-  "regression": {label: sense, note: regression testing or regression models, requirement_line: true, term: Regression}
+  "regression": {label: sense, note: regression testing or regression models, term: Regression}
   "regression analysis": {label: approve, term: regression analysis}
   "regression testing": {label: approve, term: Regression testing}
   "regulated": {label: reject, term: regulated}
@@ -1545,7 +1545,7 @@ terms:
   "reliability": {label: reject, term: reliability}
   "reliability engineering": {label: domain, note: Field of work, term: reliability engineering}
   "replication": {label: approve, term: replication}
-  "reporting": {label: sense, note: 'BI/MIS reporting, not ''reporting to''', requirement_line: true, term: Reporting}
+  "reporting": {label: sense, note: 'BI/MIS reporting, not ''reporting to''', term: Reporting}
   "reporting tools": {label: reject, term: reporting tools}
   "reports": {label: reject, term: Reports}
   "reproducibility": {label: approve, term: Reproducibility}
@@ -1573,7 +1573,7 @@ terms:
   "restful web": {label: approve, term: RESTful Web}
   "retail": {label: domain, note: Industry, term: retail}
   "retention": {label: reject, term: retention}
-  "retraining": {label: sense, note: 'ML model retraining, not staff retraining', requirement_line: true, term: retraining}
+  "retraining": {label: sense, note: 'ML model retraining, not staff retraining', term: retraining}
   "retries": {label: approve, term: retries}
   "retrieval": {label: reject, term: retrieval}
   "retrieval augmented generation": {label: approve, term: retrieval augmented generation}
@@ -1637,7 +1637,7 @@ terms:
   "scaling": {label: reject, term: scaling}
   "sccm": {label: approve, term: SCCM}
   "scheduler": {label: reject, term: Scheduler}
-  "scheduling": {label: sense, note: 'job/workflow scheduling (cron, schedulers), not work shifts', requirement_line: true, term: scheduling}
+  "scheduling": {label: sense, note: 'job/workflow scheduling (cron, schedulers), not work shifts', term: scheduling}
   "schema design": {label: approve, term: Schema design}
   "schema evolution": {label: approve, term: schema evolution}
   "schema registry": {label: approve, term: Schema Registry}
@@ -1800,9 +1800,9 @@ terms:
   "storybook": {label: sense, note: Storybook (UI tool), term: Storybook}
   "storytelling": {label: soft, term: Storytelling}
   "strategic thinking": {label: soft, term: strategic thinking}
-  "streaming": {label: sense, note: data/event streaming, requirement_line: true, term: streaming}
+  "streaming": {label: sense, note: data/event streaming, term: streaming}
   "streamlit": {label: approve, term: Streamlit}
-  "streams": {label: sense, note: Kafka Streams / Snowflake Streams only, requirement_line: true, term: Streams}
+  "streams": {label: sense, note: Kafka Streams / Snowflake Streams only, term: Streams}
   "stress testing": {label: approve, term: stress testing}
   "stripe": {label: approve, term: Stripe}
   "structured data": {label: reject, term: structured data}
@@ -1838,7 +1838,7 @@ terms:
   "tdd": {label: approve, term: TDD}
   "team collaboration": {label: soft, term: team collaboration}
   "team management": {label: soft, term: team management}
-  "teams": {by: operator, label: sense, note: Microsoft Teams / MS Teams only; never 'teams', qualified_only: true, qualifiers: [\b(Microsoft|MS) Teams\b], term: Teams}
+  "teams": {by: operator, label: sense, note: Microsoft Teams / MS Teams only; never 'teams', term: Teams}
   "technical documentation": {label: approve, term: Technical documentation}
   "technical seo": {label: approve, term: Technical SEO}
   "technical support": {label: domain, note: Field of work, term: technical support}
@@ -1891,7 +1891,7 @@ terms:
   "transformer models": {label: approve, term: transformer models}
   "transformers": {label: sense, note: 'transformer models / HF Transformers, not electrical', term: Transformers}
   "trend analysis": {label: approve, term: trend analysis}
-  "triggers": {label: sense, note: database or CI triggers, requirement_line: true, term: triggers}
+  "triggers": {label: sense, note: database or CI triggers, term: triggers}
   "trino": {label: approve, term: Trino}
   "troubleshooting": {label: approve, term: Troubleshooting}
   "ts": {label: approve, term: TS}
@@ -1947,7 +1947,7 @@ terms:
   "viper": {label: approve, term: VIPER}
   "virtualization": {label: approve, term: virtualization}
   "visio": {label: approve, term: Visio}
-  "visual": {label: sense, note: only as Visual Studio / Visual Basic, qualified_only: true, qualifiers: [\bVisual (Studio|Basic)\b], term: Visual}
+  "visual": {label: sense, note: only as Visual Studio / Visual Basic, term: Visual}
   "visual studio": {label: approve, term: Visual Studio}
   "visual studio code": {label: approve, term: Visual Studio Code}
   "visualization": {label: approve, term: visualization}
@@ -1997,9 +1997,9 @@ terms:
   "windows server": {label: approve, term: Windows Server}
   "windsurf": {label: sense, note: Windsurf (AI editor), term: Windsurf}
   "wiz": {label: sense, note: Wiz (cloud security), term: Wiz}
-  "word": {label: sense, note: 'Microsoft Word, not ''word''', qualified_only: true, qualifiers: [\b(Microsoft|MS) Word\b, '\bWord(,| and| or) (Excel|PowerPoint)\b', '\b(Excel|PowerPoint),? (and |or )?Word\b'], term: Word}
+  "word": {label: sense, note: 'Microsoft Word, not ''word''', term: Word}
   "workato": {label: approve, term: Workato}
-  "workday": {label: sense, note: 'Workday the platform, not ''a working day''', qualified_only: true, qualifiers: ['\bWorkday (HCM|Financials|Studio|Adaptive|integrations?|Extend|Prism|Report Writer|EIB)\b'], term: Workday}
+  "workday": {label: sense, note: 'Workday the platform, not ''a working day''', term: Workday}
   "workday studio": {label: approve, term: Workday Studio}
   "workflow automation": {label: approve, term: workflow automation}
   "workflow design": {label: approve, term: workflow design}

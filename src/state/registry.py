@@ -25,19 +25,9 @@ Lookups use the matcher's own key (``keywords.phrase_key``), so "Teams",
 "teams" and "team" are one entry: the bolder folds plurals, and the 2026-11-05
 audit found 37% of junk bolds were singular forms of registry terms.
 
-How a sense term proves its sense, in order (all of it data in the registry):
-
-1. ``qualifiers``: regular expressions, any match in the advert counts
-   ("Make.com", "Microsoft Teams"). ``qualified_only`` makes them the only way.
-2. Tool casing: a term written with capitals ("Go", "Excel", "React") counts
-   where the advert writes it in that exact casing, not at the start of a line
-   or sentence ("Go through", "Excel at" are sentence starts).
-3. A term written in lower case ("testing", "pipelines") counts in a
-   requirements section or next to an approved term in a list ("Python,
-   testing, CI/CD").
-4. ``requirement_line``: whichever of 2-3 applies, the occurrence must also sit
-   in a requirements or nice-to-have section when the advert has sections
-   (keeps "a leader in AI" in the company intro out).
+A sense term counts only where the advert uses it as a skill, decided from
+each occurrence's situation (list neighbours, part of speech, nearby skills,
+section), never from a list of phrasings: see ``sense_shown``.
 """
 
 from __future__ import annotations
@@ -62,9 +52,6 @@ LABELS = frozenset({APPROVE, SENSE, REJECT, DOMAIN, SOFT, CREDENTIAL})
 #: Labels that never become a keyword.
 BLOCKED = frozenset({REJECT, DOMAIN, SOFT, CREDENTIAL})
 
-# Bullet markers and numbering at the start of a line are not words.
-_LEAD = re.compile(r"^[\s*\-•·#>\d.)(]+")
-_SENTENCE_END = re.compile(r"[.!?:]\s*$")
 
 
 @dataclass(frozen=True)
@@ -72,9 +59,6 @@ class Entry:
     term: str
     label: str
     note: str = ""
-    qualifiers: tuple[re.Pattern[str], ...] = ()
-    qualified_only: bool = False
-    requirement_line: bool = False
 
 
 #: When two registry terms fold to one matching key ("React" / "React.js"),
@@ -130,9 +114,6 @@ def _load_file(path: Path) -> dict[str, tuple[Entry, bool]]:
             term=term,
             label=label,
             note=str(e.get("note") or ""),
-            qualifiers=tuple(re.compile(q) for q in e.get("qualifiers") or ()),
-            qualified_only=bool(e.get("qualified_only")),
-            requirement_line=bool(e.get("requirement_line")),
         ), e.get("by") == "operator")
     return out
 
@@ -181,90 +162,120 @@ def admitted(terms, jd_text: str | None = None) -> list[str]:
     return [t for t in terms if reg.admits(t, jd_text)]
 
 
-# --- sense rules ------------------------------------------------------------------------
+# --- sense rules -----------------------------------------------------------------------
+#
+# A sense term ("Make", "Go", "Excel", "Teams", "Testing", "AI") counts only
+# where the advert uses it as a skill. The decision reads the situation of each
+# occurrence, never a list of phrasings, so it holds for adverts not yet seen:
+#
+#   1. listed beside an approved skill ("n8n, Make, Zapier", "Exchange,
+#      SharePoint and Teams")                                    -> skill sense
+#   2. otherwise not used as a verb, adverb or preposition ("make sure", "excel
+#      at", "go through", "react quickly", "harness the power"; spaCy's part of
+#      speech), and at least one of: an approved skill in the same sentence, a
+#      requirements/skills section, or a capitalised name spaCy reads as a
+#      proper noun                                                -> skill sense
+#   3. never from company-intro, benefits or EEO sections unless listed (1).
+
+_VERBISH = frozenset({"VERB", "AUX", "ADV", "ADP", "PART", "SCONJ", "CCONJ", "DET", "PRON"})
+_WORD = re.compile(r"[A-Za-z0-9][\w+#./-]*")
+_ITEM_SPLIT = re.compile(r"\s*(?:[,;|&]|\band\b|\bor\b|\s/\s|(?<=\w)/(?=\w))\s*", re.IGNORECASE)
+_MAX_GRAM = 4
 
 
-@lru_cache(maxsize=256)
-def _requirement_text(jd_text: str) -> str | None:
-    """The advert's requirements and nice-to-have sections, or None when it has
-    no recognised sections (then every line counts)."""
+@lru_cache(maxsize=64)
+def _sections(text: str) -> tuple[tuple[int, int, str], ...]:
+    """(start, end, category) spans of the advert's sections; empty when the
+    advert has no recognised headings."""
     from src.llm.sections import split_sections
 
-    _pre, secs = split_sections(jd_text)
-    if not secs:
-        return None
-    return "\n".join(body for cat, body in secs if cat in ("req", "nice"))
+    _pre, secs = split_sections(text)
+    spans, pos = [], 0
+    for cat, body in secs:
+        i = text.find(body, pos)
+        if i >= 0:
+            spans.append((i, i + len(body), cat))
+            pos = i + len(body)
+    return tuple(spans)
 
 
-def _occurrences(term: str, text: str, *, exact_case: bool):
-    """(text before the match on its line, text after it, the whole line)."""
-    flags = 0 if exact_case else re.IGNORECASE
-    pat = re.compile(rf"(?<![\w+#.-]){re.escape(term)}(?![\w+#-]|\.\w)", flags)
-    for m in pat.finditer(text):
-        line_start = text.rfind("\n", 0, m.start()) + 1
-        line_end = text.find("\n", m.end())
-        line = text[line_start: line_end if line_end >= 0 else len(text)]
-        yield text[line_start:m.start()], line[m.end() - line_start:], line
+def _section_at(text: str, offset: int) -> str | None:
+    for a, b, cat in _sections(text):
+        if a <= offset < b:
+            return cat
+    return None
 
 
-def _sentence_start(before: str) -> bool:
-    lead = _LEAD.sub("", before)
-    return not lead.strip() or bool(_SENTENCE_END.search(lead))
+@lru_cache(maxsize=64)
+def _doc(text: str):
+    from src.parser import _nlp
+
+    return _nlp()(text)
 
 
-#: What may follow a tool name that starts a line or sentence when it is a
-#: list item, not a verb: "- Rust and WebAssembly", "Excel (pivot tables)",
-#: "Go: 3+ years". "Excel at", "Make sure", "Go through" do not qualify.
-_ITEM_FOLLOW = re.compile(r"^\s*(?:$|[,/;:(|&\-–]|\.\s*$|(?:and|or)\b(?!\s+(?:a|an|the)\b))", re.IGNORECASE)
-
-
-_ITEM_SPLIT = re.compile(r"\s*(?:[,/;|&]|\band\b|\bor\b)\s*", re.IGNORECASE)
+def _approved_in(span: str, exclude: str) -> bool:
+    """Whether an approved registry term other than ``exclude`` is named in
+    ``span`` (word n-grams up to four words)."""
+    reg = load()
+    words = _WORD.findall(span)
+    ex = exclude.casefold()
+    for n in range(_MAX_GRAM, 0, -1):
+        for i in range(len(words) - n + 1):
+            g = " ".join(words[i:i + n]).strip(".").casefold()
+            if g == ex or len(g) < 2:
+                continue
+            e = reg.exact.get(g)
+            if e is not None and e.label == APPROVE:
+                return True
+    return False
 
 
 def _listed_with_approved(term: str, line: str) -> bool:
-    """The term is an item of a list ("Python, testing, CI/CD") whose next or
-    previous item is an approved term."""
-    items = [i.strip(" ()[]:*.-") for i in _ITEM_SPLIT.split(line)]
+    """The term is an item of a list whose next or previous item is an approved
+    term ("Python, testing, CI/CD")."""
+    items = [i.strip(" ()[]:*.-•") for i in _ITEM_SPLIT.split(line)]
     if len(items) < 2:
         return False
-    reg = load()
     key = term.casefold()
     for i, item in enumerate(items):
         if item.casefold() != key:
             continue
         for j in (i - 1, i + 1):
-            if 0 <= j < len(items) and items[j] and len(items[j]) <= 40:
-                e = reg.entry(items[j])
-                if e is not None and e.label == APPROVE:
-                    return True
+            if 0 <= j < len(items) and items[j] and len(items[j]) <= 40 and _approved_in(items[j], term):
+                return True
     return False
+
+
+def _occurrence_is_skill(e: Entry, text: str, start: int, end: int) -> bool:
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    line = text[line_start: line_end if line_end >= 0 else len(text)]
+    if _listed_with_approved(text[start:end], line):
+        return True
+    if _section_at(text, start) == "drop":
+        return False
+    doc = _doc(text)
+    span = doc.char_span(start, end, alignment_mode="expand")
+    if span is None or not len(span):
+        return False
+    head = span.root
+    nxt = doc[span.end].text if span.end < len(doc) else ""
+    # A word directly followed by ":" or "(" is a label or a named item
+    # ("Go: 3+ years", "Excel (pivot tables)"), whatever its tagged part of speech.
+    if head.pos_ in _VERBISH and nxt not in (":", "("):
+        return False
+    sent = head.sent.text
+    if _approved_in(sent, text[start:end]):
+        return True
+    if _section_at(text, start) in ("req", "nice"):
+        return True
+    return text[start].isupper() and head.pos_ == "PROPN"
 
 
 def sense_shown(e: Entry, jd_text: str) -> bool:
-    """Whether the advert uses the sense term ``e`` in its skill sense."""
+    """Whether the advert uses the sense term ``e`` in its skill sense anywhere."""
     from src.scorer.keywords import clean_ad_text
 
     text = clean_ad_text(jd_text)
-    if any(q.search(text) for q in e.qualifiers):
-        return True
-    if e.qualified_only:
-        return False
-    req = _requirement_text(text)
-    where = req if (e.requirement_line and req is not None) else text
-    # Casing is evidence only for tool names ("Go", "Excel"); a concept word
-    # checked by its requirements line ("Testing", "AI") matches in any case.
-    has_caps = any(c.isupper() for c in e.term) and not e.requirement_line
-    for before, after, line in _occurrences(e.term, where, exact_case=has_caps):
-        if has_caps:
-            # Tool casing, not starting a line or sentence ("Go through", "Excel
-            # at"), unless it is a list item there ("- Rust and WebAssembly").
-            if not _sentence_start(before) or _ITEM_FOLLOW.match(after):
-                return True
-        elif req is None or where is req or line.strip() in req:
-            # A lower-case term counts on a requirements line (any line when the
-            # advert has no sections) ...
-            return True
-        elif _listed_with_approved(e.term, line):
-            # ... or listed beside an approved skill anywhere.
-            return True
-    return False
+    pat = re.compile(rf"(?<![\w+#.-]){re.escape(e.term)}(?![\w+#-]|\.\w)", re.IGNORECASE)
+    return any(_occurrence_is_skill(e, text, m.start(), m.end()) for m in pat.finditer(text))
