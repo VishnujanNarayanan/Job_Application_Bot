@@ -7,6 +7,19 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [v3.3.2] — 2026-11-07
+
+### Changed
+
+- **A missing asked skill takes a filler slot (#190).** When a required
+  skill appears nowhere on the resume but an entry on it has a bullet
+  proving it, that bullet replaces a weaker one in the entry: for a tool, a
+  bullet carrying no tool; for a concept, a bullet carrying no advert keyword
+  at all (the title-checklist filler). The proof may come from any block of
+  the entry, since a bullet bringing a skill the entry lacks is not a
+  restatement. The resume never gets longer. Proven skills missing from the
+  resume 142 → 134, filler bullets 136 → 128, no verdict changes.
+
 ## [v3.3.1] — 2026-11-07
 
 ### Changed
