@@ -124,9 +124,26 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="src.cli.assets")
     parser.add_argument("direction", choices=("push", "pull"))
+    parser.add_argument("--allow-keyword-gaps", action="store_true",
+                        help="push even if a bullet proves a keyword with no phrase (#138)")
     args = parser.parse_args(argv)
 
+    if args.direction == "push" and not args.allow_keyword_gaps and keyword_gaps():
+        return 1
     return push() if args.direction == "push" else pull()
+
+
+def keyword_gaps() -> bool:
+    """#138 gate: True (and the list printed) when an entry's bullets prove a
+    keyword its keyword_lines have no phrase for. Shared with reparse."""
+    from src.state import keyword_lines
+
+    report = keyword_lines.check_yaml(_ROOT / "master_profile.yaml")
+    if not report.missing:
+        return False
+    print(report.render(), file=sys.stderr)
+    print("\nNothing pushed. " + keyword_lines.GATE_HELP, file=sys.stderr)
+    return True
 
 
 if __name__ == "__main__":

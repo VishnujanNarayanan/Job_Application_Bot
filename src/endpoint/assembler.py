@@ -63,6 +63,7 @@ from lxml import etree
 
 from src.config import settings
 from src.llm.schemas import StoredSelection
+from src.scorer import grouped_lines
 from src.scorer.keywords import keyword_spans
 
 log = structlog.get_logger(__name__)
@@ -659,6 +660,19 @@ def _index_profile(profile_json_path: Path) -> dict[str, str]:
     return bullet_text
 
 
+def _index_lines(profile_json_path: Path) -> dict:
+    """entry_id -> ``KeywordLines``, for re-composing grouped lines (#138)."""
+    from src.state.master_profile import KeywordLines
+
+    data = json.loads(Path(profile_json_path).read_text())
+    return {
+        e["id"]: KeywordLines.model_validate(e["keyword_lines"])
+        for key in ("work_experience", "projects")
+        for e in data.get(key) or []
+        if e.get("keyword_lines")
+    }
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
@@ -676,6 +690,7 @@ def assemble_docx(
     ``header_location`` replaces the header's location line (#134); None keeps it.
     """
     bullet_text = _index_profile(profile_json_path)
+    lines_by_entry = _index_lines(profile_json_path)
 
     doc = Document(str(template_path))
     body = doc.element.body
@@ -738,6 +753,11 @@ def assemble_docx(
 
             for position, bid in enumerate(entry.bullet_ids):
                 text = bullet_text.get(bid)
+                if text is None and grouped_lines.is_line(bid):
+                    try:
+                        text = grouped_lines.text_of(bid, lines_by_entry)
+                    except (KeyError, ValueError):
+                        text = None
                 if text is None:
                     raise AssemblerError(
                         f"bullet {bid!r} is in the selection but not in the profile "

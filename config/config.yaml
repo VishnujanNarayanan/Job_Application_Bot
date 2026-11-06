@@ -337,6 +337,37 @@ selection:
     # (src/scorer/qualifications.py). Unset or missing = tie-break off.
     qualifications_path: "data/job_qualifications.md"
 
+  # --- Grouped keyword lines (#138) ------------------------------------------
+  # An entry's extras on the page are rewritten into lines of 2-4 keywords,
+  # joined from the hand-written phrases in its `keyword_lines` (master
+  # profile), plus asked keywords the entry proves but the page omits. Applied
+  # after fit, so it changes the page, never the score. An extra stays only for
+  # a keyword no line holds; the entry never gets longer or loses a keyword.
+  # Off until the benchmark shows it is better; extras stay as the fallback.
+  grouped_lines:
+    enabled: true
+    max_lines: 4
+    # Target prose characters per line: two rendered lines (#142/#143). A
+    # target, not a ceiling: an asked keyword may run a line up to
+    # `overflow_chars` past it; fillers never do; nothing pads a line to it.
+    max_chars: 172
+    overflow_chars: 30
+    # Asked keywords a frame line needs; it is completed with the frame's other
+    # members, so two unrelated keywords make two frame lines, not one list.
+    min_keywords: 1
+    # A phrase line (unrelated phrases as a list) only compacts this many
+    # groups or more, when there are not enough lines for a frame each.
+    phrase_min_groups: 3
+    # The entries leading the page may hold this many bullets for lines that
+    # carry a missing required skill (projects otherwise stop at project_cap).
+    lead_entries: 2
+    lead_entry_cap: 8
+    # A line is never left short: it is completed with the entry's other
+    # phrases (the frame's other members; for a phrase line the best-matching
+    # phrases, same group first) up to this many phrases. A phrase line that
+    # cannot reach it is not built, and its keywords keep their extras.
+    min_phrases: 3
+
   # --- Bullets per entry -----------------------------------------------------
   # Method: 3 to 8 (1 summary + 2-7), scaled to time in the role.
   bullets:
@@ -514,6 +545,13 @@ selection:
   # count (the rule before 2026-11-06, which stopped ClanX at 3 entries).
   entry_repeat_credit: 0.5
   entry_repeat_min: 2
+  # #190: an entry's gain also counts asked skills it could show (any of its
+  # bullets or keyword_lines phrases), not only its pre-chosen bullets; the
+  # grouped lines then put them on the page. Required skills count fully,
+  # nice-to-haves at entry_potential_nice. Changes which entries make the page,
+  # so fit can move: off until the operator signs off on the benchmark.
+  entry_potential: true
+  entry_potential_nice: 0.5
   # ...but only while the page holds at most this many bullets (about two
   # pages): an entry adding a NEW required skill is never held back by it.
   repeat_bullet_budget: 24
