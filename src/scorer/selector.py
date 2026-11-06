@@ -300,12 +300,6 @@ def max_extras() -> int:
     return int(getattr(settings.selection.bullets, "max_extras", 0) or 0)
 
 
-def adds_skill(tokens) -> bool:
-    """True when any keyword in ``tokens`` is a tool or a concept, not a
-    generic or soft word (#190: a third extra may bring a concept too)."""
-    return any(term_type(t) in ("tool", "concept") for t in tokens)
-
-
 def adds_tool(tokens) -> bool:
     """True when any keyword in ``tokens`` names a tool (Docker, PySpark, AWS S3),
     not a method, concept or soft skill (#137)."""
@@ -868,9 +862,9 @@ def select_entry_bullets(
                 gained = _spent(hits)
                 if not gained:
                     continue
-                # Past the extras limit an extra must bring an asked tool or
-                # concept, not a generic word (#137, #190).
-                if b.is_extra and x_cap and st.extras >= x_cap and not adds_skill(gained):
+                # Past the extras limit an extra must bring a tool (#137); concept
+                # extras wait for grouped lines (#138).
+                if b.is_extra and x_cap and st.extras >= x_cap and not adds_tool(gained):
                     continue
                 grew = True
                 nxt.append(_Beam(
