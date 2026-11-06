@@ -327,3 +327,15 @@ def test_a_free_slot_is_never_used_for_nice_to_have_skills():
     with _on():
         gl.apply_grouped_lines([se], prof, kws)
     assert [b.id for b in se.bullets] == ["b0", "b1"]
+
+
+def test_a_line_that_saves_a_missing_required_skill_beats_a_fuller_one():
+    kl = _lines(frames=[
+        {"id": "orch", "text": "scheduled the crawl with {kws}", "ending": ENDING, "allowed": ["prefect", "airflow"]},
+        {"id": "ship", "text": "shipped it with {kws}", "ending": ", so releases were reviewed.", "allowed": ["docker", "sqs"]},
+    ])
+    ph = {p.id: p for p in kl.phrases}
+    cands = [gl._Cand(ph[i], {ph[i].kw}, {ph[i].kw}, 1.0) for i in ("prefect", "airflow", "docker")]
+    lines = gl.build_lines("e1", kl, set(), cands, weights={}, max_lines=1, max_chars=200, priority={"Docker"},
+                           fillers=[ph["sqs"]])
+    assert lines[0][0][0].frame == "ship", "the line carrying the missing required skill wins"

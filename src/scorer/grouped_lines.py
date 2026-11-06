@@ -185,6 +185,7 @@ def build_lines(
     fillers: Sequence[Any] = (),
     overflow_chars: int = 0,
     phrase_min_groups: int = 3,
+    priority: set[str] | frozenset = frozenset(),
 ) -> list[tuple[list[Part], set[str]]]:
     """Pack the asked keywords into lines, heaviest first.
 
@@ -202,6 +203,9 @@ def build_lines(
     ``max_chars`` is the target, not a ceiling: an asked keyword may take a line
     up to ``overflow_chars`` past it, a filler never does, and nothing pads a
     line toward it. No addition may say what the entry or line has said.
+
+    ``priority`` (required skills no bullet on the page shows) ranks first: a
+    line that saves one beats a line that merely holds more keywords.
     """
     used = set(shown)
     taken: set[str] = set()
@@ -215,6 +219,10 @@ def build_lines(
 
     def count(cs: list[_Cand]) -> int:
         return len(set().union(*(c.useful for c in cs))) if cs else 0
+
+    def urgent(cs: list[_Cand]) -> int:
+        """Required skills this line would put on a page that lacks them."""
+        return len(set().union(*(c.useful for c in cs)) & priority) if cs else 0
 
     def frame_parts(f, ids) -> list[Part]:
         ids = [i for i in f.allowed if i in set(ids)]
@@ -282,7 +290,8 @@ def build_lines(
                 options = [("phrase", count(got), worth(got), None, got, ids)]
         if not options:
             break
-        kind, _, _, f, got, ids = max(options, key=lambda o: (o[1], o[2]))
+        # A required skill the page would otherwise lose outranks keyword count.
+        kind, _, _, f, got, ids = max(options, key=lambda o: (urgent(o[4]), o[1], o[2]))
         parts = frame_parts(f, ids) if kind == "frame" else phrase_parts(ids)
         out.append((parts, set().union(*(c.useful for c in got))))
         used |= set().union(*(c.hits for c in got))
@@ -372,7 +381,7 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             weights={k.token: k.weight for k in keywords},
             max_lines=min(max_lines, len(movable) + spare), max_chars=max_chars, min_keywords=min_kw,
             overflow_chars=overflow, min_phrases=min_phrases, fillers=fillers,
-            phrase_min_groups=min_groups,
+            phrase_min_groups=min_groups, priority=required - before - elsewhere,
         )
         # Lines past the extras they replace take free slots: each must carry
         # a required skill no bullet on the page shows.
