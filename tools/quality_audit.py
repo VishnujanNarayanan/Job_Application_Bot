@@ -92,7 +92,46 @@ class _ProfileSession:
         return SimpleNamespace(all=lambda: items)
 
 
-def _wire(set_dir: Path):
+def _with_lines(profile_json: Path, lines_from: Path | None) -> Path:
+    """The frozen profile, plus each entry's ``keyword_lines`` (#138) taken from
+    ``lines_from``. Only that section is copied, into a temporary file; the
+    frozen set is never edited, and every bullet stays as frozen."""
+    if lines_from is None:
+        return profile_json
+    import tempfile
+
+    pj = json.loads(profile_json.read_text())
+    src = json.loads(Path(lines_from).read_text())
+    lines = {e["id"]: e["keyword_lines"] for k in ("work_experience", "projects")
+             for e in src.get(k) or [] if e.get("keyword_lines")}
+    n = dropped = 0
+    for k in ("work_experience", "projects"):
+        for e in pj.get(k) or []:
+            if e["id"] not in lines:
+                continue
+            # A phrase whose source bullet is newer than the frozen set has no
+            # proof there; it is left out, with its frame memberships.
+            ids = {b["id"] for rb in e.get("role_blocks", [])
+                   for b in (*rb.get("bullets", []), *rb.get("extra_bullets", []))}
+            kl = dict(lines[e["id"]])
+            keep = [ph for ph in kl["phrases"] if ph["source"] in ids]
+            dropped += len(kl["phrases"]) - len(keep)
+            kept = {ph["id"] for ph in keep}
+            frames = []
+            for f in kl.get("frames") or []:
+                allowed = [i for i in f["allowed"] if i in kept]
+                if len(allowed) >= 2:
+                    frames.append({**f, "allowed": allowed})
+            e["keyword_lines"] = {**kl, "phrases": keep, "frames": frames}
+            n += 1
+    print(f"keyword_lines for {n} entries from {lines_from}"
+          f" ({dropped} phrases left out: their source bullet is not in the frozen set)")
+    out = Path(tempfile.mkdtemp(prefix="audit138-")) / "profile.json"
+    out.write_text(json.dumps(pj))
+    return out
+
+
+def _wire(set_dir: Path, lines_from: Path | None = None):
     """Point every DB / file read the pipeline makes at the snapshot. Returns
     (profile, captured LLM parses, extra-bullet ids)."""
     from src import parser
@@ -105,7 +144,7 @@ def _wire(set_dir: Path):
 
     from tools.quality_snapshot import load_parses
 
-    profile_json = set_dir / "profile.json"
+    profile_json = _with_lines(set_dir / "profile.json", lines_from)
     master_profile._JSON_PATH = profile_json
     vocab = json.loads((set_dir / "vocabulary.json").read_text())
     terms = tuple(sorted(((v["term"], v["term_key"]) for v in vocab if v["is_active"]),
@@ -223,7 +262,8 @@ def replay_job(rec: dict, profile, parses: dict, extras: set[str], evidence: lis
             page_norm.append(n)
             spans, shown = keyword_spans(b.text, to_bold) if to_bold else ([], set())
             to_bold = [k for k in to_bold if k not in shown]
-            bl.append({"id": b.id, "extra": b.id in extras, "summary": b.is_summary, "via": b.via,
+            bl.append({"id": b.id, "extra": b.id in extras, "line": "~gl~" in b.id,
+                       "summary": b.is_summary, "via": b.via, "text": b.text,
                        "picked_for": list(b.new_keywords) or list(b.new_canonical),
                        "jd_keywords_in_text": sorted(covered_by(n, kws)),
                        "bolded": sorted(shown), "chars": len(b.text)})
@@ -375,7 +415,7 @@ def summarize(jobs: list[dict], gold: dict) -> dict:
     # Resume stage.
     m = [j for j in jobs if j["verdict"] == "match"]
     per_entry, per_page, extras_e, thin, picked_one = [], [], [], 0, Counter()
-    total_b, qual_b = 0, 0
+    total_b, qual_b, lines_n, kw_b = 0, 0, 0, 0
     req_on, req_all = 0, 0
     for j in m:
         n = 0
@@ -389,6 +429,8 @@ def summarize(jobs: list[dict], gold: dict) -> dict:
                     continue
                 total_b += 1
                 qual_b += b["via"] == "qualification"
+                lines_n += bool(b.get("line"))
+                kw_b += len(b["jd_keywords_in_text"])
                 if len(b["picked_for"]) <= 1:
                     thin += 1
                     if b["picked_for"]:
@@ -402,6 +444,8 @@ def summarize(jobs: list[dict], gold: dict) -> dict:
     s["bullets_non_summary"] = total_b
     s["bullets_picked_for_one_or_none"] = thin
     s["bullets_via_qualification"] = qual_b
+    s["grouped_lines"] = lines_n
+    s["keywords_per_bullet"] = round(kw_b / max(1, total_b), 2)
     s["one_keyword_bullets_by_keyword"] = picked_one.most_common(25)
     s["required_on_page"] = [req_on, req_all]
     rec_n, rec_other, rec_kw = 0, 0, Counter()
@@ -491,6 +535,8 @@ def render_md(label: str, s: dict) -> str:
           f"| Resume | bullets per page p10/p50/p90 | {s['bullets_per_page']} |",
           f"| Resume | bullets per entry | {s['bullets_per_entry']} |",
           f"| Resume | extras per entry | {s['extras_per_entry']} |",
+          f"| Resume | grouped lines (#138) | {s.get('grouped_lines', 0)} |",
+          f"| Resume | advert keywords per non-summary bullet | {s.get('keywords_per_bullet', '')} |",
           f"| Resume | non-summary bullets picked for ≤1 keyword | {_pct(s['bullets_picked_for_one_or_none'], s['bullets_non_summary'])} |",
           f"| Resume | bullets filled from the title checklist (no JD keyword) | {_pct(s['bullets_via_qualification'], s['bullets_non_summary'])} |",
           f"| Resume | required keywords on the page | {_pct(*s['required_on_page'])} |",
@@ -541,7 +587,11 @@ def run(args) -> int:
         import src.state.registry as _registry
 
         _registry.enabled = lambda: False
-    profile, parses, extras, evidence = _wire(set_dir)
+    if args.grouped_lines:
+        from src.config import settings
+
+        settings.selection.grouped_lines.as_dict()["enabled"] = True
+    profile, parses, extras, evidence = _wire(set_dir, args.lines_from)
     jobs = []
     recs = load_jobs(set_dir)
     if args.limit:
@@ -607,6 +657,8 @@ def main(argv=None) -> int:
     p.add_argument("--limit", type=int)
     p.add_argument("--unfrozen", action="store_true")
     p.add_argument("--no-registry", action="store_true", help="run as before the skills registry (#188)")
+    p.add_argument("--grouped-lines", action="store_true", help="turn on grouped keyword lines (#138)")
+    p.add_argument("--lines-from", type=Path, help="profile JSON whose keyword_lines join the frozen profile (#138)")
     p = sub.add_parser("compare")
     p.add_argument("before")
     p.add_argument("after")
