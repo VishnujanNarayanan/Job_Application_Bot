@@ -9,7 +9,18 @@ from src.state.db import session_scope
 from src.state.master_profile import rebuild
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="src.cli.reparse")
+    ap.add_argument("--allow-keyword-gaps", action="store_true",
+                    help="rebuild even if a bullet proves a keyword with no phrase (#138)")
+    args = ap.parse_args(argv)
+    if not args.allow_keyword_gaps:
+        from src.cli.assets import keyword_gaps
+
+        if keyword_gaps():
+            return 1
     logging.basicConfig(format="%(message)s", stream=sys.stderr, level=logging.INFO)
     structlog.configure(
         processors=[

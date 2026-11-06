@@ -58,6 +58,7 @@ from datetime import datetime, timezone
 from src.config import settings
 from src.reasons import LOW_SCORE
 from src.scorer.common import place_common_bullets
+from src.scorer.grouped_lines import apply_grouped_lines
 from src.scorer.keywords import Keyword, coverage_of, fit_formula
 from src.scorer.ordering import order_entries
 from src.scorer.selector import (
@@ -472,6 +473,9 @@ def evaluate(
 
     bar = float(settings.scoring.apply_threshold) if threshold is None else threshold
     apply = final_score >= bar
+    # Grouped keyword lines (#138) go on after fit is fixed: they change what the
+    # page prints, never the score or the verdict.
+    apply_grouped_lines(entries, profile, keywords)
     return SelectionResult(
         apply=apply,
         final_score=final_score,

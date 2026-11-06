@@ -337,6 +337,24 @@ selection:
     # (src/scorer/qualifications.py). Unset or missing = tie-break off.
     qualifications_path: "data/job_qualifications.md"
 
+  # --- Grouped keyword lines (#138) ------------------------------------------
+  # An entry's extras on the page are rewritten into lines of 2-4 keywords,
+  # joined from the hand-written phrases in its `keyword_lines` (master
+  # profile), plus asked keywords the entry proves but the page omits. Applied
+  # after fit, so it changes the page, never the score. An extra stays only for
+  # a keyword no line holds; the entry never gets longer or loses a keyword.
+  # Off until the benchmark shows it is better; extras stay as the fallback.
+  grouped_lines:
+    enabled: false
+    max_lines: 3
+    # Prose characters per line: two rendered lines (#142/#143).
+    max_chars: 172
+    # A line holding fewer is not worth replacing the extra it would replace.
+    min_keywords: 2
+    # A phrase line (unrelated keywords, no frame) needs more, or it reads as
+    # facts glued together; below this its keywords keep their own extras.
+    min_phrase_keywords: 3
+
   # --- Bullets per entry -----------------------------------------------------
   # Method: 3 to 8 (1 summary + 2-7), scaled to time in the role.
   bullets:

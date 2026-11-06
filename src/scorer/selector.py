@@ -47,6 +47,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 
 import structlog
 
@@ -119,6 +120,9 @@ class EntryCand:
     #: "employment" | "freelance" — see MasterProfile.WorkExperience. Freelance
     #: entries render under Work History but are selected on merit, like projects.
     employment_type: str = "employment"
+    #: The entry's ``keyword_lines`` (a ``KeywordLines`` model) or None: the
+    #: material for grouped keyword lines (#138, ``src.scorer.grouped_lines``).
+    lines: Any = None
 
 
 @dataclass

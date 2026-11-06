@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -36,7 +37,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -140,6 +141,64 @@ class RoleBlock(BaseModel):
         return [*self.bullets, *self.extra_bullets]
 
 
+_PART_ID = re.compile(r"^[a-z0-9_]+$")
+
+
+class KeywordPhrase(BaseModel):
+    """One keyword of an entry, said in a few words (#138).
+
+    ``text`` is a clause, lower-case first word, no full stop ("packaged every
+    collector in Docker"): the line builder joins several and adds the entry's
+    ending. ``source`` is the bullet (main or extra, any block of this entry)
+    that proves the keyword, so a phrase can never claim more than the entry
+    already says. ``group`` is the kind of skill ("orchestration", "cloud"),
+    used only to read related phrases together.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kw: str
+    group: str
+    text: str
+    source: str
+
+
+class KeywordFrame(BaseModel):
+    """A line for several keywords of ONE group, joined with commas and "and"
+    in place of ``{kws}`` ("scheduled the crawl with {kws}"). ``allowed`` are
+    phrase ids of this entry; the frame's verb must be true for each.
+
+    ``ending`` is the frame's own WHY, written for this group and true for any
+    of its keywords. It starts with "," or a word, ends with a full stop, and
+    must not echo a bullet of the entry: a line that restates a bullet beside
+    it is the repetition #138 removes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    text: str
+    ending: str
+    allowed: list[str] = Field(..., min_length=2)
+
+
+class KeywordLines(BaseModel):
+    """An entry's material for grouped keyword lines (#138). Hand-written; the
+    selector only chooses and joins it. A line is either one frame with its
+    ending, or two to four phrases joined as a list, with no ending: each
+    phrase already says what was done with its keyword."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    phrases: list[KeywordPhrase] = Field(..., min_length=2)
+    frames: list[KeywordFrame] = Field(default_factory=list)
+    #: Skill terms the entry's bullets match but that deliberately get no
+    #: phrase: a wrong-sense match ("CAN"), a duplicate spelling, or a term
+    #: another mechanism handles (the gated AI-tooling bullet). Every other
+    #: term a bullet proves must have a phrase (tools/keyword_lines_check.py).
+    skip: list[str] = Field(default_factory=list)
+
+
 class _Entry(BaseModel):
     """Shared shape. A work entry and a project entry differ only in identity
     fields and whether they carry dates; both render as one block of bullets under
@@ -147,10 +206,13 @@ class _Entry(BaseModel):
 
     id: str
     role_blocks: list[RoleBlock] = Field(..., min_length=1)
+    keyword_lines: KeywordLines | None = None
 
     @model_validator(mode="after")
     def _unique_roles(self) -> "_Entry":
         _require_unique([rb.role for rb in self.role_blocks], f"role in '{self.id}'")
+        if self.keyword_lines is not None:
+            _check_keyword_lines(self)
         return self
 
 
@@ -369,6 +431,56 @@ def _require_unique(values: list[str], label: str) -> None:
         if v in seen:
             raise ValueError(f"duplicate {label}: '{v}'")
         seen.add(v)
+
+
+def _shingles(text: str, n: int = 4) -> set[str]:
+    """Every run of ``n`` words, lower-cased: a frame ending sharing one with a
+    bullet restates it."""
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
+
+
+def _check_keyword_lines(entry: "_Entry") -> None:
+    """#138 honesty and shape rules for an entry's ``keyword_lines``.
+
+    A phrase may only say what its source bullet of THIS entry already proves,
+    and must name its keyword; a frame may only hold this entry's phrases. The
+    wording itself is the operator's to approve, not this check's."""
+    from src.scorer.keywords import matches, norm
+
+    kl = entry.keyword_lines
+    where = f"entry '{entry.id}' keyword_lines"
+    texts = {b.id: b.text for rb in entry.role_blocks for b in rb.all_bullets}
+    ids = [ph.id for ph in kl.phrases] + [f.id for f in kl.frames]
+    _require_unique(ids, f"phrase/frame id in {where}")
+    for i in ids:
+        if not _PART_ID.match(i):
+            raise ValueError(f"{where}: id '{i}' must be lower-case letters, digits or _")
+    for ph in kl.phrases:
+        if ph.source not in texts:
+            raise ValueError(f"{where}: phrase '{ph.id}' source '{ph.source}' is not a bullet of this entry")
+        if not matches(ph.kw, norm(texts[ph.source])):
+            raise ValueError(f"{where}: phrase '{ph.id}': source '{ph.source}' does not say '{ph.kw}'")
+        if not matches(ph.kw, norm(ph.text)):
+            raise ValueError(f"{where}: phrase '{ph.id}' does not say its keyword '{ph.kw}'")
+        if ph.text.rstrip().endswith((".", ",", ";")):
+            raise ValueError(f"{where}: phrase '{ph.id}' is a clause; no closing punctuation")
+    pids = {ph.id for ph in kl.phrases}
+    shingles = {g for t in texts.values() for g in _shingles(t)}
+    for f in kl.frames:
+        if f.text.count("{kws}") != 1:
+            raise ValueError(f"{where}: frame '{f.id}' needs exactly one {{kws}}")
+        if not f.ending.strip().endswith("."):
+            raise ValueError(f"{where}: frame '{f.id}' ending must end with a full stop")
+        echo = sorted(_shingles(f.ending) & shingles)
+        if echo:
+            raise ValueError(
+                f"{where}: frame '{f.id}' ending repeats a bullet of this entry: "
+                f"'{echo[0]}'"
+            )
+        bad = sorted(set(f.allowed) - pids)
+        if bad:
+            raise ValueError(f"{where}: frame '{f.id}' allows unknown phrases {bad}")
 
 
 # ---------------------------------------------------------------------------
@@ -725,11 +837,13 @@ def load_profile(session: Session, *, json_path: Path | None = None) -> Profile:
             end_date=e.end_date,
             employment_type=e.employment_type,
             link=e.link,
+            lines=e.keyword_lines,
         )
         for e in profile.work_experience
     ]
     projects = [
-        EntryCand(id=p.id, kind="project", label=p.name, blocks=_blocks(p), link=p.link)
+        EntryCand(id=p.id, kind="project", label=p.name, blocks=_blocks(p), link=p.link,
+                  lines=p.keyword_lines)
         for p in profile.projects
     ]
     # Common bullets need no embedding: they are placed on keyword evidence alone,
