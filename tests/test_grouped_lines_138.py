@@ -499,3 +499,18 @@ def test_a_compacting_list_never_beats_a_frame_saving_more_missing_required_skil
     lines = gl.build_lines("e1", kl, set(), cands, weights={}, max_lines=1, max_chars=95,
                            priority={"design patterns", "distributed systems"})
     assert {"design patterns", "distributed systems"} <= lines[0][1]
+
+
+def test_a_compacting_list_reaches_its_groups_before_a_second_phrase_of_one_group():
+    kl = _lines(phrases=[
+        {"id": "ui", "kw": "UI/UX", "group": "frontend", "text": "designed the UI/UX around uncertainty", "source": "x1"},
+        {"id": "sdlc", "kw": "SDLC", "group": "process", "text": "released through an SDLC of branch and review", "source": "x2"},
+        {"id": "docs", "kw": "documentation", "group": "process", "text": "wrote documentation covering the design", "source": "x3"},
+        {"id": "perf", "kw": "performance optimization", "group": "devops", "text": "ran performance optimization on the serving path", "source": "b1"},
+    ], frames=[])
+    ph = {p.id: p for p in kl.phrases}
+    w = {"ui": 2.0, "sdlc": 1.25, "docs": 1.0, "perf": 1.0}
+    cands = [gl._Cand(ph[i], {ph[i].kw}, {ph[i].kw}, w[i]) for i in ph]
+    lines = gl.build_lines("e1", kl, set(), cands, weights={}, max_lines=1, max_chars=150,
+                           priority={"SDLC", "performance optimization"})
+    assert lines and {"SDLC", "performance optimization"} <= lines[0][1]

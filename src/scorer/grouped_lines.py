@@ -298,7 +298,13 @@ def build_lines(
         frameless = [c for c in avail if c.phrase.id not in in_a_frame]
         compact = len(groups_left) >= phrase_min_groups and (len(groups_left) > lines_left or frameless)
         if compact:
-            got = pack(avail, phrase_parts)
+            # One phrase per group first (missing required skills leading), so
+            # the list reaches its groups instead of two phrases of one group.
+            first, rest, seen = [], [], set()
+            for c in sorted(avail, key=lambda c: (not (c.useful & priority), -c.weight, c.phrase.id)):
+                (rest if c.phrase.group in seen else first).append(c)
+                seen.add(c.phrase.group)
+            got = pack([*first, *rest], phrase_parts)
             if len({c.phrase.group for c in got}) >= phrase_min_groups:
                 gs = {c.phrase.group for c in got}
                 spare = sorted((ph for ph in fillers if ph.group in gs), key=lambda ph: order[ph.id])
