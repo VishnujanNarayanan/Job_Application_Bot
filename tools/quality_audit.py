@@ -595,6 +595,10 @@ def run(args) -> int:
         from src.config import settings
 
         settings.selection.grouped_lines.as_dict()["enabled"] = True
+    if args.entry_potential:
+        from src.config import settings
+
+        settings.selection.as_dict()["entry_potential"] = True
     profile, parses, extras, evidence = _wire(set_dir, args.lines_from)
     jobs = []
     recs = load_jobs(set_dir)
@@ -662,6 +666,8 @@ def main(argv=None) -> int:
     p.add_argument("--unfrozen", action="store_true")
     p.add_argument("--no-registry", action="store_true", help="run as before the skills registry (#188)")
     p.add_argument("--grouped-lines", action="store_true", help="turn on grouped keyword lines (#138)")
+    p.add_argument("--entry-potential", action="store_true",
+                   help="entries join for skills any of their bullets could show (#190)")
     p.add_argument("--lines-from", type=Path, help="profile JSON whose keyword_lines join the frozen profile (#138)")
     p = sub.add_parser("compare")
     p.add_argument("before")

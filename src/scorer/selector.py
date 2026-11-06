@@ -1300,8 +1300,38 @@ def select_top(
     rep_min = int(getattr(cfg, "entry_repeat_min", 2) or 1)
     required = {k.token for k in keywords if k.required}
 
+    # #190: an entry's gain also counts what it COULD show. Its pre-chosen
+    # bullets were picked alone, without knowing what the page lacks, so a
+    # skill only its other bullets or its keyword_lines prove was invisible
+    # here and the entry never joined for it. Required skills count fully,
+    # nice-to-haves at `entry_potential_nice` of their weight. A skill an entry
+    # joined for counts as claimed, so a second entry does not join for it too.
+    pot_on = bool(getattr(cfg, "entry_potential", False))
+    pot_nice = float(getattr(cfg, "entry_potential_nice", 0.5) or 0.0)
+    cand_by_id = {e.id: e for e in candidates}
+    potential: dict[str, set[str]] = {}
+
+    def _potential(s: SelectedEntry) -> set[str]:
+        if s.id not in potential:
+            e = cand_by_id.get(s.id)
+            texts = [b.norm_text for blk in (e.blocks if e else []) for b in blk.bullets]
+            kl = getattr(e, "lines", None)
+            if kl is not None:
+                texts += [norm(ph.text) for ph in kl.phrases]
+            potential[s.id] = covered_by(" \n ".join(texts), keywords) - s.covered
+        return potential[s.id]
+
+    claimed: set[str] = set()
+
+    def _could(s: SelectedEntry) -> float:
+        if not pot_on:
+            return 0.0
+        extra = _potential(s) - shown - claimed
+        req = {t for t in extra if t in required}
+        return weight_of(req, keywords) + pot_nice * weight_of(extra - req, keywords)
+
     def _gain(s: SelectedEntry) -> float:
-        new = weight_of(s.covered - shown, keywords)
+        new = weight_of(s.covered - shown, keywords) + _could(s)
         repeats = {t for t in s.covered & shown & required if times.get(t, 0) < rep_cap}
         if rep_credit <= 0 or (new <= 0 and len(repeats) < rep_min):
             return new
@@ -1312,7 +1342,7 @@ def select_top(
     budget = int(getattr(cfg, "repeat_bullet_budget", 0) or 0)
 
     def _fits(s: SelectedEntry) -> bool:
-        if not budget or weight_of(s.covered - shown, keywords) > 0:
+        if not budget or weight_of(s.covered - shown, keywords) > 0 or _could(s) > 0:
             return True
         return sum(len(e.bullets) for e in selected) + len(s.bullets) <= budget
 
@@ -1328,6 +1358,8 @@ def select_top(
             break
         selected.append(best)
         shown |= best.covered
+        if pot_on:
+            claimed |= _potential(best) - shown
         for t in best.covered:
             times[t] = times.get(t, 0) + 1
 

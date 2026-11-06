@@ -545,6 +545,13 @@ selection:
   # count (the rule before 2026-11-06, which stopped ClanX at 3 entries).
   entry_repeat_credit: 0.5
   entry_repeat_min: 2
+  # #190: an entry's gain also counts asked skills it could show (any of its
+  # bullets or keyword_lines phrases), not only its pre-chosen bullets; the
+  # grouped lines then put them on the page. Required skills count fully,
+  # nice-to-haves at entry_potential_nice. Changes which entries make the page,
+  # so fit can move: off until the operator signs off on the benchmark.
+  entry_potential: false
+  entry_potential_nice: 0.5
   # ...but only while the page holds at most this many bullets (about two
   # pages): an entry adding a NEW required skill is never held back by it.
   repeat_bullet_budget: 24

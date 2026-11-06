@@ -423,3 +423,42 @@ def test_the_leading_entries_may_grow_to_the_lead_cap_for_missing_required_skill
     with _on(lead_entries=2, lead_entry_cap=8):
         gl.apply_grouped_lines([se], prof, _kw("Python", "Airflow", "Prefect", "Docker", "SQS"))
     assert len(se.bullets) == 3 and gl.is_line(se.bullets[-1].id)
+
+
+# --- #190: entry selection counts what an entry could show ---------------------
+
+
+def _potential_profile():
+    from tests.test_iteration_2_scorer import _profile, _simple_project
+
+    lead = _simple_project("p_lead", "Built with Python and tested it with automated testing.")
+    hidden = _entry("p_hidden", "project", blocks=[
+        _block("p_hidden::data", bullets=[
+            _bullet("h0", "Summary.", summary=True, block="p_hidden::data"),
+            _bullet("h1", "Built with Python.", block="p_hidden::data"),
+        ]),
+        # A main of a block that does not lead is invisible to the entry's own
+        # bullet choice, so its skill never counted toward the entry's gain.
+        _block("p_hidden::fs", role="fullstack", bullets=[
+            _bullet("h2", "Summary for full stack.", summary=True, block="p_hidden::fs", role="fullstack"),
+            _bullet("h3", "Modelled tasks with typed data structures.", block="p_hidden::fs", role="fullstack"),
+        ]),
+    ], link="http://x")
+    minor = _simple_project("p_minor", "Kept the report in Excel.")
+    return _profile(projects=[lead, hidden, minor])
+
+
+@pytest.mark.parametrize("on, expect", [(False, "p_minor"), (True, "p_hidden")])
+def test_an_entry_joins_for_a_required_skill_only_its_other_bullets_prove(monkeypatch, on, expect):
+    from src.scorer.selector import select_top
+    from tests.test_iteration_2_scorer import NOW, _jd
+
+    sel = settings.selection.as_dict()
+    monkeypatch.setitem(sel, "max_entries", 2)
+    monkeypatch.setitem(sel, "min_entries", 2)
+    monkeypatch.setitem(sel, "entry_potential", on)
+    kws = (Keyword("Python", 1.0, True), Keyword("automated testing", 1.0, True),
+           Keyword("data structures", 1.0, True), Keyword("Excel", 0.5, False))
+    out = select_top(_potential_profile(), _jd(), kws, now=NOW)
+    ids = {e.id for e in out}
+    assert "p_lead" in ids and expect in ids
