@@ -198,6 +198,11 @@ families:
     variants: [software development lifecycle, software development life cycle]
   - head: Agile                # 65
     variants: [Agile development, Agile methodologies, Agile methodology, Agile environments, Agile delivery, Agile practices]   # 17, 11
+    members: [Scrum]   # a Scrum bullet answers an Agile ask; not the reverse
+  - head: Scrum
+    variants: [Scrum methodology, Scrum framework, Agile Scrum, Agile/Scrum, Scrum/Agile]
+  - head: Jira
+    variants: [Atlassian Jira, Jira Software]
   - head: debugging            # 48
     variants: [troubleshooting]  # 51
   - head: performance optimization   # 28
