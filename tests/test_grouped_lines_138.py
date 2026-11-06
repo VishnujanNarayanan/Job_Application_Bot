@@ -377,7 +377,7 @@ def test_a_list_of_unrelated_phrases_never_replaces_a_main():
     with _on(lead_entries=0):
         gl.apply_grouped_lines([se, _other("Ran Airflow daily.")], prof,
                                _kw("Python", "Airflow", "Prefect", "Docker", "SQS"))
-    assert [b.id for b in se.bullets] == ["b0", "b1"]
+    assert [b.id for b in se.bullets][:2] == ["b0", "b1"], "the main is never replaced by such a list"
 
 
 def test_a_frame_of_one_asked_keyword_plus_fillers_never_replaces_a_main():
@@ -386,7 +386,7 @@ def test_a_frame_of_one_asked_keyword_plus_fillers_never_replaces_a_main():
     with _on(lead_entries=0):
         gl.apply_grouped_lines([se, _other("Ran Airflow daily.")], prof,
                                _kw("Python", "Airflow", "Docker"))
-    assert [b.id for b in se.bullets] == ["b0", "b1"]
+    assert [b.id for b in se.bullets][:2] == ["b0", "b1"], "the main is never replaced by such a frame"
 
 
 def test_a_main_saying_two_asked_keywords_is_not_weak():
@@ -515,3 +515,13 @@ def test_a_compacting_list_reaches_its_groups_before_a_second_phrase_of_one_grou
     lines = gl.build_lines("e1", kl, set(), cands, weights={}, max_lines=1, max_chars=150,
                            priority={"SDLC", "performance optimization"})
     assert lines and {"SDLC", "performance optimization"} <= lines[0][1]
+
+
+def test_an_entry_with_room_for_one_line_may_take_a_second_for_a_missing_required_skill():
+    se, prof = _scene(["b0", "x1"], lines=_ship_lines())  # one extra on the page, at its cap
+    se.cap = 2
+    with _on(lead_entries=0, max_chars=110, overflow_chars=0):  # one line cannot hold all four
+        gl.apply_grouped_lines([se], prof, _kw("Python", "Prefect", "Airflow", "Docker", "SQS"))
+    text = " ".join(b.text for b in se.bullets)
+    assert all(k in text for k in ("Prefect", "Airflow", "Docker", "SQS")), "nothing lost"
+    assert len(se.bullets) == 3, "one bullet over the cap, no more"

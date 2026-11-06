@@ -409,6 +409,9 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             if len(says) <= 1 and says <= rest:
                 weak.append(b)
         weak.sort(key=lambda b: b.score)
+        # An entry with room for a single line may take one more, over its
+        # cap, when that line saves a required skill the page would lose.
+        bonus = 1 if len(movable) + spare + len(weak) == 1 else 0
         if not movable and not spare and not weak:
             continue
         capped_full = {
@@ -453,7 +456,7 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
         lines = build_lines(
             se.id, kl, shown, cands,
             weights={k.token: k.weight for k in keywords},
-            max_lines=min(max_lines, len(movable) + spare + len(weak)), max_chars=max_chars,
+            max_lines=min(max_lines, len(movable) + spare + len(weak) + bonus), max_chars=max_chars,
             min_keywords=min_kw,
             overflow_chars=overflow, min_phrases=min_phrases, fillers=fillers,
             phrase_min_groups=min_groups, priority=required - before - elsewhere,
@@ -474,6 +477,10 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             elif len(swapped) < len(weak) and _pairs(kl, parts, new, keywords):
                 kept.append((parts, new))
                 swapped.append(weak[len(swapped)])
+            elif bonus:
+                kept.append((parts, new))
+                extra_slots += 1
+                bonus = 0
         lines = kept
         if swapped:
             stay = [b for b in stay if b not in swapped]
@@ -488,7 +495,8 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             now_shown |= covered_by(norm(text), keywords)
         # An extra comes back only for a keyword no line holds, and only into a
         # freed slot, and only if it repeats nothing.
-        slots = len(movable) - (len(line_bullets) - extra_slots - len(swapped))
+        # An unused bonus slot (single-line entries) may keep an extra instead.
+        slots = len(movable) - (len(line_bullets) - extra_slots - len(swapped)) + bonus
         restored = []
         for b in sorted(movable, key=lambda b: -weight_of(kws_in([b.text]) - now_shown, keywords)):
             hits = kws_in([b.text])
