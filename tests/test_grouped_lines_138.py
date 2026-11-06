@@ -462,3 +462,21 @@ def test_an_entry_joins_for_a_required_skill_only_its_other_bullets_prove(monkey
     out = select_top(_potential_profile(), _jd(), kws, now=NOW)
     ids = {e.id for e in out}
     assert "p_lead" in ids and expect in ids
+
+
+def test_a_frame_is_completed_by_an_asked_keyword_another_entry_shows():
+    se, prof = _scene(["b0", "x1"], lines=_ship_lines())  # x1 (Prefect) is not asked
+    with _on(lead_entries=0):
+        gl.apply_grouped_lines([se, _other("Queued work in SQS.")], prof,
+                               _kw("Python", "Docker", "SQS"))
+    line = next(b for b in se.bullets if gl.is_line(b.id))
+    assert "Docker and SQS" in line.text, "SQS, shown in e2, completes Docker's frame"
+
+
+def test_a_filler_never_repeats_a_keyword_this_entry_already_shows():
+    se, prof = _scene(["b0", "b1", "x1"], lines=_ship_lines())  # b1 shows Airflow
+    with _on(lead_entries=0):
+        gl.apply_grouped_lines([se, _other("Ran Airflow daily.")], prof,
+                               _kw("Python", "Prefect", "Airflow"))
+    text = " ".join(b.text for b in se.bullets)
+    assert text.count("Airflow") == 1

@@ -195,6 +195,7 @@ def build_lines(
     overflow_chars: int = 0,
     phrase_min_groups: int = 3,
     priority: set[str] | frozenset = frozenset(),
+    filler_hits: dict[str, set[str]] | None = None,
 ) -> list[tuple[list[Part], set[str]]]:
     """Pack the asked keywords into lines, heaviest first.
 
@@ -220,6 +221,7 @@ def build_lines(
     taken: set[str] = set()
     out: list[tuple[list[Part], set[str]]] = []
     phrase_by_id = {ph.id: ph for ph in kl.phrases}
+    filler_hits = filler_hits or {}
     order = {ph.id: i for i, ph in enumerate(kl.phrases)}
     hard = max_chars + overflow_chars
 
@@ -256,13 +258,19 @@ def build_lines(
     def fill(ids: list[str], make, pool) -> list[str]:
         """Complete a line with phrases the advert did not ask for."""
         ids = list(ids)
-        for ph in pool:
+        said = set(used)
+        for i in ids:
+            said |= filler_hits.get(i, set())
+        # An asked keyword another entry shows completes a line before an
+        # unasked one: it is also repetition evidence.
+        for ph in sorted(pool, key=lambda ph: not filler_hits.get(ph.id)):
             if len(ids) >= min_phrases:
                 break
-            if ph.id in taken or ph.id in ids:
+            if ph.id in taken or ph.id in ids or filler_hits.get(ph.id, set()) & said:
                 continue
             if _fits(kl, make([*ids, ph.id]), max_chars):
                 ids.append(ph.id)
+                said |= filler_hits.get(ph.id, set())
         return ids
 
     while len(out) < max_lines:
@@ -304,6 +312,8 @@ def build_lines(
         parts = frame_parts(f, ids) if kind == "frame" else phrase_parts(ids)
         out.append((parts, set().union(*(c.useful for c in got))))
         used |= set().union(*(c.hits for c in got))
+        for i in ids:
+            used |= filler_hits.get(i, set())
         taken |= set(ids)
     return out
 
@@ -416,15 +426,22 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
                 continue
             cands.append(_Cand(ph, hits, useful, weight_of(useful, keywords)))
 
-        # Fillers complete a short line: phrases saying no advert keyword, and
-        # no tool the entry already names.
+        # Fillers complete a short line: phrases saying no advert keyword, or
+        # asked keywords only ANOTHER entry shows (repetition across entries is
+        # allowed and counts as evidence), and no tool this entry already names.
         stay_norm = norm(" \n ".join(b.text for b in stay))
-        fillers = [
-            ph for ph in kl.phrases
-            if not covered_by(norm(ph.text), keywords)
-            and not (g_terms and is_gated(norm(ph.text), g_terms))
-            and not matches(ph.kw, stay_norm)
-        ]
+        cand_ids = {c.phrase.id for c in cands}
+        fillers, filler_hits = [], {}
+        for ph in kl.phrases:
+            if ph.id in cand_ids or (g_terms and is_gated(norm(ph.text), g_terms)):
+                continue
+            if matches(ph.kw, stay_norm):
+                continue
+            h = covered_by(norm(ph.text), keywords)
+            if h & shown or h & capped_full or (h - elsewhere):
+                continue
+            fillers.append(ph)
+            filler_hits[ph.id] = h
         lines = build_lines(
             se.id, kl, shown, cands,
             weights={k.token: k.weight for k in keywords},
@@ -432,6 +449,7 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             min_keywords=min_kw,
             overflow_chars=overflow, min_phrases=min_phrases, fillers=fillers,
             phrase_min_groups=min_groups, priority=required - before - elsewhere,
+            filler_hits=filler_hits,
         )
         # Lines past the extras they replace take free slots: each must carry
         # a required skill no bullet on the page shows.
