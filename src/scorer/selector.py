@@ -300,6 +300,12 @@ def max_extras() -> int:
     return int(getattr(settings.selection.bullets, "max_extras", 0) or 0)
 
 
+def adds_skill(tokens) -> bool:
+    """True when any keyword in ``tokens`` is a tool or a concept, not a
+    generic or soft word (#190: a third extra may bring a concept too)."""
+    return any(term_type(t) in ("tool", "concept") for t in tokens)
+
+
 def adds_tool(tokens) -> bool:
     """True when any keyword in ``tokens`` names a tool (Docker, PySpark, AWS S3),
     not a method, concept or soft skill (#137)."""
@@ -862,8 +868,9 @@ def select_entry_bullets(
                 gained = _spent(hits)
                 if not gained:
                     continue
-                # Past the extras limit an extra must bring a tool (#137).
-                if b.is_extra and x_cap and st.extras >= x_cap and not adds_tool(gained):
+                # Past the extras limit an extra must bring an asked tool or
+                # concept, not a generic word (#137, #190).
+                if b.is_extra and x_cap and st.extras >= x_cap and not adds_skill(gained):
                     continue
                 grew = True
                 nxt.append(_Beam(
@@ -1402,15 +1409,20 @@ def build_jd_context(
 
 def promote_missing_tools(entries: list[SelectedEntry], profile: Profile,
                           keywords: tuple[Keyword, ...], *, allow_gated: bool = False) -> list[str]:
-    """A required TOOL the resume never shows, though an entry on it has a
-    bullet proving it, replaces that entry's weakest bullet carrying no tool
-    at all (#190, the operator's rule: a concept or soft skill must never be
-    chosen over a real tool).
+    """A required skill the resume never shows, though an entry on it has a
+    bullet proving it, takes a weaker bullet's place in that entry (#190).
 
-    Runs once every entry has chosen, so "never shows" means the whole
-    resume. The resume never grows; a bullet carrying a tool, the summary and
-    common lines are never displaced; concepts never trigger a swap; gated
-    lines (AI coding tools) are only used when the advert asks for them.
+    * A TOOL replaces the entry's weakest bullet carrying no tool at all (the
+      operator's rule: a concept or soft skill is never chosen over a tool).
+    * A CONCEPT replaces only a bullet carrying no advert keyword at all (the
+      title-checklist filler): a slot that says nothing the advert asked.
+
+    The proof may be any bullet of the entry, from any of its blocks: the
+    lead-block rule exists to stop one achievement being restated, and a bullet
+    that brings an asked skill the entry lacks is not a restatement of it.
+    Runs once every entry has chosen, so "never shows" means the whole resume.
+    The resume never grows; the summary and common lines are never displaced;
+    gated lines (AI coding tools) are used only when the advert asks for them.
     Mutates ``entries``; returns the promoted bullet ids."""
     by_id = {e.id: e for e in (*profile.work, *profile.projects)}
     shown = {b.id for se in entries for b in se.bullets}
@@ -1418,15 +1430,17 @@ def promote_missing_tools(entries: list[SelectedEntry], profile: Profile,
     weight = {k.token: k.weight for k in keywords}
     g_terms = gated_terms()
 
-    def tools_in(text: str) -> set[str]:
-        return {t for t in covered_by(text, keywords) if term_type(t) == "tool"}
+    def kws_in(text: str) -> set[str]:
+        return covered_by(text, keywords)
 
     promoted: list[str] = []
-    missing = [k for k in keywords if k.required and term_type(k.token) == "tool"
+    missing = [k for k in keywords if k.required and term_type(k.token) in ("tool", "concept")
                and k.token not in on_page]
-    for k in sorted(missing, key=lambda k: -k.weight):
+    # Tools first, then the heaviest.
+    for k in sorted(missing, key=lambda k: (term_type(k.token) != "tool", -k.weight)):
         if k.token in on_page:
             continue
+        is_tool = term_type(k.token) == "tool"
         for se in entries:
             entry = by_id.get(se.id)
             if entry is None:
@@ -1434,23 +1448,32 @@ def promote_missing_tools(entries: list[SelectedEntry], profile: Profile,
             proofs = [b for blk in entry.blocks for b in blk.bullets
                       if b.id not in shown and not b.is_summary
                       and (allow_gated or not is_gated(b.norm_text, g_terms))
-                      and k.token in covered_by(b.norm_text, keywords)]
-            victims = [(i, b) for i, b in enumerate(se.bullets)
-                       if not b.is_summary and getattr(b, "via", "") != "common"
-                       and not tools_in(norm(b.text))]
+                      and k.token in kws_in(b.norm_text)]
+            if is_tool:
+                victims = [(i, b) for i, b in enumerate(se.bullets)
+                           if not b.is_summary and getattr(b, "via", "") != "common"
+                           and not {t for t in kws_in(norm(b.text)) if term_type(t) == "tool"}]
+            else:
+                victims = [(i, b) for i, b in enumerate(se.bullets)
+                           if not b.is_summary and getattr(b, "via", "") != "common"
+                           and not kws_in(norm(b.text))]
             if not proofs or not victims:
                 continue
-            # The proof that brings the most missing tools; the victim worth least.
-            proof = max(proofs, key=lambda b: sum(weight.get(t, 0) for t in tools_in(b.norm_text) - on_page))
-            vi, victim = min(victims, key=lambda p: sum(weight.get(t, 0) for t in covered_by(norm(p[1].text), keywords)))
-            gained = covered_by(proof.norm_text, keywords)
+            # The proof bringing the most missing weight, restating least; the
+            # victim worth least.
+            proof = max(proofs, key=lambda b: (sum(weight.get(t, 0) for t in kws_in(b.norm_text) - on_page),
+                                               -len(kws_in(b.norm_text) & se.covered)))
+            vi, victim = min(victims, key=lambda p: sum(weight.get(t, 0) for t in kws_in(norm(p[1].text))))
+            gained = kws_in(proof.norm_text)
+            repeats = sorted(gained & (se.covered - kws_in(norm(victim.text))))
             se.bullets[vi] = SelectedBullet(proof.id, proof.text, victim.score, False,
-                                            sorted(gained - se.covered))
-            se.covered = set().union(*(covered_by(norm(b.text), keywords) for b in se.bullets))
+                                            sorted(gained - se.covered), via="promoted")
+            se.covered = set().union(*(kws_in(norm(b.text)) for b in se.bullets))
             se.coverage = coverage_of(se.covered, keywords)
             shown.add(proof.id)
             on_page = set().union(*(e.covered for e in entries))
             promoted.append(proof.id)
-            log.info("tool_promoted", tool=k.token, entry=se.id, replaced=victim.id, bullet=proof.id)
+            log.info("skill_promoted", skill=k.token, kind=term_type(k.token), entry=se.id,
+                     replaced=victim.id, bullet=proof.id, repeats=repeats)
             break
     return promoted

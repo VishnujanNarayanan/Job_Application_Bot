@@ -10,7 +10,9 @@ def _run(bullets, *tokens, **cfg):
     return [b.id for b in out.bullets], out
 
 
-SOFT = ["Communication", "Mentoring", "Data Quality", "Documentation"]
+# Generic and soft words: past the limit they never earn an extra. A tool or a
+# concept the advert asks for does (#190).
+SOFT = ["Communication", "Mentoring", "Leadership", "Teamwork"]
 
 
 def _thin_extras(words):
@@ -18,7 +20,7 @@ def _thin_extras(words):
             for i, w in enumerate(words, 1)]
 
 
-def test_no_more_than_two_extras_carrying_methods_or_soft_skills():
+def test_no_more_than_two_extras_carrying_generic_or_soft_skills():
     bullets = [_bullet("b0", "Summary with Python.", summary=True)] + _thin_extras(SOFT)
     ids, _ = _run(bullets, "Python", *SOFT)
     assert sum(i.startswith("x") for i in ids) == 2
@@ -31,15 +33,22 @@ def test_a_third_extra_renders_when_it_adds_a_tool():
     assert {"x1", "x2", "x9"} <= set(ids)
 
 
+def test_a_third_extra_renders_when_it_adds_a_concept():
+    bullets = ([_bullet("b0", "Summary with Python.", summary=True)] + _thin_extras(SOFT[:2])
+               + [_bullet("x9", "Split the service into Microservices.", extra=True)])
+    ids, _ = _run(bullets, "Python", *SOFT[:2], "Microservices")
+    assert {"x1", "x2", "x9"} <= set(ids)
+
+
 def test_the_two_extras_kept_are_the_strongest():
     bullets = [
         _bullet("b0", "Summary with Python.", summary=True),
         _bullet("x1", "Practised Communication weekly.", extra=True),
-        _bullet("x2", "Kept Data Quality and Documentation tidy.", extra=True),
-        _bullet("x3", "Ran Mentoring and Version Control sessions.", extra=True),
+        _bullet("x2", "Kept Leadership and Teamwork strong.", extra=True),
+        _bullet("x3", "Ran Mentoring and Collaboration sessions.", extra=True),
     ]
-    ids, _ = _run(bullets, "Python", "Communication", "Data Quality", "Documentation",
-                  "Mentoring", "Version Control")
+    ids, _ = _run(bullets, "Python", "Communication", "Leadership", "Teamwork",
+                  "Mentoring", "Collaboration")
     assert set(ids) == {"b0", "x2", "x3"}, "the two-keyword extras beat the one-keyword one"
 
 
