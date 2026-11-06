@@ -339,3 +339,52 @@ def test_a_line_that_saves_a_missing_required_skill_beats_a_fuller_one():
     lines = gl.build_lines("e1", kl, set(), cands, weights={}, max_lines=1, max_chars=200, priority={"Docker"},
                            fillers=[ph["sqs"]])
     assert lines[0][0][0].frame == "ship", "the line carrying the missing required skill wins"
+
+
+# --- #190: weak mains, the lead bullet, the leading entries' cap ---------------
+
+
+def _other(*texts):
+    return SelectedEntry(
+        id="e2", kind="project", block_id="e2::data", label="Other", header_left="", header_right="",
+        bullets=[SelectedBullet(f"o{i}", t, 0.0, i == 0) for i, t in enumerate(texts)],
+        covered=set(), coverage=0.0, similarity=0.0, score=0.0, cap=5,
+    )
+
+
+def test_a_weak_main_gives_its_slot_to_a_line_with_missing_required_skills():
+    se, prof = _scene(["b0", "b1"])  # b1 says only Airflow, which e2 also shows
+    se.cap = 2
+    with _on(lead_entries=0):
+        gl.apply_grouped_lines([se, _other("Ran Airflow daily.")], prof,
+                               _kw("Python", "Airflow", "Prefect", "Docker", "SQS"))
+    ids = [b.id for b in se.bullets]
+    assert "b1" not in ids and ids[0] == "b0" and len(ids) == 2
+    assert all(k in se.bullets[1].text for k in ("Prefect", "Docker", "SQS"))
+
+
+def test_the_lead_bullet_is_never_swapped():
+    se, prof = _scene(["b0"])  # b0 is the summary; e2 also says Python
+    se.cap = 1
+    with _on(lead_entries=0):
+        gl.apply_grouped_lines([se, _other("Wrote it in Python.")], prof,
+                               _kw("Python", "Prefect", "Docker", "SQS"))
+    assert [b.id for b in se.bullets] == ["b0"]
+
+
+def test_a_main_holding_a_real_figure_is_never_swapped():
+    se, prof = _scene(["b0", "b1"])
+    se.bullets[1].text = "Moved the nightly jobs to Airflow, saving 800+ hours."
+    se.cap = 2
+    with _on(lead_entries=0):
+        gl.apply_grouped_lines([se, _other("Ran Airflow daily.")], prof,
+                               _kw("Python", "Airflow", "Prefect", "Docker", "SQS"))
+    assert [b.id for b in se.bullets] == ["b0", "b1"]
+
+
+def test_the_leading_entries_may_grow_to_the_lead_cap_for_missing_required_skills():
+    se, prof = _scene(["b0", "b1"])
+    se.cap = 2
+    with _on(lead_entries=2, lead_entry_cap=8):
+        gl.apply_grouped_lines([se], prof, _kw("Python", "Airflow", "Prefect", "Docker", "SQS"))
+    assert len(se.bullets) == 3 and gl.is_line(se.bullets[-1].id)

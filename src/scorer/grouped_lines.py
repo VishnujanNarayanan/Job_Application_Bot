@@ -32,6 +32,7 @@ are the fallback.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -44,6 +45,14 @@ log = structlog.get_logger(__name__)
 
 #: Separates the entry id from the parts in a line id. Bullet ids never hold it.
 MARK = "~gl~"
+
+#: A real figure (money, hours, people, a percentage): the strongest proof a
+#: bullet carries, so a main bullet holding one is never swapped for a line.
+_FIGURE = re.compile(
+    r"[₹$€£]\s?\d|\d[\d,.]*\s?(%|x\b|\+|k\b|lakh|million|hours?\b|members\b|applicants\b"
+    r"|signals\b|seconds?\b|minutes?\b|years?\b|transactions\b|photos\b)",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +321,8 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
     min_kw = int(getattr(cfg, "min_keywords", 1) or 1)
     min_phrases = int(getattr(cfg, "min_phrases", 3) or 3)
     min_groups = int(getattr(cfg, "phrase_min_groups", 3) or 3)
+    lead_cap = int(getattr(cfg, "lead_entry_cap", 0) or 0)
+    lead_n = int(getattr(cfg, "lead_entries", 0) or 0)
     top = max((k.weight for k in keywords), default=0.0)
     required = {k.token for k in keywords
                 if k.required or (k.required is None and k.weight >= top - 1e-9)}
@@ -335,15 +346,34 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             and not (g_terms and is_gated(norm(b.text), g_terms))
         ]
         # A line may also take a slot the entry has free under its cap, but
-        # only for a required skill the page would otherwise not show.
-        spare = max(0, int(getattr(se, "cap", 0) or 0) - len(se.bullets))
-        if not movable and not spare:
-            continue
+        # only for a required skill the page would otherwise not show. The
+        # entries leading the page may hold more (lead_entry_cap).
+        cap = int(getattr(se, "cap", 0) or 0)
+        if idx < lead_n:
+            cap = max(cap, lead_cap)
+        spare = max(0, cap - len(se.bullets))
         stay = [b for b in se.bullets if b not in movable]
         before = kws_in(b.text for b in se.bullets)
         shown = kws_in(b.text for b in stay)
         others = [o for j, o in enumerate(entries) if j != idx]
         elsewhere = kws_in(b.text for o in others for b in o.bullets)
+        # #190: a WEAK main bullet (every asked keyword it says is shown by
+        # another bullet on the page) may give its slot to a line carrying a
+        # required skill the page lacks. Never the lead (summary) bullet,
+        # never a gated bullet, never one holding a real figure.
+        main_ids = {b.id for blk in cand.blocks for b in blk.bullets if not b.is_extra}
+        weak = []
+        for b in stay:
+            if b.is_summary or b.id not in main_ids or _FIGURE.search(b.text):
+                continue
+            if g_terms and is_gated(norm(b.text), g_terms):
+                continue
+            rest = kws_in(x.text for x in stay if x is not b) | elsewhere
+            if kws_in([b.text]) <= rest:
+                weak.append(b)
+        weak.sort(key=lambda b: b.score)
+        if not movable and not spare and not weak:
+            continue
         capped_full = {
             t for t in elsewhere
             if kw_cap and c_terms and any(hit(c, norm(t)) for c in c_terms)
@@ -379,21 +409,30 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
         lines = build_lines(
             se.id, kl, shown, cands,
             weights={k.token: k.weight for k in keywords},
-            max_lines=min(max_lines, len(movable) + spare), max_chars=max_chars, min_keywords=min_kw,
+            max_lines=min(max_lines, len(movable) + spare + len(weak)), max_chars=max_chars,
+            min_keywords=min_kw,
             overflow_chars=overflow, min_phrases=min_phrases, fillers=fillers,
             phrase_min_groups=min_groups, priority=required - before - elsewhere,
         )
         # Lines past the extras they replace take free slots: each must carry
         # a required skill no bullet on the page shows.
         lost = required - before - elsewhere
-        kept, extra_slots = [], 0
+        kept, extra_slots, swapped = [], 0, []
         for parts, new in lines:
             if len(kept) < len(movable):
                 kept.append((parts, new))
-            elif extra_slots < spare and new & lost:
+            elif not new & lost:
+                continue
+            elif extra_slots < spare:
                 kept.append((parts, new))
                 extra_slots += 1
+            elif len(swapped) < len(weak):
+                kept.append((parts, new))
+                swapped.append(weak[len(swapped)])
         lines = kept
+        if swapped:
+            stay = [b for b in stay if b not in swapped]
+            shown = kws_in(b.text for b in stay)
         if not lines:
             continue
         line_bullets = []
@@ -404,7 +443,7 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             now_shown |= covered_by(norm(text), keywords)
         # An extra comes back only for a keyword no line holds, and only into a
         # freed slot, and only if it repeats nothing.
-        slots = len(movable) - (len(line_bullets) - extra_slots)
+        slots = len(movable) - (len(line_bullets) - extra_slots - len(swapped))
         restored = []
         for b in sorted(movable, key=lambda b: -weight_of(kws_in([b.text]) - now_shown, keywords)):
             hits = kws_in([b.text])
@@ -417,14 +456,20 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
         if movable:
             at = se.bullets.index(movable[0])
             at = sum(1 for b in se.bullets[:at] if b in stay)
+        elif swapped:
+            at = sum(1 for b in se.bullets[:se.bullets.index(swapped[0])] if b in stay)
         else:
             at = len(new_bullets)
         new_bullets[at:at] = [*line_bullets, *restored]
         after = kws_in(b.text for b in new_bullets)
-        if before - after:
-            log.debug("grouped_lines_reverted", entry=se.id, lost=sorted(before - after))
+        # Nothing the page showed may leave it: a keyword may move out of this
+        # entry only when another entry still shows it.
+        gone = (before - after) - elsewhere
+        if gone or any(b.is_summary for b in swapped):
+            log.debug("grouped_lines_reverted", entry=se.id, lost=sorted(gone))
             continue
         se.bullets = new_bullets
         se.covered = set(se.covered) | (after - before)
         log.debug("grouped_lines", entry=se.id, lines=len(line_bullets),
-                  extras_kept=len(restored), extras_before=len(movable))
+                  extras_kept=len(restored), extras_before=len(movable),
+                  mains_swapped=[b.id for b in swapped])

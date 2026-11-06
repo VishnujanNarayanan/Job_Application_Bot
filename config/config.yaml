@@ -358,6 +358,10 @@ selection:
     # A phrase line (unrelated phrases as a list) only compacts this many
     # groups or more, when there are not enough lines for a frame each.
     phrase_min_groups: 3
+    # The entries leading the page may hold this many bullets for lines that
+    # carry a missing required skill (projects otherwise stop at project_cap).
+    lead_entries: 2
+    lead_entry_cap: 8
     # A line is never left short: it is completed with the entry's other
     # phrases (the frame's other members; for a phrase line the best-matching
     # phrases, same group first) up to this many phrases. A phrase line that
