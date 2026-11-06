@@ -345,7 +345,7 @@ selection:
   # a keyword no line holds; the entry never gets longer or loses a keyword.
   # Off until the benchmark shows it is better; extras stay as the fallback.
   grouped_lines:
-    enabled: false
+    enabled: true
     max_lines: 3
     # Target prose characters per line: two rendered lines (#142/#143). A
     # target, not a ceiling: an asked keyword may run a line up to
@@ -550,7 +550,7 @@ selection:
   # grouped lines then put them on the page. Required skills count fully,
   # nice-to-haves at entry_potential_nice. Changes which entries make the page,
   # so fit can move: off until the operator signs off on the benchmark.
-  entry_potential: false
+  entry_potential: true
   entry_potential_nice: 0.5
   # ...but only while the page holds at most this many bullets (about two
   # pages): an entry adding a NEW required skill is never held back by it.

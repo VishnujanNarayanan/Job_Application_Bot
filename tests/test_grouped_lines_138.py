@@ -207,7 +207,8 @@ def test_a_line_must_carry_at_least_two_keywords():
 
 def test_off_changes_nothing():
     se, prof = _scene(["b0", "x1", "x2", "x3"])
-    gl.apply_grouped_lines([se], prof, _kw("Python", "Prefect", "Docker", "SQS"))
+    with _on(enabled=False):
+        gl.apply_grouped_lines([se], prof, _kw("Python", "Prefect", "Docker", "SQS"))
     assert [b.id for b in se.bullets] == ["b0", "x1", "x2", "x3"]
 
 
