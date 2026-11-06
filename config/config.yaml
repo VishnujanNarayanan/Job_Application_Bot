@@ -507,6 +507,16 @@ selection:
   # entry's. 0.0 = off: 0.5 and 0.7 only lowered coverage and apply count
   # over 1,220 stored jobs.
   entry_score_floor: 0.0
+  # Repetition earns a place too: a required skill already on the page, shown
+  # in fewer than scoring.fit.repetition_cap entries, adds this share of its
+  # weight to a candidate entry's gain. An entry joining on repetition alone
+  # must repeat at least entry_repeat_min such skills. 0 = only new skills
+  # count (the rule before 2026-11-06, which stopped ClanX at 3 entries).
+  entry_repeat_credit: 0.5
+  entry_repeat_min: 2
+  # ...but only while the page holds at most this many bullets (about two
+  # pages): an entry adding a NEW required skill is never held back by it.
+  repeat_bullet_budget: 24
 
   # A freelance entry reads "<title>, Freelance  View the Work ->" on the left
   # and shows ONE shared period on the right (#140, #141): the whole freelance

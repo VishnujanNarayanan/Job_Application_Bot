@@ -404,11 +404,28 @@ def _occurrence_is_skill(e: Entry, text: str, start: int, end: int) -> bool:
         return True
     if _section_at(text, start) in ("req", "nice"):
         return True
-    # A capitalised name anywhere counts only in an advert with no requirement
-    # sections of its own: where it has them, the company blurb ("the cloud
-    # and AI era") and a team heading ("Testing & Validation Utility") are
-    # not asks (#188).
-    if any(cat in ("req", "nice") for _a, _b, cat in _sections(text)):
+    # A capitalised name counts in an advert with no requirement sections of
+    # its own, or in a duties section: the company blurb ("the cloud and AI
+    # era") and a team heading ("Testing & Validation Utility") are not asks
+    # (#188).
+    # In an advert with sections, only a duties section still counts ("REST
+    # APIs in Go (HTTP handlers...)", "unit tests (Go + Jest)"); the company
+    # intro and other sections do not.
+    if any(cat in ("req", "nice") for _a, _b, cat in _sections(text)) and _section_at(text, start) != "duty":
+        return False
+    # Part of a longer capitalised name ("the Agent Control Plane") is that
+    # name, not the tool: a run of three or more capitalised words, not
+    # opening the sentence. Two-word names ("MS Excel", "Apache Spark") pass.
+    def _name_word(i: int) -> bool:
+        return (head.sent.start < i < head.sent.end and doc[i].text[:1].isupper()
+                and doc[i].text.isalpha() and not _approved_in(doc[i].text, ""))
+
+    left = right = 0
+    while _name_word(span.start - 1 - left):
+        left += 1
+    while _name_word(span.end + right):
+        right += 1
+    if left + right >= 2:
         return False
     return text[start].isupper() and head.pos_ == "PROPN"
 

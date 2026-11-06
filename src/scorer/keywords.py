@@ -188,12 +188,14 @@ def _plural_to_singular(word: str) -> str:
 
 
 def _word_form(word: str) -> str:
-    """Fold a word's form so its variants share one key (#189): "grounded",
-    "grounding" and "ground"; "modelling", "modeling" and "model"; "caching"
-    and "cache"; "processing" and "process"; "optimise" and "optimize". The
-    same fold runs on both sides (advert token and every resume window), so
-    the result is never compared with real text. Short words (names such as
-    Node, Rust, Make) and short stems ("Spring", "string") are left alone."""
+    """Fold a word's inflected forms together so their variants share one key
+    (#189): "grounded" and "grounding", "modelling" and "modeling",
+    "scheduled" and "scheduling", "optimise" and "optimize". An inflected form
+    never meets its bare base word: "versioning" is not the everyday
+    "version", "testing" not "test", "logging" not "log". The same fold runs
+    on both sides (advert token and every resume window), so the result is
+    never compared with real text. Short words (Node, Rust, Make) and short
+    stems ("Spring", "string") are left alone."""
     if len(word) < 5 or not word.isalpha():
         return word
     for end in ("isation", "ise", "ised", "ising"):
@@ -202,12 +204,13 @@ def _word_form(word: str) -> str:
             break
     for end in ("ing", "ed"):
         if word.endswith(end) and len(word) - len(end) >= 4:
-            word = word[: -len(end)]
-            break
-    if word.endswith("e") and len(word) >= 5:
-        word = word[:-1]
-    if len(word) >= 5 and word[-1] == word[-2] and word[-1] not in "aeiou":
-        word = word[:-1]
+            stem = word[: -len(end)]
+            if stem.endswith("e"):
+                stem = stem[:-1]
+            if len(stem) >= 4 and stem[-1] == stem[-2] and stem[-1] not in "aeiou":
+                stem = stem[:-1]
+            # The marker keeps the inflected key apart from the bare word's.
+            return stem + "~"
     return word
 
 
