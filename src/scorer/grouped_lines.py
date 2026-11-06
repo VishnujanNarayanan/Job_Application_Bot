@@ -153,6 +153,24 @@ def _fits(kl: Any, parts: list[Part], max_chars: int) -> bool:
     return len(compose(kl, parts)) <= max_chars
 
 
+#: Reading order inside a phrase line: the work as it happened. What was
+#: built, then how data came in, then the product, then checking and review,
+#: then running it; documentation last.
+_STAGES = {
+    "domain": 0,
+    "collection": 1, "scraping": 1, "sources": 1, "ingestion": 1,
+    "frontend": 2, "mobile": 2, "app": 2, "viz": 2, "realtime": 2, "content": 2,
+    "testing": 4, "process": 4, "delivery": 4, "reliability": 4,
+    "devops": 5, "cloud": 5, "runtime": 5, "hosting": 5, "observability": 5,
+}
+
+
+def _stage(ph: Any) -> int:
+    if "document" in ph.kw.lower() or ph.id == "documentation":
+        return 6
+    return _STAGES.get(ph.group, 3)
+
+
 def build_lines(
     entry_id: str,
     kl: Any,
@@ -162,26 +180,24 @@ def build_lines(
     weights: dict[str, float],
     max_lines: int,
     max_chars: int,
-    min_keywords: int,
+    min_keywords: int = 1,
     min_phrases: int = 3,
     fillers: Sequence[Any] = (),
     overflow_chars: int = 0,
+    phrase_min_groups: int = 3,
 ) -> list[tuple[list[Part], set[str]]]:
-    """Pack candidates into lines, heaviest keywords first.
+    """Pack the asked keywords into lines, heaviest first.
 
-    Each line is one of two kinds, never a mix:
-      * a FRAME line: one group's phrases in its frame, closed by its ending.
-        Preferred: the frame holding the most asked keywords is taken, so
-        related keywords share one dense sentence;
-      * a PHRASE line: separate phrases joined as a list, only when no frame
-        can hold two of the keywords left.
+    FRAME lines are the default: the frame holding the most asked keywords,
+    completed with its other members (keywords the advert did not ask for) up
+    to ``min_phrases``. One asked keyword is enough, so keywords from two
+    unrelated groups become two good frame lines rather than one glued list.
 
-    A line needs ``min_keywords`` asked keywords, or the extra it would replace
-    says the same in its own sentence. A line is never left short: it is
-    completed from ``fillers`` (phrases of the entry the advert did not ask
-    for): a frame with its other members, a phrase line with the best-matching
-    phrases, same group first, until it holds ``min_phrases`` phrases or the
-    next would not fit. A phrase line that still has fewer is not built.
+    A PHRASE line (separate phrases joined as a list) is built only to compact:
+    when the asked keywords left span ``phrase_min_groups`` or more groups and
+    there are not enough lines left to give each its own frame. Its phrases
+    read in the order the work happened (``_stage``), and any filler shares a
+    group with one of its asked phrases.
 
     ``max_chars`` is the target, not a ceiling: an asked keyword may take a line
     up to ``overflow_chars`` past it, a filler never does, and nothing pads a
@@ -190,35 +206,46 @@ def build_lines(
     used = set(shown)
     taken: set[str] = set()
     out: list[tuple[list[Part], set[str]]] = []
+    phrase_by_id = {ph.id: ph for ph in kl.phrases}
     order = {ph.id: i for i, ph in enumerate(kl.phrases)}
-    frames = {f.id: f for f in kl.frames}
+    hard = max_chars + overflow_chars
 
     def worth(cs: list[_Cand]) -> float:
         return sum(weights.get(t, 0.0) for t in set().union(*(c.useful for c in cs))) if cs else 0.0
+
+    def count(cs: list[_Cand]) -> int:
+        return len(set().union(*(c.useful for c in cs))) if cs else 0
 
     def frame_parts(f, ids) -> list[Part]:
         ids = [i for i in f.allowed if i in set(ids)]
         return [Part(tuple(ids), f.id)] if len(ids) > 1 else [Part((ids[0],))]
 
-    def fill(ids: list[str], frame) -> list[str]:
+    def phrase_parts(ids) -> list[Part]:
+        ids = sorted(ids, key=lambda i: (_stage(phrase_by_id[i]), order[i]))
+        return [Part((i,)) for i in ids]
+
+    def pack(pool: list[_Cand], make) -> list[_Cand]:
+        got: list[_Cand] = []
+        hits: set[str] = set()
+        for c in pool:
+            if c.hits & hits:
+                continue
+            if not _fits(kl, make([x.phrase.id for x in [*got, c]]), hard):
+                continue
+            got.append(c)
+            hits |= c.hits
+        return got
+
+    def fill(ids: list[str], make, pool) -> list[str]:
         """Complete a line with phrases the advert did not ask for."""
         ids = list(ids)
-        if len(ids) >= min_phrases:
-            return ids
-        groups = {ph.group for ph in kl.phrases if ph.id in ids}
-        pool = [ph for ph in fillers if ph.id not in taken and ph.id not in ids]
-        if frame is not None:
-            pool = [ph for ph in pool if ph.id in frame.allowed]
-            pool.sort(key=lambda ph: frame.allowed.index(ph.id))
-        else:
-            pool.sort(key=lambda ph: (ph.group not in groups, order[ph.id]))
         for ph in pool:
             if len(ids) >= min_phrases:
                 break
-            trial = [*ids, ph.id]
-            parts = frame_parts(frame, trial) if frame is not None else [Part((i,)) for i in trial]
-            if _fits(kl, parts, max_chars):
-                ids = trial
+            if ph.id in taken or ph.id in ids:
+                continue
+            if _fits(kl, make([*ids, ph.id]), max_chars):
+                ids.append(ph.id)
         return ids
 
     while len(out) < max_lines:
@@ -226,44 +253,38 @@ def build_lines(
             (c for c in candidates if c.phrase.id not in taken and not (c.hits & used)),
             key=lambda c: (-c.weight, c.phrase.id),
         )
-
-        def pack(pool: list[_Cand], make) -> list[_Cand]:
-            got: list[_Cand] = []
-            hits: set[str] = set()
-            for c in pool:
-                if c.hits & hits:
-                    continue
-                if not _fits(kl, make([*got, c]), max_chars + overflow_chars):
-                    continue
-                got.append(c)
-                hits |= c.hits
-            return got
-
-        def count(cs: list[_Cand]) -> int:
-            return len(set().union(*(c.useful for c in cs))) if cs else 0
-
-        # Frames first: the frame that holds the MOST asked keywords wins,
-        # weight breaking ties. A phrase line is the last resort, for keywords
-        # no frame of the entry can group.
+        if not avail:
+            break
         options = []
         for f in kl.frames:
             pool = [c for c in avail if c.phrase.id in f.allowed]
-            got = pack(pool, lambda cs, f=f: frame_parts(f, [c.phrase.id for c in cs]))
-            if len(got) > 1 and count(got) >= min_keywords:
-                options.append((count(got), worth(got), f, got))
-        if not options:
-            got = pack(avail, lambda cs: [Part((c.phrase.id,)) for c in cs])
-            if got and count(got) >= min_keywords:
-                options.append((count(got), worth(got), None, got))
+            got = pack(pool, lambda ids, f=f: frame_parts(f, ids))
+            if not got or count(got) < min_keywords:
+                continue
+            spare = sorted((ph for ph in fillers if ph.id in f.allowed), key=lambda ph: f.allowed.index(ph.id))
+            ids = fill([c.phrase.id for c in got], lambda ids, f=f: frame_parts(f, ids), spare)
+            if len(ids) < 2:
+                continue
+            options.append(("frame", count(got), worth(got), f, got, ids))
+
+        groups_left = {c.phrase.group for c in avail}
+        lines_left = max_lines - len(out)
+        in_a_frame = {c.phrase.id for o in options for c in o[4]}
+        frameless = [c for c in avail if c.phrase.id not in in_a_frame]
+        compact = len(groups_left) >= phrase_min_groups and (len(groups_left) > lines_left or frameless)
+        if compact:
+            got = pack(avail, phrase_parts)
+            if len({c.phrase.group for c in got}) >= phrase_min_groups:
+                gs = {c.phrase.group for c in got}
+                spare = sorted((ph for ph in fillers if ph.group in gs), key=lambda ph: order[ph.id])
+                ids = fill([c.phrase.id for c in got], phrase_parts, spare)
+                # A compacting line beats any one frame: it carries more groups.
+                options = [("phrase", count(got), worth(got), None, got, ids)]
         if not options:
             break
-        _, _, f, got = max(options, key=lambda o: (o[0], o[1]))
-        ids = fill([c.phrase.id for c in got], f)
-        if f is None and len(ids) < min_phrases:
-            break
-        parts = frame_parts(f, ids) if f is not None else [Part((i,)) for i in ids]
-        new = set().union(*(c.useful for c in got))
-        out.append((parts, new))
+        kind, _, _, f, got, ids = max(options, key=lambda o: (o[1], o[2]))
+        parts = frame_parts(f, ids) if kind == "frame" else phrase_parts(ids)
+        out.append((parts, set().union(*(c.useful for c in got))))
         used |= set().union(*(c.hits for c in got))
         taken |= set(ids)
     return out
@@ -279,8 +300,12 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
     max_lines = int(getattr(cfg, "max_lines", 3) or 3)
     max_chars = int(getattr(cfg, "max_chars", 172) or 172)
     overflow = int(getattr(cfg, "overflow_chars", 0) or 0)
-    min_kw = int(getattr(cfg, "min_keywords", 2) or 2)
+    min_kw = int(getattr(cfg, "min_keywords", 1) or 1)
     min_phrases = int(getattr(cfg, "min_phrases", 3) or 3)
+    min_groups = int(getattr(cfg, "phrase_min_groups", 3) or 3)
+    top = max((k.weight for k in keywords), default=0.0)
+    required = {k.token for k in keywords
+                if k.required or (k.required is None and k.weight >= top - 1e-9)}
     kw_cap = int(getattr(settings.selection.bullets, "max_keyword_renders", 0) or 0)
     c_terms = capped_terms()
     g_terms = gated_terms()
@@ -300,7 +325,10 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             if b.id in extra_ids and not b.is_summary
             and not (g_terms and is_gated(norm(b.text), g_terms))
         ]
-        if not movable:
+        # A line may also take a slot the entry has free under its cap, but
+        # only for a required skill the page would otherwise not show.
+        spare = max(0, int(getattr(se, "cap", 0) or 0) - len(se.bullets))
+        if not movable and not spare:
             continue
         stay = [b for b in se.bullets if b not in movable]
         before = kws_in(b.text for b in se.bullets)
@@ -316,6 +344,10 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
         cands: list[_Cand] = []
         for ph in kl.phrases:
             hits = covered_by(norm(ph.text), keywords)
+            # What the keyword itself implies ("API testing" says Testing) is
+            # not a repeat; anything else the phrase says must be new.
+            own = covered_by(norm(ph.kw), keywords) & shown
+            hits -= own
             if not hits or hits & shown or hits & capped_full:
                 continue
             if g_terms and is_gated(norm(ph.text), g_terms):
@@ -338,10 +370,21 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
         lines = build_lines(
             se.id, kl, shown, cands,
             weights={k.token: k.weight for k in keywords},
-            max_lines=min(max_lines, len(movable)), max_chars=max_chars, min_keywords=min_kw,
-            overflow_chars=overflow,
-            min_phrases=min_phrases, fillers=fillers,
+            max_lines=min(max_lines, len(movable) + spare), max_chars=max_chars, min_keywords=min_kw,
+            overflow_chars=overflow, min_phrases=min_phrases, fillers=fillers,
+            phrase_min_groups=min_groups,
         )
+        # Lines past the extras they replace take free slots: each must carry
+        # a required skill no bullet on the page shows.
+        lost = required - before - elsewhere
+        kept, extra_slots = [], 0
+        for parts, new in lines:
+            if len(kept) < len(movable):
+                kept.append((parts, new))
+            elif extra_slots < spare and new & lost:
+                kept.append((parts, new))
+                extra_slots += 1
+        lines = kept
         if not lines:
             continue
         line_bullets = []
@@ -352,7 +395,7 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             now_shown |= covered_by(norm(text), keywords)
         # An extra comes back only for a keyword no line holds, and only into a
         # freed slot, and only if it repeats nothing.
-        slots = len(movable) - len(line_bullets)
+        slots = len(movable) - (len(line_bullets) - extra_slots)
         restored = []
         for b in sorted(movable, key=lambda b: -weight_of(kws_in([b.text]) - now_shown, keywords)):
             hits = kws_in([b.text])
@@ -362,8 +405,11 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             now_shown |= hits
             slots -= 1
         new_bullets = stay[:]
-        at = se.bullets.index(movable[0])
-        at = sum(1 for b in se.bullets[:at] if b in stay)
+        if movable:
+            at = se.bullets.index(movable[0])
+            at = sum(1 for b in se.bullets[:at] if b in stay)
+        else:
+            at = len(new_bullets)
         new_bullets[at:at] = [*line_bullets, *restored]
         after = kws_in(b.text for b in new_bullets)
         if before - after:

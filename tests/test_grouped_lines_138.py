@@ -7,6 +7,7 @@ import pytest
 
 from src.config import settings
 from src.scorer import grouped_lines as gl
+from src.scorer.keywords import Keyword
 from src.scorer.selector import Profile, SelectedBullet, SelectedEntry
 from src.state.master_profile import KeywordLines, Project
 from tests.test_iteration_2_scorer import _block, _bullet, _entry, _kw
@@ -218,15 +219,31 @@ def test_an_entry_without_phrases_is_left_alone():
     assert [b.id for b in se.bullets] == ["b0", "x1", "x2", "x3"]
 
 
-def test_a_short_phrase_line_is_completed_with_a_best_matching_phrase():
-    se, prof = _scene(["b0", "x2", "x3"])  # Docker and SQS: no frame holds both
+def test_two_unrelated_keywords_never_become_a_glued_list():
+    se, prof = _scene(["b0", "x2", "x3"])  # Docker and SQS: two groups, no frame
     with _on():
         gl.apply_grouped_lines([se], prof, _kw("Python", "Docker", "SQS"))
-    line = next(b for b in se.bullets if gl.is_line(b.id))
-    _, parts = gl.parse_line_id(line.id)
-    assert len(parts) == 3, "two asked phrases plus one filler, never a short line"
-    assert "Docker" in line.text and "SQS" in line.text
-    assert len(se.bullets) == 2
+    assert [b.id for b in se.bullets] == ["b0", "x2", "x3"], "two groups keep their extras"
+
+
+def test_one_asked_keyword_makes_a_frame_line_completed_by_its_group():
+    se, prof = _scene(["b0", "x1", "x2"])
+    with _on():
+        gl.apply_grouped_lines([se], prof, _kw("Python", "Prefect", "Docker"))
+    text = " ".join(b.text for b in se.bullets if gl.is_line(b.id))
+    assert "Prefect and Airflow" in text, "Prefect's frame filled with its unasked member"
+
+
+def test_phrase_lines_read_in_the_order_the_work_happened():
+    kl = _lines(phrases=[
+        {"id": "docs", "kw": "documentation", "group": "process", "text": "wrote the documentation", "source": "x1"},
+        {"id": "deploy", "kw": "Docker", "group": "devops", "text": "packaged it in Docker", "source": "x2"},
+        {"id": "scrape", "kw": "SQS", "group": "collection", "text": "queued it in SQS", "source": "x3"},
+    ], frames=[])
+    cands = [gl._Cand(ph, {ph.kw}, {ph.kw}, 1.0) for ph in kl.phrases]
+    lines = gl.build_lines("e1", kl, set(), cands, weights={}, max_lines=1, max_chars=200)
+    ids = [p.phrases[0] for p in lines[0][0]]
+    assert ids == ["scrape", "deploy", "docs"], "collection first, documentation last"
 
 
 def test_a_phrase_line_that_cannot_be_completed_keeps_the_extras():
@@ -293,3 +310,20 @@ def test_an_asked_keyword_may_run_a_line_past_the_target_but_a_filler_may_not():
     line = next(b for b in se.bullets if gl.is_line(b.id))
     assert all(k in line.text for k in ("Prefect", "Docker", "SQS")), "asked keywords overflow the target"
     assert len(line.text) > 80
+
+
+def test_a_free_slot_carries_required_skills_the_page_would_lose():
+    se, prof = _scene(["b0", "b1"])  # no extras on the page, cap 5
+    with _on():
+        gl.apply_grouped_lines([se], prof, _kw("Python", "Airflow", "Prefect", "Docker", "SQS"))
+    line = next((b for b in se.bullets if gl.is_line(b.id)), None)
+    assert line is not None and all(k in line.text for k in ("Prefect", "Docker", "SQS"))
+    assert len(se.bullets) == 3
+
+
+def test_a_free_slot_is_never_used_for_nice_to_have_skills():
+    se, prof = _scene(["b0", "b1"])
+    kws = (*_kw("Python", "Airflow"), Keyword("Prefect", 0.5), Keyword("Docker", 0.5), Keyword("SQS", 0.5))
+    with _on():
+        gl.apply_grouped_lines([se], prof, kws)
+    assert [b.id for b in se.bullets] == ["b0", "b1"]

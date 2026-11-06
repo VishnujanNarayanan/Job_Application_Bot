@@ -352,8 +352,12 @@ selection:
     # `overflow_chars` past it; fillers never do; nothing pads a line to it.
     max_chars: 172
     overflow_chars: 30
-    # A line holding fewer is not worth replacing the extra it would replace.
-    min_keywords: 2
+    # Asked keywords a frame line needs; it is completed with the frame's other
+    # members, so two unrelated keywords make two frame lines, not one list.
+    min_keywords: 1
+    # A phrase line (unrelated phrases as a list) only compacts this many
+    # groups or more, when there are not enough lines for a frame each.
+    phrase_min_groups: 3
     # A line is never left short: it is completed with the entry's other
     # phrases (the frame's other members; for a phrase line the best-matching
     # phrases, same group first) up to this many phrases. A phrase line that
