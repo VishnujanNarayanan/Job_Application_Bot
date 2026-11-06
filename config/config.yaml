@@ -347,8 +347,11 @@ selection:
   grouped_lines:
     enabled: false
     max_lines: 3
-    # Prose characters per line: two rendered lines (#142/#143).
+    # Target prose characters per line: two rendered lines (#142/#143). A
+    # target, not a ceiling: an asked keyword may run a line up to
+    # `overflow_chars` past it; fillers never do; nothing pads a line to it.
     max_chars: 172
+    overflow_chars: 30
     # A line holding fewer is not worth replacing the extra it would replace.
     min_keywords: 2
     # A line is never left short: it is completed with the entry's other

@@ -189,7 +189,7 @@ def test_no_phrase_repeats_a_keyword_the_entry_already_shows():
 
 def test_a_keyword_no_line_can_hold_keeps_its_extra():
     se, prof = _scene(["b0", "x1", "x2", "x3"])
-    with _on(max_chars=80):  # room for two short clauses, not three
+    with _on(max_chars=80, overflow_chars=0):  # room for two short clauses, not three
         gl.apply_grouped_lines([se], prof, _kw("Python", "Prefect", "Docker", "SQS"))
     text = " ".join(b.text for b in se.bullets)
     for kw in ("Prefect", "Docker", "SQS"):
@@ -231,7 +231,7 @@ def test_a_short_phrase_line_is_completed_with_a_best_matching_phrase():
 
 def test_a_phrase_line_that_cannot_be_completed_keeps_the_extras():
     se, prof = _scene(["b0", "x2", "x3"])
-    with _on(max_chars=70):  # room for the two asked phrases, not a third
+    with _on(max_chars=70, overflow_chars=0):  # room for the two asked phrases, not a third
         gl.apply_grouped_lines([se], prof, _kw("Python", "Docker", "SQS"))
     assert [b.id for b in se.bullets] == ["b0", "x2", "x3"]
 
@@ -284,3 +284,12 @@ def test_a_deliberate_skip_passes_and_a_stale_one_is_reported():
 
 def test_phrases_outside_every_frame_are_listed_for_review():
     assert set(_gaps(_lines().model_dump()).entries[0].loose) == {"docker", "sqs"}
+
+
+def test_an_asked_keyword_may_run_a_line_past_the_target_but_a_filler_may_not():
+    se, prof = _scene(["b0", "x1", "x2", "x3"])
+    with _on(max_chars=80, overflow_chars=60):
+        gl.apply_grouped_lines([se], prof, _kw("Python", "Prefect", "Docker", "SQS"))
+    line = next(b for b in se.bullets if gl.is_line(b.id))
+    assert all(k in line.text for k in ("Prefect", "Docker", "SQS")), "asked keywords overflow the target"
+    assert len(line.text) > 80

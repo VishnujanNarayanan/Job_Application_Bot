@@ -111,10 +111,14 @@ def _with_lines(profile_json: Path, lines_from: Path | None) -> Path:
                 continue
             # A phrase whose source bullet is newer than the frozen set has no
             # proof there; it is left out, with its frame memberships.
-            ids = {b["id"] for rb in e.get("role_blocks", [])
-                   for b in (*rb.get("bullets", []), *rb.get("extra_bullets", []))}
+            from src.scorer.keywords import matches, norm
+
+            texts = {b["id"]: norm(b["text"]) for rb in e.get("role_blocks", [])
+                     for b in (*rb.get("bullets", []), *rb.get("extra_bullets", []))}
             kl = dict(lines[e["id"]])
-            keep = [ph for ph in kl["phrases"] if ph["source"] in ids]
+            # A frozen bullet may also predate the wording that proves the phrase.
+            keep = [ph for ph in kl["phrases"]
+                    if ph["source"] in texts and matches(ph["kw"], texts[ph["source"]])]
             dropped += len(kl["phrases"]) - len(keep)
             kept = {ph["id"] for ph in keep}
             frames = []
@@ -125,7 +129,7 @@ def _with_lines(profile_json: Path, lines_from: Path | None) -> Path:
             e["keyword_lines"] = {**kl, "phrases": keep, "frames": frames}
             n += 1
     print(f"keyword_lines for {n} entries from {lines_from}"
-          f" ({dropped} phrases left out: their source bullet is not in the frozen set)")
+          f" ({dropped} phrases left out: the frozen set does not prove them)")
     out = Path(tempfile.mkdtemp(prefix="audit138-")) / "profile.json"
     out.write_text(json.dumps(pj))
     return out

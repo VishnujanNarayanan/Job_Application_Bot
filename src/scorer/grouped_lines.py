@@ -165,6 +165,7 @@ def build_lines(
     min_keywords: int,
     min_phrases: int = 3,
     fillers: Sequence[Any] = (),
+    overflow_chars: int = 0,
 ) -> list[tuple[list[Part], set[str]]]:
     """Pack candidates into lines, heaviest keywords first.
 
@@ -180,8 +181,11 @@ def build_lines(
     completed from ``fillers`` (phrases of the entry the advert did not ask
     for): a frame with its other members, a phrase line with the best-matching
     phrases, same group first, until it holds ``min_phrases`` phrases or the
-    next would not fit. A phrase line that still has fewer is not built. Every
-    addition must fit ``max_chars`` and say nothing the entry or line has said.
+    next would not fit. A phrase line that still has fewer is not built.
+
+    ``max_chars`` is the target, not a ceiling: an asked keyword may take a line
+    up to ``overflow_chars`` past it, a filler never does, and nothing pads a
+    line toward it. No addition may say what the entry or line has said.
     """
     used = set(shown)
     taken: set[str] = set()
@@ -229,7 +233,7 @@ def build_lines(
             for c in pool:
                 if c.hits & hits:
                     continue
-                if not _fits(kl, make([*got, c]), max_chars):
+                if not _fits(kl, make([*got, c]), max_chars + overflow_chars):
                     continue
                 got.append(c)
                 hits |= c.hits
@@ -274,6 +278,7 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
     cfg = _cfg()
     max_lines = int(getattr(cfg, "max_lines", 3) or 3)
     max_chars = int(getattr(cfg, "max_chars", 172) or 172)
+    overflow = int(getattr(cfg, "overflow_chars", 0) or 0)
     min_kw = int(getattr(cfg, "min_keywords", 2) or 2)
     min_phrases = int(getattr(cfg, "min_phrases", 3) or 3)
     kw_cap = int(getattr(settings.selection.bullets, "max_keyword_renders", 0) or 0)
@@ -334,6 +339,7 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             se.id, kl, shown, cands,
             weights={k.token: k.weight for k in keywords},
             max_lines=min(max_lines, len(movable)), max_chars=max_chars, min_keywords=min_kw,
+            overflow_chars=overflow,
             min_phrases=min_phrases, fillers=fillers,
         )
         if not lines:
