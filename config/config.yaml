@@ -346,7 +346,7 @@ selection:
   # Off until the benchmark shows it is better; extras stay as the fallback.
   grouped_lines:
     enabled: true
-    max_lines: 3
+    max_lines: 4
     # Target prose characters per line: two rendered lines (#142/#143). A
     # target, not a ceiling: an asked keyword may run a line up to
     # `overflow_chars` past it; fillers never do; nothing pads a line to it.
