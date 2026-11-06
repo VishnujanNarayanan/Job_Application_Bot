@@ -351,9 +351,11 @@ selection:
     max_chars: 172
     # A line holding fewer is not worth replacing the extra it would replace.
     min_keywords: 2
-    # A phrase line (unrelated keywords, no frame) needs more, or it reads as
-    # facts glued together; below this its keywords keep their own extras.
-    min_phrase_keywords: 3
+    # A line is never left short: it is completed with the entry's other
+    # phrases (the frame's other members; for a phrase line the best-matching
+    # phrases, same group first) up to this many phrases. A phrase line that
+    # cannot reach it is not built, and its keywords keep their extras.
+    min_phrases: 3
 
   # --- Bullets per entry -----------------------------------------------------
   # Method: 3 to 8 (1 summary + 2-7), scaled to time in the role.

@@ -218,11 +218,30 @@ def test_an_entry_without_phrases_is_left_alone():
     assert [b.id for b in se.bullets] == ["b0", "x1", "x2", "x3"]
 
 
-def test_a_phrase_line_needs_three_keywords_or_the_extras_stay():
+def test_a_short_phrase_line_is_completed_with_a_best_matching_phrase():
     se, prof = _scene(["b0", "x2", "x3"])  # Docker and SQS: no frame holds both
     with _on():
         gl.apply_grouped_lines([se], prof, _kw("Python", "Docker", "SQS"))
+    line = next(b for b in se.bullets if gl.is_line(b.id))
+    _, parts = gl.parse_line_id(line.id)
+    assert len(parts) == 3, "two asked phrases plus one filler, never a short line"
+    assert "Docker" in line.text and "SQS" in line.text
+    assert len(se.bullets) == 2
+
+
+def test_a_phrase_line_that_cannot_be_completed_keeps_the_extras():
+    se, prof = _scene(["b0", "x2", "x3"])
+    with _on(max_chars=70):  # room for the two asked phrases, not a third
+        gl.apply_grouped_lines([se], prof, _kw("Python", "Docker", "SQS"))
     assert [b.id for b in se.bullets] == ["b0", "x2", "x3"]
+
+
+def test_a_filler_never_names_a_tool_the_entry_already_shows():
+    se, prof = _scene(["b0", "b1", "x2", "x3"])  # b1 names Airflow
+    with _on():
+        gl.apply_grouped_lines([se], prof, _kw("Python", "Docker", "SQS"))
+    text = " ".join(b.text for b in se.bullets)
+    assert text.count("Airflow") == 1
 
 
 # --- the no-keyword-missed gate -------------------------------------------------

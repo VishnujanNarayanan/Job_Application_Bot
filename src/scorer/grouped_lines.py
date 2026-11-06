@@ -38,7 +38,7 @@ from typing import Any, Sequence
 import structlog
 
 from src.config import settings
-from src.scorer.keywords import Keyword, covered_by, hit, norm, weight_of
+from src.scorer.keywords import Keyword, covered_by, hit, matches, norm, weight_of
 
 log = structlog.get_logger(__name__)
 
@@ -163,26 +163,59 @@ def build_lines(
     max_lines: int,
     max_chars: int,
     min_keywords: int,
-    min_phrase_keywords: int = 3,
+    min_phrases: int = 3,
+    fillers: Sequence[Any] = (),
 ) -> list[tuple[list[Part], set[str]]]:
     """Pack candidates into lines, heaviest keywords first.
 
     Each line is one of two kinds, never a mix:
       * a FRAME line: one group's phrases in its frame, closed by its ending.
-        Preferred: the frame holding the most keywords is taken, so related
-        keywords share one dense sentence;
+        Preferred: the frame holding the most asked keywords is taken, so
+        related keywords share one dense sentence;
       * a PHRASE line: separate phrases joined as a list, only when no frame
-        can hold two of the keywords left. A phrase joins only if the line still fits ``max_chars`` and
-    it says nothing the entry or the line has said. A line holding fewer than
-    ``min_keywords`` new keywords is not worth a line: the extra it would
-    replace says the same in its own sentence.
+        can hold two of the keywords left.
+
+    A line needs ``min_keywords`` asked keywords, or the extra it would replace
+    says the same in its own sentence. A line is never left short: it is
+    completed from ``fillers`` (phrases of the entry the advert did not ask
+    for): a frame with its other members, a phrase line with the best-matching
+    phrases, same group first, until it holds ``min_phrases`` phrases or the
+    next would not fit. A phrase line that still has fewer is not built. Every
+    addition must fit ``max_chars`` and say nothing the entry or line has said.
     """
     used = set(shown)
     taken: set[str] = set()
     out: list[tuple[list[Part], set[str]]] = []
+    order = {ph.id: i for i, ph in enumerate(kl.phrases)}
+    frames = {f.id: f for f in kl.frames}
 
     def worth(cs: list[_Cand]) -> float:
         return sum(weights.get(t, 0.0) for t in set().union(*(c.useful for c in cs))) if cs else 0.0
+
+    def frame_parts(f, ids) -> list[Part]:
+        ids = [i for i in f.allowed if i in set(ids)]
+        return [Part(tuple(ids), f.id)] if len(ids) > 1 else [Part((ids[0],))]
+
+    def fill(ids: list[str], frame) -> list[str]:
+        """Complete a line with phrases the advert did not ask for."""
+        ids = list(ids)
+        if len(ids) >= min_phrases:
+            return ids
+        groups = {ph.group for ph in kl.phrases if ph.id in ids}
+        pool = [ph for ph in fillers if ph.id not in taken and ph.id not in ids]
+        if frame is not None:
+            pool = [ph for ph in pool if ph.id in frame.allowed]
+            pool.sort(key=lambda ph: frame.allowed.index(ph.id))
+        else:
+            pool.sort(key=lambda ph: (ph.group not in groups, order[ph.id]))
+        for ph in pool:
+            if len(ids) >= min_phrases:
+                break
+            trial = [*ids, ph.id]
+            parts = frame_parts(frame, trial) if frame is not None else [Part((i,)) for i in trial]
+            if _fits(kl, parts, max_chars):
+                ids = trial
+        return ids
 
     while len(out) < max_lines:
         avail = sorted(
@@ -205,33 +238,31 @@ def build_lines(
         def count(cs: list[_Cand]) -> int:
             return len(set().union(*(c.useful for c in cs))) if cs else 0
 
-        # Frames first: the frame that holds the MOST keywords wins, weight
-        # breaking ties. A phrase line is the last resort, for keywords no
-        # frame of the entry can group.
+        # Frames first: the frame that holds the MOST asked keywords wins,
+        # weight breaking ties. A phrase line is the last resort, for keywords
+        # no frame of the entry can group.
         options = []
         for f in kl.frames:
             pool = [c for c in avail if c.phrase.id in f.allowed]
-            got = pack(pool, lambda cs, f=f: [Part(tuple(c.phrase.id for c in cs), f.id)]
-                       if len(cs) > 1 else [Part((cs[0].phrase.id,))])
+            got = pack(pool, lambda cs, f=f: frame_parts(f, [c.phrase.id for c in cs]))
             if len(got) > 1 and count(got) >= min_keywords:
-                # Keywords read in the frame's own order, as the author listed them.
-                ordered = tuple(i for i in f.allowed if i in {c.phrase.id for c in got})
-                options.append((count(got), worth(got), [Part(ordered, f.id)], got))
+                options.append((count(got), worth(got), f, got))
         if not options:
             got = pack(avail, lambda cs: [Part((c.phrase.id,)) for c in cs])
-            # Unrelated phrases joined into a list read as facts glued
-            # together, so a phrase line must carry more than a frame line.
-            if len(got) > 1 and count(got) >= max(min_keywords, min_phrase_keywords):
-                options.append((count(got), worth(got), [Part((c.phrase.id,)) for c in got], got))
+            if got and count(got) >= min_keywords:
+                options.append((count(got), worth(got), None, got))
         if not options:
             break
-        _, _, parts, got = max(options, key=lambda o: (o[0], o[1]))
+        _, _, f, got = max(options, key=lambda o: (o[0], o[1]))
+        ids = fill([c.phrase.id for c in got], f)
+        if f is None and len(ids) < min_phrases:
+            break
+        parts = frame_parts(f, ids) if f is not None else [Part((i,)) for i in ids]
         new = set().union(*(c.useful for c in got))
         out.append((parts, new))
         used |= set().union(*(c.hits for c in got))
-        taken |= {c.phrase.id for c in got}
+        taken |= set(ids)
     return out
-
 
 
 def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]) -> None:
@@ -244,7 +275,7 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
     max_lines = int(getattr(cfg, "max_lines", 3) or 3)
     max_chars = int(getattr(cfg, "max_chars", 172) or 172)
     min_kw = int(getattr(cfg, "min_keywords", 2) or 2)
-    min_phrase_kw = int(getattr(cfg, "min_phrase_keywords", 3) or 3)
+    min_phrases = int(getattr(cfg, "min_phrases", 3) or 3)
     kw_cap = int(getattr(settings.selection.bullets, "max_keyword_renders", 0) or 0)
     c_terms = capped_terms()
     g_terms = gated_terms()
@@ -290,11 +321,20 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
                 continue
             cands.append(_Cand(ph, hits, useful, weight_of(useful, keywords)))
 
+        # Fillers complete a short line: phrases saying no advert keyword, and
+        # no tool the entry already names.
+        stay_norm = norm(" \n ".join(b.text for b in stay))
+        fillers = [
+            ph for ph in kl.phrases
+            if not covered_by(norm(ph.text), keywords)
+            and not (g_terms and is_gated(norm(ph.text), g_terms))
+            and not matches(ph.kw, stay_norm)
+        ]
         lines = build_lines(
             se.id, kl, shown, cands,
             weights={k.token: k.weight for k in keywords},
             max_lines=min(max_lines, len(movable)), max_chars=max_chars, min_keywords=min_kw,
-            min_phrase_keywords=min_phrase_kw,
+            min_phrases=min_phrases, fillers=fillers,
         )
         if not lines:
             continue
