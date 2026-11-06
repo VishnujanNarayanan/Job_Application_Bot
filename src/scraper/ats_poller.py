@@ -36,6 +36,8 @@ fitting jobs), ``active`` (anything posted in the last 7 days), ``quiet``
 
 from __future__ import annotations
 
+import hashlib
+
 import difflib
 import re
 import threading
@@ -158,12 +160,14 @@ class Board:
     poll_error: str | None = None
     # The list's ETag from the last poll, sent as If-None-Match (#112).
     etag: str | None = None
+    # Fingerprint of the last complete list's posting ids (0019).
+    list_fp: str | None = None
 
     @classmethod
     def of(cls, row) -> "Board":
         return cls(row.ats, row.board_id, row.board_name or row.company, row.company_key,
                    row.polled_at, row.fits_7d, row.target_posted_7d, row.tier, row.poll_error,
-                   row.etag)
+                   row.etag, getattr(row, "list_fp", None))
 
     @property
     def gone_count(self) -> int:
@@ -197,6 +201,23 @@ class BoardResult:
     # record or close (#112). ``etag`` is the new list's, to send next time.
     not_modified: bool = False
     etag: str | None = None
+
+    @property
+    def fp(self) -> str | None:
+        """The list's fingerprint: a hash of its posting ids, or None when the
+        list was not read in full."""
+        if not self.complete or self.error or self.not_modified:
+            return None
+        ids = sorted({p.posting_id for p in self.postings})
+        return hashlib.sha1("\n".join(ids).encode()).hexdigest()
+
+    @property
+    def unchanged(self) -> bool:
+        """The list is the one recorded last time: a 304, or a complete list
+        whose fingerprint matches the board's."""
+        if self.not_modified:
+            return True
+        return bool(self.board.list_fp) and self.fp == self.board.list_fp
 
 
 # --- Fetching ------------------------------------------------------------------------
@@ -766,6 +787,11 @@ class Ledger:
         self.now = now
         self.known: dict[tuple[str, str], dict[str, Known]] = known or {}
         self.hours = {**TIER_HOURS, **(tier_hours or {})}
+        # Boards whose list is unchanged: only their PENDING rows are in
+        # ``known``; ``summary`` holds (newest unskipped first_seen_at, newest
+        # open posted_at) for the tier.
+        self.unchanged: set[tuple[str, str]] = set()
+        self.summary: dict[tuple[str, str], tuple] = {}
         self.inserts: list[dict] = []
         self.seen: list[tuple[str, str, str]] = []
         self.closed: list[tuple[str, str, str]] = []
@@ -773,21 +799,46 @@ class Ledger:
         self._sent: set[tuple[str, str]] = set()
 
     @classmethod
-    def load(cls, session, boards: list[Board], now: datetime, tier_hours: dict | None = None) -> "Ledger":
-        from sqlalchemy import select, tuple_
+    def load(cls, session, items: list, now: datetime, tier_hours: dict | None = None) -> "Ledger":
+        """Load what :meth:`record` needs. ``items`` are the fetched
+        :class:`BoardResult` (or plain boards, all loaded in full).
+
+        A board whose list is unchanged (a 304, or the same fingerprint as its
+        last complete list) needs only its PENDING rows and two dates for its
+        tier, not every posting it ever listed: re-reading those every poll was
+        most of the database's network transfer (0019)."""
+        from sqlalchemy import func, select, tuple_
 
         from src.state.models import AtsPosting
 
+        results = [i for i in items if isinstance(i, BoardResult)]
+        boards = [i.board if isinstance(i, BoardResult) else i for i in items]
+        same = {(r.board.ats, r.board.board_id) for r in results if r.unchanged}
         known: dict[tuple[str, str], dict[str, Known]] = {(b.ats, b.board_id): {} for b in boards}
-        keys = list(known)
-        for i in range(0, len(keys), 1000):
-            rows = session.execute(
-                select(AtsPosting.ats, AtsPosting.board_id, AtsPosting.posting_id, AtsPosting.first_seen_at,
-                       AtsPosting.skipped, AtsPosting.closed_at, AtsPosting.posted_at, AtsPosting.status)
-                .where(tuple_(AtsPosting.ats, AtsPosting.board_id).in_(keys[i:i + 1000])))
+        full = [k for k in known if k not in same]
+        cols = (AtsPosting.ats, AtsPosting.board_id, AtsPosting.posting_id, AtsPosting.first_seen_at,
+                AtsPosting.skipped, AtsPosting.closed_at, AtsPosting.posted_at, AtsPosting.status)
+        for i in range(0, len(full), 1000):
+            rows = session.execute(select(*cols).where(tuple_(AtsPosting.ats, AtsPosting.board_id).in_(full[i:i + 1000])))
             for a, b, pid, first, skipped, closed, posted, status in rows:
                 known[(a, b)][pid] = Known(first, skipped, closed, posted, status)
-        return cls(now, known, tier_hours)
+        keys = sorted(same)
+        summary = {}
+        for i in range(0, len(keys), 1000):
+            chunk = keys[i:i + 1000]
+            where = tuple_(AtsPosting.ats, AtsPosting.board_id).in_(chunk)
+            for a, b, pid, first, skipped, closed, posted, status in session.execute(
+                    select(*cols).where(where, AtsPosting.status == PENDING)):
+                known[(a, b)][pid] = Known(first, skipped, closed, posted, status)
+            for a, b, sent, posted in session.execute(
+                    select(AtsPosting.ats, AtsPosting.board_id,
+                           func.max(AtsPosting.first_seen_at).filter(AtsPosting.skipped.is_(None)),
+                           func.max(AtsPosting.posted_at).filter(AtsPosting.closed_at.is_(None)))
+                    .where(where).group_by(AtsPosting.ats, AtsPosting.board_id)):
+                summary[(a, b)] = (sent, posted)
+        ledger = cls(now, known, tier_hours)
+        ledger.unchanged, ledger.summary = same, summary
+        return ledger
 
     def record(self, res: BoardResult, classify: Callable, *, baseline_hours: float,
                stats: PollStats) -> list[ats.Posting]:
@@ -798,6 +849,8 @@ class Ledger:
         if res.not_modified:
             stats.not_modified += 1
             return []
+        if (board.ats, board.board_id) in self.unchanged:
+            return self._record_unchanged(res, classify, known, stats)
         if (not res.postings and board.poll_error != EMPTY_ONCE
                 and any(k.closed_at is None for k in known.values())):
             # Could be a glitch or quiet throttling: close nothing until a
@@ -854,10 +907,39 @@ class Ledger:
                     stats.closed += 1
         return send
 
+    def _record_unchanged(self, res: BoardResult, classify: Callable, known: dict, stats) -> list:
+        """A list identical to the last one: every posting is already known,
+        so stamp them seen and re-send any still PENDING; insert and close
+        nothing."""
+        board, now = res.board, self.now
+        send, kept = [], set()
+        for p in res.postings:
+            if p.posting_id in kept:
+                continue
+            reason = classify(p)
+            if reason == DROP:
+                continue
+            kept.add(p.posting_id)
+            self.seen.append((p.ats, p.board_id, p.posting_id))
+            row = known.get(p.posting_id)
+            if row and row.status == PENDING and row.first_seen_at < now and reason is None:
+                stats.requeued += 1
+                send.append(p)
+                self._sent.add((board.ats, board.board_id))
+        return send
+
     def tier(self, res: BoardResult) -> str:
         """hot / active / quiet, from what this board has shown."""
         board, week = res.board, self.now - timedelta(days=7)
         known = self.known.get((board.ats, board.board_id), {})
+        key = (board.ats, board.board_id)
+        if key in self.unchanged:
+            last_sent, last_open = self.summary.get(key, (None, None))
+            sent = key in self._sent or bool(last_sent and last_sent >= week)
+            if sent:
+                return "hot"
+            posted = [last_open] if res.not_modified else [p.posted_at for p in res.postings]
+            return "active" if any(t and t >= week for t in posted) else "quiet"
         sent = (board.ats, board.board_id) in self._sent or any(
             k.skipped is None and k.first_seen_at >= week for k in known.values())
         if sent or (board.polled_at is None and ((board.fits_7d or 0) > 0 or (board.target_posted_7d or 0) > 0)):
@@ -897,8 +979,10 @@ class Ledger:
         # An empty list held open keeps the old one, so the next poll reads
         # the list again rather than getting a 304 for the empty one.
         etag = res.board.etag if (res.error or res.held_empty or res.not_modified) else res.etag
+        # The fingerprint of a list read in full; otherwise the old one stands.
+        fp = None if (res.error or res.held_empty) else res.fp
         self.boards.append(dict(ats=res.board.ats, board_id=res.board.board_id, error=error,
-                                tier=tier, due=due, stop=stop, etag=etag))
+                                tier=tier, due=due, stop=stop, etag=etag, fp=fp))
 
     def flush(self, session) -> int:
         """Write everything queued; returns the number of statements sent."""
@@ -922,7 +1006,7 @@ class Ledger:
                 "now": self.now, "a": [r["ats"] for r in chunk], "b": [r["board_id"] for r in chunk],
                 "err": [r["error"] for r in chunk], "tier": [r["tier"] for r in chunk],
                 "due": [r["due"] for r in chunk], "stop": [r["stop"] for r in chunk],
-                "etag": [r["etag"] for r in chunk]})
+                "etag": [r["etag"] for r in chunk], "fp": [r.get("fp") for r in chunk]})
             statements += 1
         self.inserts, self.seen, self.closed, self.boards = [], [], [], []
         return statements
@@ -934,10 +1018,11 @@ _SEEN_SQL = f"UPDATE ats_postings AS p SET last_seen_at = :now, closed_at = NULL
 _CLOSED_SQL = f"UPDATE ats_postings AS p SET closed_at = :now {_KEYS}"
 _BOARDS_SQL = (
     "UPDATE ats_boards AS x SET polled_at = :now, poll_error = u.err, "
-    "tier = COALESCE(u.tier, x.tier), next_poll_at = u.due, poll = x.poll AND NOT u.stop, etag = u.etag "
+    "tier = COALESCE(u.tier, x.tier), next_poll_at = u.due, poll = x.poll AND NOT u.stop, etag = u.etag, "
+    "list_fp = COALESCE(u.fp, x.list_fp) "
     "FROM unnest(CAST(:a AS text[]), CAST(:b AS text[]), CAST(:err AS text[]), CAST(:tier AS text[]), "
-    "CAST(:due AS timestamptz[]), CAST(:stop AS boolean[]), CAST(:etag AS text[])) "
-    "AS u(ats, board_id, err, tier, due, stop, etag) "
+    "CAST(:due AS timestamptz[]), CAST(:stop AS boolean[]), CAST(:etag AS text[]), CAST(:fp AS text[])) "
+    "AS u(ats, board_id, err, tier, due, stop, etag, fp) "
     "WHERE x.ats = u.ats AND x.board_id = u.board_id")
 
 

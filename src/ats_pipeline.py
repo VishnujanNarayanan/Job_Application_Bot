@@ -250,7 +250,7 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
                                      parallel=int(a.get("parallel_hosts", 1)))
 
     candidates: list[tuple[ats.Posting, ats_poller.Board]] = []
-    ledger = ats_poller.Ledger.load(session, [r.board for r in results], now, tier_hours)
+    ledger = ats_poller.Ledger.load(session, results, now, tier_hours)
     for res in results:
         stats.boards += 1
         if res.error:
