@@ -6,9 +6,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/VishnujanNarayanan/Job_Application_Bot/releases/tag/v3.3.0"><img alt="Version" src="https://img.shields.io/badge/version-v3.3.0-2ea44f"/></a>
+  <a href="https://github.com/VishnujanNarayanan/Job_Application_Bot/releases/tag/v3.3.1"><img alt="Version" src="https://img.shields.io/badge/version-v3.3.1-2ea44f"/></a>
   <img alt="Python" src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white"/>
-  <img alt="Tests" src="https://img.shields.io/badge/tests-1522_passing-3FB950?logo=pytest&logoColor=white"/>
+  <img alt="Tests" src="https://img.shields.io/badge/tests-1523_passing-3FB950?logo=pytest&logoColor=white"/>
   <a href="CHANGELOG.md"><img alt="Changelog" src="https://img.shields.io/badge/changelog-CHANGELOG.md-blue"/></a>
   <br>
   <a href="https://vishnujan.dev/"><img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-vishnujan.dev-3b5998?logo=googlechrome&logoColor=white"/></a>

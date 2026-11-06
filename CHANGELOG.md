@@ -7,6 +7,29 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+## [v3.3.1] — 2026-11-07
+
+### Changed
+
+- **Repeated evidence earns an entry a place (#190).** Entries join the
+  resume in order of what they add. Only skills not yet shown used to count,
+  so once junk words stopped counting as skills (v3.3.0) many resumes
+  stopped at the minimum of three entries. An entry that again shows asked
+  skills now counts half their weight, until a skill is in
+  `scoring.fit.repetition_cap` entries; one joining on repetition alone must
+  repeat at least `selection.entry_repeat_min` skills and stays within
+  `selection.repeat_bullet_budget` bullets. An entry bringing a new skill is
+  never held back. Shortest resumes 15 → 19 bullets, median 24 → 27.
+
+### Fixed
+
+- **Word forms no longer meet the bare word.** "versioning" matches
+  "versioned" but not the everyday "code version"; the bare word
+  "versioning" is not a skill on its own.
+- **Tools named in a duties line count again** ("HTTP handlers", "Go +
+  Jest"), but never a word inside a longer product name ("the Agent Control
+  Plane" is not Plane).
+
 ## [v3.3.0] — 2026-11-06
 
 Match quality (#179): which skills count, how they are matched, and which
