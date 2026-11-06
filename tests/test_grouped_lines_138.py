@@ -352,15 +352,50 @@ def _other(*texts):
     )
 
 
-def test_a_weak_main_gives_its_slot_to_a_line_with_missing_required_skills():
-    se, prof = _scene(["b0", "b1"])  # b1 says only Airflow, which e2 also shows
+def _ship_lines():
+    data = _lines().model_dump()
+    data["frames"].append({"id": "ship", "text": "shipped the crawler with {kws}",
+                           "ending": ", so releases were reviewed.", "allowed": ["docker", "sqs"]})
+    return KeywordLines.model_validate(data)
+
+
+def test_a_weak_main_gives_its_slot_to_a_frame_with_two_asked_keywords():
+    se, prof = _scene(["b0", "b1"], lines=_ship_lines())  # b1 says only Airflow, e2 shows it too
+    se.cap = 2
+    with _on(lead_entries=0):
+        gl.apply_grouped_lines([se, _other("Ran Airflow daily.")], prof,
+                               _kw("Python", "Airflow", "Docker", "SQS"))
+    ids = [b.id for b in se.bullets]
+    assert ids[0] == "b0" and "b1" not in ids and len(ids) == 2
+    assert "Docker and SQS" in se.bullets[1].text
+
+
+def test_a_list_of_unrelated_phrases_never_replaces_a_main():
+    se, prof = _scene(["b0", "b1"])
     se.cap = 2
     with _on(lead_entries=0):
         gl.apply_grouped_lines([se, _other("Ran Airflow daily.")], prof,
                                _kw("Python", "Airflow", "Prefect", "Docker", "SQS"))
-    ids = [b.id for b in se.bullets]
-    assert "b1" not in ids and ids[0] == "b0" and len(ids) == 2
-    assert all(k in se.bullets[1].text for k in ("Prefect", "Docker", "SQS"))
+    assert [b.id for b in se.bullets] == ["b0", "b1"]
+
+
+def test_a_frame_of_one_asked_keyword_plus_fillers_never_replaces_a_main():
+    se, prof = _scene(["b0", "b1"], lines=_ship_lines())
+    se.cap = 2
+    with _on(lead_entries=0):
+        gl.apply_grouped_lines([se, _other("Ran Airflow daily.")], prof,
+                               _kw("Python", "Airflow", "Docker"))
+    assert [b.id for b in se.bullets] == ["b0", "b1"]
+
+
+def test_a_main_saying_two_asked_keywords_is_not_weak():
+    se, prof = _scene(["b0", "b1"], lines=_ship_lines())
+    se.bullets[1].text = "Moved the nightly jobs to Airflow and Python."
+    se.cap = 2
+    with _on(lead_entries=0):
+        gl.apply_grouped_lines([se, _other("Ran Airflow and Python daily.")], prof,
+                               _kw("Python", "Airflow", "Docker", "SQS"))
+    assert [b.id for b in se.bullets] == ["b0", "b1"]
 
 
 def test_the_lead_bullet_is_never_swapped():

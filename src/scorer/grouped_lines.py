@@ -308,6 +308,23 @@ def build_lines(
     return out
 
 
+def _pairs(kl: Any, parts: Sequence[Part], new: set[str], keywords: Sequence[Keyword]) -> bool:
+    """May this line take a main bullet's slot (#190)? Only if it carries two
+    or more asked keywords that belong together: a frame holding two asked
+    members, or a phrase line with two asked phrases from one group. A frame
+    of one asked keyword plus fillers, or a list of unrelated phrases, may not.
+    """
+    phrases = {ph.id: ph for ph in kl.phrases}
+    ids = [i for part in parts for i in part.phrases]
+    asked = [i for i in ids if covered_by(norm(phrases[i].text), keywords) & new]
+    if len(parts) == 1 and parts[0].frame and len(parts[0].phrases) > 1:
+        return len(asked) >= 2
+    groups: dict[str, int] = {}
+    for i in asked:
+        groups[phrases[i].group] = groups.get(phrases[i].group, 0) + 1
+    return max(groups.values(), default=0) >= 2
+
+
 def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]) -> None:
     """Rewrite each selected entry's extras into grouped lines, in place."""
     if not enabled() or not keywords:
@@ -368,8 +385,10 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
                 continue
             if g_terms and is_gated(norm(b.text), g_terms):
                 continue
+            says = kws_in([b.text])
             rest = kws_in(x.text for x in stay if x is not b) | elsewhere
-            if kws_in([b.text]) <= rest:
+            # Only a main carrying at most one asked keyword, all shown elsewhere.
+            if len(says) <= 1 and says <= rest:
                 weak.append(b)
         weak.sort(key=lambda b: b.score)
         if not movable and not spare and not weak:
@@ -426,7 +445,7 @@ def apply_grouped_lines(entries: list, profile: Any, keywords: Sequence[Keyword]
             elif extra_slots < spare:
                 kept.append((parts, new))
                 extra_slots += 1
-            elif len(swapped) < len(weak):
+            elif len(swapped) < len(weak) and _pairs(kl, parts, new, keywords):
                 kept.append((parts, new))
                 swapped.append(weak[len(swapped)])
         lines = kept
