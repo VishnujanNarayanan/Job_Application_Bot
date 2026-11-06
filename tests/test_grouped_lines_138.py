@@ -525,3 +525,18 @@ def test_an_entry_with_room_for_one_line_may_take_a_second_for_a_missing_require
     text = " ".join(b.text for b in se.bullets)
     assert all(k in text for k in ("Prefect", "Airflow", "Docker", "SQS")), "nothing lost"
     assert len(se.bullets) == 3, "one bullet over the cap, no more"
+
+
+def test_a_lone_frameless_skill_forms_a_same_group_line():
+    kl = _lines(phrases=[
+        {"id": "micro", "kw": "microservices", "group": "backend", "text": "split the platform into microservices", "source": "x1"},
+        {"id": "node", "kw": "Node.js", "group": "backend", "text": "built the back end in Node.js", "source": "x2"},
+        {"id": "deploy", "kw": "Docker", "group": "devops", "text": "packaged it in Docker", "source": "x3"},
+    ], frames=[])
+    ph = {p.id: p for p in kl.phrases}
+    cands = [gl._Cand(ph["micro"], {"microservices"}, {"microservices"}, 1.0)]
+    lines = gl.build_lines("e1", kl, set(), cands, weights={}, max_lines=2, max_chars=172,
+                           fillers=[ph["node"], ph["deploy"]], priority={"microservices"})
+    assert lines, "the lone skill is placed"
+    ids = {i for p in lines[0][0] for i in p.phrases}
+    assert ids == {"micro", "node"}, "completed from its own group only"

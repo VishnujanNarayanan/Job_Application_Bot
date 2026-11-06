@@ -296,6 +296,15 @@ def build_lines(
         lines_left = max_lines - len(out)
         in_a_frame = {c.phrase.id for o in options for c in o[4]}
         frameless = [c for c in avail if c.phrase.id not in in_a_frame]
+        # A frameless asked keyword may still form a SAME-GROUP line: its
+        # phrase completed by other phrases of its group (asked keywords
+        # another entry shows first, then unasked ones). One group reads as
+        # one thought, unlike a list of unrelated facts.
+        for c in frameless:
+            group_pool = [ph for ph in fillers if ph.group == c.phrase.group]
+            ids = fill([c.phrase.id], phrase_parts, group_pool)
+            if len(ids) >= 2:
+                options.append(("group", count([c]), worth([c]), None, [c], ids))
         compact = len(groups_left) >= phrase_min_groups and (len(groups_left) > lines_left or frameless)
         if compact:
             # One phrase per group first (missing required skills leading), so
@@ -317,7 +326,7 @@ def build_lines(
             break
         # A required skill the page would otherwise lose outranks keyword count.
         kind, _, _, f, got, ids = max(options, key=lambda o: (urgent(o[4]), o[1], o[2]))
-        parts = frame_parts(f, ids) if kind == "frame" else phrase_parts(ids)
+        parts = frame_parts(f, ids) if kind == "frame" else phrase_parts(ids)  # "phrase" or "group"
         out.append((parts, set().union(*(c.useful for c in got))))
         used |= set().union(*(c.hits for c in got))
         for i in ids:
