@@ -303,8 +303,10 @@ def build_lines(
                 gs = {c.phrase.group for c in got}
                 spare = sorted((ph for ph in fillers if ph.group in gs), key=lambda ph: order[ph.id])
                 ids = fill([c.phrase.id for c in got], phrase_parts, spare)
-                # A compacting line beats any one frame: it carries more groups.
-                options = [("phrase", count(got), worth(got), None, got, ids)]
+                # The compacting line competes with the frames on the same terms:
+                # missing required skills first, then keyword count (where it
+                # usually wins), so it never displaces a frame that saves more.
+                options.append(("phrase", count(got), worth(got), None, got, ids))
         if not options:
             break
         # A required skill the page would otherwise lose outranks keyword count.

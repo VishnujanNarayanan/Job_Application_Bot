@@ -480,3 +480,22 @@ def test_a_filler_never_repeats_a_keyword_this_entry_already_shows():
                                _kw("Python", "Prefect", "Airflow"))
     text = " ".join(b.text for b in se.bullets)
     assert text.count("Airflow") == 1
+
+
+def test_a_compacting_list_never_beats_a_frame_saving_more_missing_required_skills():
+    kl = _lines(phrases=[
+        {"id": "react", "kw": "React", "group": "frontend", "text": "built the pages in React", "source": "x1"},
+        {"id": "patterns", "kw": "design patterns", "group": "backend", "text": "applied design patterns", "source": "x2"},
+        {"id": "dist", "kw": "distributed systems", "group": "backend", "text": "built a small distributed system", "source": "x3"},
+        {"id": "tests", "kw": "Testing", "group": "testing", "text": "applied backend testing", "source": "b1"},
+    ], frames=[{"id": "arch", "text": "designed the service with {kws}", "ending": ", so parts scaled alone.",
+                "allowed": ["patterns", "dist"]}])
+    ph = {p.id: p for p in kl.phrases}
+    cands = [gl._Cand(ph[i], {ph[i].kw}, {ph[i].kw}, 1.0) for i in ph]
+    lines = gl.build_lines("e1", kl, set(), cands, weights={}, max_lines=1, max_chars=200,
+                           priority={"design patterns", "distributed systems"})
+    assert {"design patterns", "distributed systems"} <= lines[0][1], "the first line saves both missing skills"
+    # When the list cannot hold both (length), the frame that can must win.
+    lines = gl.build_lines("e1", kl, set(), cands, weights={}, max_lines=1, max_chars=95,
+                           priority={"design patterns", "distributed systems"})
+    assert {"design patterns", "distributed systems"} <= lines[0][1]
