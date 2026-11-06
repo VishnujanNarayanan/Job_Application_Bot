@@ -52,6 +52,33 @@ work_experience:
     employment_type: "employment"     # (optional) employment | freelance
     link: ""                          # (optional) shown for freelance entries only
 
+    # (optional, #138) Grouped keyword lines: several keywords in one line instead
+    # of one extra bullet each. RULE: every keyword any bullet of this entry
+    # proves needs a phrase here (or a `skip` entry with the reason), and each
+    # phrase joins every frame whose verb is true for it, or a new frame.
+    # `python -m src.cli.reparse` and `python -m src.cli.assets push` refuse a
+    # profile that misses one; `python -m tools.keyword_lines_check` lists them.
+    # Full rules: docs/profile_edits.md
+    keyword_lines:
+      phrases:                        # one per keyword: a clause, no full stop
+        - id: "docker"                # lower-case letters, digits, _
+          kw: "Docker"                # the keyword, as the phrase says it
+          group: "delivery"           # the kind of skill
+          source: "acme_backend_x1"   # a bullet of THIS entry that proves it
+          text: "packaged the service in Docker"
+        - id: "github_actions"
+          kw: "GitHub Actions"
+          group: "delivery"
+          source: "acme_backend_x1"
+          text: "ran every build in GitHub Actions"
+      frames:                         # tried first: one group, commas, its own ending
+        - id: "delivery"
+          text: "shipped every release with {kws}"
+          # The WHY: true for every member; must not repeat a bullet's words.
+          ending: ", so customers only ever ran code that had passed review."
+          allowed: ["docker", "github_actions"]
+      skip: []                        # terms the bullets match that get no phrase (why)
+
     role_blocks:
       - role: "backend"               # Short label for the kind of job this block targets
         role_fit: "primary"           # (optional) primary | adjacent
@@ -73,7 +100,7 @@ work_experience:
         # their keyword, e.g. Docker, Git, SQL.
         extra_bullets:
           - id: "acme_backend_x1"
-            text: "REPLACE_ME: a bullet naming a specific tool you used."
+            text: "REPLACE_ME: e.g. Packaged the service in Docker and ran its builds in GitHub Actions, so each release was the reviewed code."
 
       # (optional) The same job written for a different kind of role.
       # - role: "data"

@@ -193,6 +193,13 @@ def _entry(
         if src.get("tags"):
             out["tags"] = list(src["tags"])
 
+    # Grouped keyword lines (#138) are hand-written per entry, so a re-extract
+    # must not drop them: the extract's own wins, else the profile's carries
+    # forward. If the new bullets no longer prove a phrase, validation fails; if
+    # they prove a keyword with no phrase, the keyword_lines gate does.
+    kl = src.get("keyword_lines") or prior.get("keyword_lines")
+    if kl:
+        out["keyword_lines"] = kl
     out["role_blocks"] = [
         _block(rb, entry_dates=rb.get("entry_dates") or dates)
         for rb in src["role_blocks"]
