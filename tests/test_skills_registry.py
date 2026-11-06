@@ -360,3 +360,15 @@ def test_a_field_of_work_claims_its_words_but_is_not_a_skill(reg, monkeypatch):
     found = scan(jd, terms)
     assert "Vision" not in found and "PyTorch" in found
     assert reg_mod.admitted(found, jd) == ["PyTorch"]
+
+
+def test_a_sense_word_inside_a_longer_name_in_duties_is_not_the_tool():
+    from src.state.registry import Entry, build
+
+    r = build({"plane": (Entry(term="Plane", label="sense"), False),
+               "jest": (Entry(term="Jest", label="sense"), False),
+               "python": (Entry(term="Python", label="approve"), False)})
+    jd = (REQ + "Python in production.\n\n**Responsibilities**\n"
+          "- Build the Agent Control Plane for customers.\n- Write unit tests (Go + Jest).")
+    assert not r.admits("Plane", jd)
+    assert r.admits("Jest", jd)
