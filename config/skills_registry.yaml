@@ -1724,7 +1724,7 @@ terms:
   "data ecosystems": {label: reject, term: Data ecosystems}
   "data encryption": {label: approve, means: [encryption], term: data encryption}
   "data engineer": {label: reject, term: Data Engineer}
-  "data engineering": {by: operator, label: domain, term: Data Engineering}
+  "data engineering": {by: operator, label: approve, note: "operator 2026-11-08: fields of work count", term: Data Engineering}
   "data engineering certification": {label: credential, term: Data Engineering certification}
   "data engineering concepts": {label: approve, term: Data Engineering concepts}
   "data engineering principles": {label: approve, term: data engineering principles}
