@@ -27,6 +27,7 @@ without a DB.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -69,6 +70,7 @@ SKILLS_PARENT = "__skills_pool__"
 
 # master_meta keys.
 _META_MTIME = "master_profile_mtime"
+_META_SHA = "master_profile_sha256"
 _META_PROCESSED = "master_profile_processed_at"
 
 
@@ -650,8 +652,13 @@ def rebuild(
     embed_fn = embed_fn or embed
     now = datetime.now(timezone.utc)
 
+    # Skip on the CONTENT, not the file time: every runner downloads a fresh
+    # copy of the profile, so its mtime always differs and the sync (which
+    # reads every bullet's embedding back from the database) ran on every
+    # poll, for nothing.
     mtime = str(os.path.getmtime(yaml_path))
-    if not force and _get_meta(session, _META_MTIME) == mtime:
+    digest = hashlib.sha256(Path(yaml_path).read_bytes()).hexdigest()
+    if not force and _get_meta(session, _META_SHA) == digest:
         return RebuildReport(skipped=True)
 
     with open(yaml_path) as f:
@@ -667,6 +674,7 @@ def rebuild(
     _sync_aliases(session, profile, embed_fn, report)
 
     _set_meta(session, _META_MTIME, mtime)
+    _set_meta(session, _META_SHA, digest)
     _set_meta(session, _META_PROCESSED, now.isoformat())
     return report
 
