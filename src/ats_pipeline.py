@@ -323,6 +323,13 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
         # One malformed posting must never end the run (a list where a string
         # was expected stopped every run for six hours, 2026-11-04): log it,
         # forget it so the next poll retries, and carry on.
+        # A same-day date-only posting is as old as the time it was first
+        # seen, not its date's midnight (#180). Set here, after the ledger
+        # has saved the source's date to ats_postings, so the original is
+        # kept there and everything from G on (age cap, reach-the-bar,
+        # recency, newest-first) reads the effective time.
+        seen = ledger.known.get((p.ats, p.board_id), {}).get(p.posting_id)
+        p.posted_at = ats.effective_posted_at(p.posted_at, seen.first_seen_at if seen else now, now)
         try:
             reason = decide(p, rules)  # G
             if reason:
