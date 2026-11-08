@@ -399,3 +399,17 @@ def test_employment_type_accepts_a_json_ld_list():
     assert p.employment_type == "FULL_TIME"
     job = ats.to_job(p, company="Deloitte")
     assert job.job_type == "fulltime"
+
+
+# --- date-only sources are flagged (#180) -------------------------------------------------
+
+def test_date_only_sources_are_flagged():
+    assert isinstance(ats._sf_date("11/3/26"), ats.PostedDate)
+    assert isinstance(ats._amazon_date("November 3, 2026"), ats.PostedDate)
+    (o,) = ats.parse_list("oracle", ORACLE, _oracle_page([1], 1))
+    assert isinstance(o.posted_at, ats.PostedDate)
+    # Workable's detail writes the list's date as a midnight timestamp.
+    assert isinstance(ats._when("2026-09-21T00:00:00.000Z"), ats.PostedDate)
+    # Real times, and epoch numbers, are not dates.
+    assert not isinstance(ats._when("2026-09-21T09:30:00Z"), ats.PostedDate)
+    assert not isinstance(ats._when(1_790_000_000_000), ats.PostedDate)

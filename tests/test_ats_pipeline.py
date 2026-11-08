@@ -183,6 +183,8 @@ def test_collect_runs_the_stages_in_order(monkeypatch):
     monkeypatch.setattr(pipe, "log_db_size", lambda *_a, **_k: 0.0)
     monkeypatch.setattr(poller, "fetch_lists", lambda boards, lanes, **_k: [poller.BoardResult(board, postings)])
     class _Ledger:
+        known = {}
+
         def record(self, res, classify, **_k):
             return [p for p in res.postings if classify(p) is None]
 
@@ -439,3 +441,75 @@ def test_get_strategy_is_safe_to_call_from_many_threads_at_once():
         assert len({id(s) for s in got}) == 1
     finally:
         modes.reset_registry()
+
+
+# --- date-only posting times (#180) ------------------------------------------------------
+
+def test_a_same_day_date_only_posting_takes_its_first_seen_time():
+    today = ats._when("2026-10-16")            # NOW is 2026-10-16 06:00 UTC
+    assert isinstance(today, ats.PostedDate) and today.hour == 0
+    seen = NOW - timedelta(minutes=20)
+    assert ats.effective_posted_at(today, seen, NOW) == seen
+    assert type(ats.effective_posted_at(today, seen, NOW)) is datetime, "a plain datetime from here on"
+
+
+def test_an_older_date_only_posting_keeps_its_date():
+    older = ats._when("2026-10-14")
+    assert ats.effective_posted_at(older, NOW, NOW) == older
+
+
+def test_a_posting_with_a_real_time_is_unchanged():
+    timed = ats._when("2026-10-16T04:12:00Z")
+    assert not isinstance(timed, ats.PostedDate)
+    assert ats.effective_posted_at(timed, NOW, NOW) is timed
+    assert ats.effective_posted_at(None, NOW, NOW) is None
+
+
+def test_the_effective_time_is_never_before_the_date_nor_after_now():
+    # An IST date can be ahead of UTC: dated the 17th, first seen on the 16th.
+    ahead = ats._when("2026-10-17")
+    assert ats.effective_posted_at(ahead, NOW - timedelta(hours=1), NOW) == NOW
+    # A requeued posting first seen earlier today keeps that earlier time.
+    today = ats._when("2026-10-16")
+    assert ats.effective_posted_at(today, NOW - timedelta(hours=5), NOW) == NOW - timedelta(hours=5)
+
+
+def test_collect_scores_a_same_day_date_only_posting_as_fresh(monkeypatch):
+    """The ledger saves the source's date to ats_postings; the job and every
+    check from G on read the first-seen time."""
+    board = poller.Board("oracle", "jpmc.fa.oraclecloud.com/CX_1001", polled_at=NOW - timedelta(hours=1))
+    p = ats.Posting("oracle", board.board_id, "7", "Backend Engineer", "Pune",
+                    posted_at=ats._when("2026-10-16"), description="Python")
+    recorded = []
+    monkeypatch.setattr(poller, "due_boards", lambda *_a, **_k: [board])
+    monkeypatch.setattr(pipe, "log_db_size", lambda *_a, **_k: 0.0)
+    monkeypatch.setattr(poller, "fetch_lists", lambda boards, lanes, **_k: [poller.BoardResult(board, [p])])
+
+    class _Ledger:
+        known = {(p.ats, p.board_id): {"7": poller.Known(NOW, None, None, p.posted_at, poller.PENDING)}}
+
+        def record(self, res, classify, **_k):
+            recorded.extend(q.posted_at for q in res.postings)
+            return list(res.postings)
+
+        def schedule(self, res, stats=None):
+            pass
+
+        def flush(self, session):
+            return 0
+
+    monkeypatch.setattr(poller.Ledger, "load", classmethod(lambda cls, *_a, **_k: _Ledger()))
+    monkeypatch.setattr(poller, "portal_jobs", lambda *_a: [])
+    monkeypatch.setattr(pipe.ats_dedupe, "repeat_requisitions", lambda *_a: {})
+    monkeypatch.setattr(poller, "fetch_names", lambda *_a, **_k: {})
+    monkeypatch.setattr(poller, "fetch_details", lambda ps, lanes, **_k: {q.job_id: True for q in ps})
+    monkeypatch.setattr(poller, "prune", lambda *_a, **_k: 0)
+    monkeypatch.setattr(poller, "requeue_pending", lambda *_a, **_k: 0)
+    cfg = SimpleNamespace(filters=SimpleNamespace(get=lambda k, d=None: {
+        "job_type": "fulltime", "title_blocklist": [], "job_level_blocklist": [], "disallowed_regions": []}.get(k, d)),
+        get=lambda k, d=None: {"ats_poll": {}}.get(k, d))
+
+    (job,) = pipe.collect(_Session(), cfg, now=NOW, stats=poller.PollStats(), lanes={})
+
+    assert recorded == [datetime(2026, 10, 16, tzinfo=timezone.utc)], "ats_postings keeps the date"
+    assert job.posted_at == NOW, "first seen this run, not 6 hours ago at midnight"

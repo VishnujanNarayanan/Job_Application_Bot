@@ -475,7 +475,7 @@ def sf_search_body(page: int = 0) -> dict:
 def _sf_date(text: str | None) -> datetime | None:
     """"11/3/26" (m/d/yy) -> a date."""
     try:
-        return datetime.strptime((text or "").strip(), "%m/%d/%y").replace(tzinfo=timezone.utc)
+        return _date_only(datetime.strptime((text or "").strip(), "%m/%d/%y"))
     except ValueError:
         return None
 
@@ -686,7 +686,7 @@ def sf_total(data: dict) -> int:
 
 def _amazon_date(text: str | None) -> datetime | None:
     try:
-        return datetime.strptime(" ".join((text or "").split()), "%B %d, %Y").replace(tzinfo=timezone.utc)
+        return _date_only(datetime.strptime(" ".join((text or "").split()), "%B %d, %Y"))
     except ValueError:
         return None
 
@@ -913,16 +913,69 @@ def html_to_text(raw: str | None) -> str | None:
     return (text or "").strip() or None
 
 
+class PostedDate(datetime):
+    """A posting date with no time of day (#180), held as midnight UTC.
+
+    Oracle ``PostedDate``, SuccessFactors ``unifiedStandardStart``, Workable
+    ``published_on``, BambooHR ``datePosted``, Amazon, Avature and Workday's
+    ``startDate`` give only the date (some as a timestamp at 00:00:00, see
+    :func:`_when`). Stored as midnight, a job posted at
+    14:00 IST and found within the hour looks 9-14 hours old and loses
+    recency. The type is the flag, so it survives every ``x or
+    posting.posted_at`` fallback: :func:`effective_posted_at` gives a same-day
+    one its first-seen time.
+    """
+
+
+def _date_only(dt: datetime) -> PostedDate:
+    """Midnight of ``dt``'s date, in its own zone (UTC when it has none)."""
+    return PostedDate(dt.year, dt.month, dt.day, tzinfo=dt.tzinfo or timezone.utc)
+
+
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+#: A date-only posting first seen within this long after its date's midnight
+#: was posted that day, so its first-seen time stands in for the hour.
+SAME_DAY = timedelta(hours=24)
+
+
+def effective_posted_at(posted: datetime | None, first_seen: datetime | None,
+                        now: datetime) -> datetime | None:
+    """The time scoring should read as "posted" (#180).
+
+    A date-only posting first seen on its own date takes the first-seen time,
+    never earlier than the date's midnight and never later than ``now``. An
+    older one keeps its midnight: the date is all there is, and for it age in
+    days is what counts. A posting with a real time is returned unchanged.
+    """
+    if not isinstance(posted, PostedDate) or first_seen is None or first_seen - posted >= SAME_DAY:
+        return posted
+    out = min(max(first_seen, posted), now)
+    return datetime.fromtimestamp(out.timestamp(), timezone.utc)
+
+
 def _when(value: Any) -> datetime | None:
     if value in (None, ""):
         return None
+    if isinstance(value, str) and _ISO_DATE.fullmatch(value.strip()):
+        try:
+            return _date_only(datetime.fromisoformat(value.strip()))
+        except ValueError:
+            return None
     try:
         if isinstance(value, (int, float)):
             return datetime.fromtimestamp(value / 1000 if value > 1e11 else value, timezone.utc)
         dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (ValueError, OSError, OverflowError):
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    # A date written as a timestamp: Workable's detail sends "published":
+    # "2026-09-21T00:00:00.000Z" for a job its list dates 2026-09-21. A real
+    # posting time that falls on the exact second of midnight is rare enough
+    # that a zero time of day in a string means "date only".
+    if isinstance(value, str) and (dt.hour, dt.minute, dt.second, dt.microsecond) == (0, 0, 0, 0):
+        return _date_only(dt)
+    return dt
 
 
 def _country(value: Any) -> str | None:
@@ -1175,7 +1228,7 @@ def parse_detail(posting: Posting, body: str) -> None:
         d = re.search(r"Posted since\s*(?:<[^>]+>\s*)*(\d{1,2}-[A-Za-z]{3}-\d{4})", body)
         if d:
             try:
-                posting.posted_at = datetime.strptime(d.group(1), "%d-%b-%Y").replace(tzinfo=timezone.utc)
+                posting.posted_at = _date_only(datetime.strptime(d.group(1), "%d-%b-%Y"))
             except ValueError:
                 pass
         return
