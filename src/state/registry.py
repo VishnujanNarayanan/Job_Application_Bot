@@ -346,10 +346,18 @@ def _approved_in(span: str, exclude: str) -> bool:
     return False
 
 
+#: Words that lead into a list item: "languages such as Go", "tools (e.g. Airflow".
+_LEAD_IN = re.compile(r"(?i)\b(?:such as|e\.?g\.?|for example|like|including|i\.?e\.?|especially)\s+")
+
+#: Nouns a lower-case method name heads: "agile development", "an agile manner".
+_METHOD_HEADS = frozenset("development delivery methodology methodologies environment environments practices "
+                          "principles framework frameworks manner ceremonies processes process way".split())
+
+
 def _listed_with_approved(term: str, line: str) -> bool:
     """The term is an item of a list whose next or previous item is an approved
     term ("Python, testing, CI/CD")."""
-    items = [i.strip(" ()[]:*.-•") for i in _ITEM_SPLIT.split(line)]
+    items = [_LEAD_IN.split(i)[-1].strip(" ()[]:*.-•") for i in _ITEM_SPLIT.split(line)]
     if len(items) < 2:
         return False
     key = term.casefold()
@@ -387,10 +395,30 @@ def _occurrence_is_skill(e: Entry, text: str, start: int, end: int) -> bool:
     # A term the registry writes as a name ("Teams", "Word", "Power") is not
     # that name where the advert writes it in lower case ("backend teams").
     written = text[start:end]
-    if e.term[:1].isupper() and written.islower():
-        return False
     head = span.root
     nxt = doc[span.end].text if span.end < len(doc) else ""
+    prev = doc[span.start - 1].text if span.start > 0 else ""
+    line_text = text[line_start: line_end if line_end >= 0 else len(text)]
+    # In a list of approved tools ("such as Go, Java", "( Airflow, Step
+    # Functions"), the term is an item, whatever the tagger calls it: spaCy
+    # tagged Go as a verb and Airflow as an adverb there (#177).
+    if e.term[:1].isupper() and written.islower():
+        # A lower-case spelling is the plain word ("backend teams"), except
+        # where it heads a method noun ("agile development", "an agile
+        # manner"), #177. An approved skill nearby is not enough: "backend
+        # teams and DevOps" is still not Microsoft Teams.
+        if nxt.casefold() not in _METHOD_HEADS:
+            return False
+    # In a list of approved tools ("such as Go, Java", "( Airflow, Step
+    # Functions"), the term is an item, whatever the tagger calls it: spaCy
+    # tagged Go as a verb and Airflow as an adverb there (#177). Only real list
+    # punctuation or a lead-in counts; "and"/"or" alone do not ("product and
+    # teams").
+    in_tool_list = (_approved_in(line_text, written)
+                    and (prev.casefold() in (",", "(", "/", "as", "like", "including", "e.g.", "eg")
+                         or nxt in (",", ")", "/")))
+    if in_tool_list:
+        return True
     # A word directly followed by ":" or "(" is a label or a named item
     # ("Go: 3+ years", "Excel (pivot tables)"), whatever its tagged part of speech.
     if head.pos_ in _VERBISH and nxt not in (":", "("):

@@ -62,6 +62,7 @@ _SYMBOL = re.compile(r"(?<![\w/])[A-Za-z][A-Za-z0-9]*(?:[+#]+|(?:[./-][A-Za-z0-9
 _ACRONYM = re.compile(r"(?<![\w/.-])[A-Z]{2,6}s?(?![\w/.-])")
 _NAME = re.compile(r"(?<=[a-z,;:(] )(?:[A-Z][A-Za-z0-9.+#-]*)(?: (?:[A-Z][A-Za-z0-9.+#-]*|of|for|and|&)){1,3}"
                    r"(?<![ &])(?=[\s,.;:)]|$)")
+_LEAD = re.compile(r"^\W*([A-Z][\w.+#-]*(?: [A-Z][\w.+#-]*){0,2})(?=\s*[,:(])")
 _ASK = re.compile(r"\b(?:experience (?:with|in|using|of)|hands-on (?:with|in)|knowledge of|familiar(?:ity)? with"
                   r"|proficien(?:t|cy) (?:in|with)|expertise in|exposure to|skilled in|working knowledge of"
                   r"|tools? (?:like|such as)|technologies (?:like|such as)|such as|e\.g\.?|including|like)\s+",
@@ -200,17 +201,23 @@ def _known_checker():
     return known, dictionary, reg
 
 
+#: Section categories never read: company intro, benefits and legal text, pay,
+#: and the role's metadata (location, job id).
+SKIP_SECTIONS = {"drop", "pay", "meta"}
+
+
 def _lines(text: str) -> list[tuple[str, str]]:
-    """(category, line) for the requirement / nice / duty lines; the whole
-    advert's lines (as "all") when it has no recognisable sections."""
+    """(category, line) for every line outside the company intro, benefits,
+    pay and metadata sections. Lines before the first heading, or under a
+    heading the sectioner does not know ("How you'll spend your time here"),
+    are read too, as "all": skipping them hid SMB, NFS and other asks in the
+    #177 hand-read sample."""
     from src.llm.sections import split_sections
 
     preamble, secs = split_sections(text)
-    if not any(c in READ for c, _b in secs):
-        return [("all", ln) for ln in text.splitlines() if ln.strip()]
-    out = []
+    out = [("all", ln) for ln in preamble.splitlines() if ln.strip()]
     for c, body in secs:
-        if c in READ:
+        if c not in SKIP_SECTIONS:
             out += [(c, ln) for ln in body.splitlines()[1:] if ln.strip()]
     return out
 
@@ -232,6 +239,11 @@ def candidates_in_line(line: str, known) -> dict[str, set[str]]:
     for m in _NAME.finditer(bare):
         if not _SENT_START.search(bare[:m.start()]):
             add(m.group(0), "name")
+    # A name opening a bullet and followed by a list or a label ("- Fastlane,
+    # code signing", "Terraform: modules"): mid-sentence-only missed it (#177).
+    lead = _LEAD.match(bare)
+    if lead:
+        add(lead.group(1), "lead")
 
     # Context: lists, ask phrases, labelled lines, brackets.
     chunks = []

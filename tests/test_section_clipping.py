@@ -214,3 +214,11 @@ def test_nothing_fitting_whole_falls_back_to_a_plain_cut() -> None:
     body = "**The Role**\n" + "x" * 2000
     out = fit_lines(body, 300)
     assert out.startswith("**The Role**") and len(out) > 100
+
+
+def test_about_this_role_is_the_role_not_the_company():
+    """#177: "About this role" was read as company boilerplate and the whole
+    role text under it was skipped."""
+    assert heading_category("**About this role**") != "drop"
+    assert heading_category("About your role", plain=True) != "drop"
+    assert heading_category("**About us**") == "drop"

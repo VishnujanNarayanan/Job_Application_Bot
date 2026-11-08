@@ -372,3 +372,41 @@ def test_a_sense_word_inside_a_longer_name_in_duties_is_not_the_tool():
           "- Build the Agent Control Plane for customers.\n- Write unit tests (Go + Jest).")
     assert not r.admits("Plane", jd)
     assert r.admits("Jest", jd)
+
+
+# --- #177 reading fixes ------------------------------------------------------------------
+
+def test_a_name_matches_with_or_without_its_hyphen_or_space():
+    from src.state.vocabulary import scan
+
+    terms = _terms("Material UI", "styled components")
+    yes = lambda t: True  # noqa: E731
+    assert scan("Libraries such as Material-UI and styled-components.", terms, admit=yes) == [
+        "Material UI", "styled components"]
+    assert scan("We use MaterialUI.", terms, admit=yes) == ["Material UI"]
+
+
+def test_overlapping_names_are_both_read():
+    from src.state.vocabulary import scan
+
+    terms = _terms("Microsoft Azure", "Azure DevOps", "DevOps", "Spark", "Spark SQL")
+    yes = lambda t: True  # noqa: E731
+    assert scan("Familiar with Microsoft Azure DevOps tools.", terms, admit=yes) == ["Microsoft Azure", "Azure DevOps"]
+    assert scan("Spark SQL jobs.", terms, admit=yes) == ["Spark SQL"], "a name inside another is still hidden"
+
+
+def test_a_sense_term_in_a_list_of_tools_is_the_tool(reg):
+    jd = REQ + "* Strong Python, with flexibility to use other backend languages such as Go, Java, Rust.\n"
+    assert reg.admits("Go", jd)
+    assert not reg.admits("Go", REQ + "* Go live with the new release and help the team grow.\n")
+
+
+def test_a_lower_case_method_name_counts_only_as_a_method():
+    from src.state.registry import Entry, build
+
+    r = build({"agile": (Entry(term="Agile", label="sense"), False),
+               "teams": (Entry(term="Teams", label="sense"), False),
+               "devops": (Entry(term="DevOps", label="approve"), False)})
+    assert r.admits("Agile", REQ + "* Experience working in agile development environments.\n")
+    assert r.admits("Agile", REQ + "* You can work in an agile manner.\n")
+    assert not r.admits("Teams", REQ + "* Collaborate with backend teams and DevOps.\n")

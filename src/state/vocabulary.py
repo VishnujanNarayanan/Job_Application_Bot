@@ -143,6 +143,10 @@ def load_terms(session: Session) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(((r[0], r[1]) for r in rows), key=lambda p: len(p[1]), reverse=True))
 
 
+#: Separators inside a name that do not change it ("Material-UI" = "Material UI").
+_SEP = re.compile(r"[\s-]+")
+
+
 def scan(jd_text: str, terms: tuple[tuple[str, str], ...], admit=None) -> list[str]:
     """Vocabulary terms the JD names literally, in the order they appear.
 
@@ -167,15 +171,25 @@ def scan(jd_text: str, terms: tuple[tuple[str, str], ...], admit=None) -> list[s
             return registry.claims(term, jd_text)
     # Markdown escapes ("C\+\+") and typographic hyphens hid known terms (#73).
     haystack = clean_ad_text(jd_text).casefold()
+    # Spelling variants (#177): "Material-UI", "Material UI" and "MaterialUI"
+    # are one name. The registry folds them to one entry, so the scan must
+    # match them too: a space or hyphen inside a term matches a space, a
+    # hyphen or nothing. Measured on 100 hand-read adverts: approved names
+    # such as "styled components" were never found as "styled-components".
+    compact = _SEP.sub("", haystack)
     claimed: list[tuple[int, int]] = []
     found: list[tuple[int, str]] = []
     # terms come longest first, so a longer name claims its words before any
     # term inside it is looked at.
     for term, key in sorted(terms, key=lambda p: len(p[1]), reverse=True):
-        if key not in haystack:
+        if _SEP.sub("", key) not in compact:
             continue
-        spans = [m.span() for m in re.finditer(rf"(?<![\w+#.]){re.escape(key)}(?![\w+#]|\.\w)", haystack)]
-        free = [(a, b) for a, b in spans if not any(a < y and x < b for x, y in claimed)]
+        body = r"[\s-]?".join(re.escape(part) for part in _SEP.split(key) if part)
+        spans = [m.span() for m in re.finditer(rf"(?<![\w+#.]){body}(?![\w+#]|\.\w)", haystack)]
+        # Only a name fully inside a claimed one is hidden ("Spark" in "Spark
+        # SQL"). Names that merely overlap are both real: "Microsoft Azure
+        # DevOps" names Microsoft Azure and Azure DevOps (#177).
+        free = [(a, b) for a, b in spans if not any(x <= a and b <= y for x, y in claimed)]
         if not free:
             continue
         found.append((free[0][0], term))
