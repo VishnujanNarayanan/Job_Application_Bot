@@ -64,42 +64,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      # Python + cached virtualenv, LibreOffice (converts the assembled DOCX to
+      # PDF: this job pre-renders resumes so the Telegram links work while the
+      # laptop is off) and the MiniLM model. All three are cached, so a warm
+      # run installs nothing (#183); see .github/actions/setup-runtime.
+      - name: Set up runtime
+        uses: ./.github/actions/setup-runtime
         with:
-          python-version: "3.11"
-          cache: pip
-
-      # LibreOffice converts the assembled DOCX to PDF. Needed here (unlike a
-      # scrape-only runner) because this job pre-renders resumes so the
-      # Telegram links work while the laptop is off.
-      # Normally 20-30s. On 2026-10-05 (run 37337756852) apt hung here for
-      # 13+ minutes before the pipeline had done anything. Each attempt is
-      # capped so a stuck mirror costs minutes, not the whole run, and one
-      # retry covers a transient hang.
-      - name: Install LibreOffice
-        timeout-minutes: 8
-        run: |
-          for attempt in 1 2; do
-            if timeout 180 sudo apt-get update -qq -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
-              && timeout 240 sudo apt-get install -y --no-install-recommends \
-                   -o Acquire::Retries=3 -o Acquire::http::Timeout=30 libreoffice-writer; then
-              exit 0
-            fi
-            echo "apt attempt $attempt failed or timed out; retrying"
-          done
-          exit 1
-
-      # MiniLM is ~90 MB and is fetched on first embed; cache it so only the
-      # first run pays for it.
-      - name: Cache HuggingFace models
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/huggingface
-          key: hf-${{ runner.os }}-minilm-v1
-
-      - name: Install dependencies
-        # The run pre-renders resumes to S3, so it needs the AWS packages too.
-        run: pip install -r requirements.txt -r requirements-aws.txt
+          libreoffice: "true"
+          hf-models: "true"
 
       # The operator profile and resume template are not in git (personal
       # data) and are too big for GitHub secrets (48 KB cap vs a ~142 KB

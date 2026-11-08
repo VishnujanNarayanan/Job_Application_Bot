@@ -1,0 +1,110 @@
+# One setup for every workflow (#183): Python, the virtualenv, and optionally
+# LibreOffice and the embedding model. Each piece is cached, so a warm run
+# restores it in seconds and fetches nothing:
+#
+#   piece          cold (miss)                warm (hit)
+#   virtualenv     pip install, ~60 s         cache restore, a few s
+#   LibreOffice    apt update+install, ~25 s  cached files restored, a few s
+#   MiniLM model   ~90 MB from HuggingFace    cache restore, offline mode
+#
+# Before this, setup-python's `cache: pip` kept only the downloaded wheels, so
+# every run still unpacked and installed torch, spaCy and the rest (~60 s),
+# and every run re-downloaded LibreOffice from the Ubuntu mirror.
+
+name: setup runtime
+description: Python 3.11 with a cached virtualenv, plus cached LibreOffice and HuggingFace models on request.
+
+inputs:
+  libreoffice:
+    description: "Install LibreOffice Writer (DOCX to PDF conversion)"
+    default: "false"
+  hf-models:
+    description: "Restore the cached HuggingFace models (MiniLM embeddings)"
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - id: py
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    # One virtualenv for every workflow, built from requirements-dev.txt (the
+    # runtime set plus AWS and test tools), so CI, the polls and the pipeline
+    # share one cache entry. The key carries the exact Python version, because
+    # the venv's interpreter is a symlink into that version's toolcache: a
+    # runner image that moves 3.11.x on must not restore a venv pointing at a
+    # Python that is no longer there. The requirements hash means any pin
+    # change rebuilds from scratch, which keeps the fresh-install check honest.
+    # The workspace path is the same for every workflow in this repo, so the
+    # venv's absolute script paths stay valid wherever it is restored.
+    - id: venv
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ runner.arch }}-py${{ steps.py.outputs.python-version }}-${{ hashFiles('requirements*.txt') }}
+
+    - name: Install dependencies (cache miss only)
+      if: steps.venv.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        python -m venv .venv
+        .venv/bin/pip install --quiet --upgrade pip
+        .venv/bin/pip install -r requirements-dev.txt
+
+    # Later steps call plain `python` / `pytest`; put the venv first on PATH.
+    - name: Activate virtualenv
+      shell: bash
+      run: |
+        echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+        echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+    # LibreOffice: the package's files are cached and restored, so a warm run
+    # never touches the Ubuntu mirror (on 2026-10-05, run 37337756852, apt hung
+    # there for 13+ minutes). The cache is rebuilt when the package list or
+    # `version` changes. Bump `version` to force a fresh install.
+    - id: lo
+      if: inputs.libreoffice == 'true'
+      continue-on-error: true
+      uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9  # v1.6.3
+      with:
+        packages: libreoffice-writer
+        version: "1"
+
+    # Fallback if the cached install failed or left no working soffice: the
+    # previous direct apt install, each attempt capped so a stuck mirror costs
+    # minutes rather than the whole run.
+    - name: Install LibreOffice (fallback)
+      if: inputs.libreoffice == 'true'
+      shell: bash
+      run: |
+        if command -v soffice >/dev/null && timeout 60 soffice --version; then
+          echo "LibreOffice ready (cache: ${{ steps.lo.outputs.cache-hit || 'n/a' }})"
+          exit 0
+        fi
+        echo "::warning::cached LibreOffice unavailable; installing from apt"
+        for attempt in 1 2; do
+          if timeout 180 sudo apt-get update -qq -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+            && timeout 240 sudo apt-get install -y --no-install-recommends \
+                 -o Acquire::Retries=3 -o Acquire::http::Timeout=30 libreoffice-writer; then
+            exit 0
+          fi
+          echo "apt attempt $attempt failed or timed out; retrying"
+        done
+        exit 1
+
+    # MiniLM is ~90 MB, fetched on first embed. On a hit the model is already
+    # on disk, so HuggingFace is put in offline mode: no per-run "is there a
+    # newer revision?" calls, and a huggingface.co outage cannot stall a run.
+    - id: hf
+      if: inputs.hf-models == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/huggingface
+        key: hf-${{ runner.os }}-minilm-v1
+
+    - name: HuggingFace offline on a warm cache
+      if: inputs.hf-models == 'true' && steps.hf.outputs.cache-hit == 'true'
+      shell: bash
+      run: echo "HF_HUB_OFFLINE=1" >> "$GITHUB_ENV"

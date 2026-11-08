@@ -41,37 +41,14 @@ jobs:
   deps:
     name: dependencies resolve
     runs-on: ubuntu-latest
-    outputs:
-      cache-key: ${{ steps.key.outputs.value }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      # The venv is cached by requirements.txt content, so it is rebuilt only
-      # when a pin actually changes. Runner workspace paths are identical
-      # across jobs in a run, so the venv's absolute shebangs stay valid.
-      - name: Compute cache key
-        id: key
-        run: echo "value=venv-${{ runner.os }}-py311-${{ hashFiles('requirements*.txt') }}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore virtualenv
-        id: cache
-        uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ steps.key.outputs.value }}
-
-      # Only on a cache miss. This is also the honest test that requirements.txt
-      # is complete for a fresh contributor (CLAUDE.md rule #21).
-      - name: Install dependencies
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          python -m venv .venv
-          .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install -r requirements-dev.txt
+      # Python and the virtualenv, from the same cache CI and the polls use
+      # (#183): rebuilt only when requirements*.txt changes, which is also the
+      # honest test that requirements.txt is complete (CLAUDE.md rule #21).
+      # Every stage below calls the same action and gets a cache hit.
+      - uses: ./.github/actions/setup-runtime
 
       - name: Every module imports
         run: |
@@ -98,13 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ needs.deps.outputs.cache-key }}
-          fail-on-cache-miss: true
+      - uses: ./.github/actions/setup-runtime
       - name: Boards are queried and results deduplicated
         run: .venv/bin/pytest -v tests/test_iteration_2_scraper.py
       - name: The scraper's contract holds end to end
@@ -116,13 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ needs.deps.outputs.cache-key }}
-          fail-on-cache-miss: true
+      - uses: ./.github/actions/setup-runtime
       - name: Descriptions yield requirements
         run: .venv/bin/pytest -v tests/test_iteration_2_parser.py
       - name: The operator profile loads and validates
@@ -134,13 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ needs.deps.outputs.cache-key }}
-          fail-on-cache-miss: true
+      - uses: ./.github/actions/setup-runtime
       - name: Fit is scored the same way twice
         run: .venv/bin/pytest -v tests/test_iteration_2_scorer.py
       - name: Every verdict is recorded, including rejections
@@ -152,13 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ needs.deps.outputs.cache-key }}
-          fail-on-cache-miss: true
+      - uses: ./.github/actions/setup-runtime
       - name: A dead provider fails over to the next
         run: .venv/bin/pytest -v tests/test_v2_llm_fallback.py
       - name: A 429 is retried, honoured, or abandoned correctly
@@ -170,13 +123,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ needs.deps.outputs.cache-key }}
-          fail-on-cache-miss: true
+      - uses: ./.github/actions/setup-runtime
       - name: The resume assembles from the template
         run: .venv/bin/pytest -v tests/test_iteration_2_builder.py
       - name: Output defects stay fixed
@@ -188,13 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ needs.deps.outputs.cache-key }}
-          fail-on-cache-miss: true
+      - uses: ./.github/actions/setup-runtime
       - name: Matches reach Telegram
         run: .venv/bin/pytest -v tests/test_iteration_2_notifications.py
       - name: Pre-rendered links are fresh and rotated
@@ -206,13 +147,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ needs.deps.outputs.cache-key }}
-          fail-on-cache-miss: true
+      - uses: ./.github/actions/setup-runtime
       - name: Resumes are served on demand
         run: .venv/bin/pytest -v tests/test_iteration_2_endpoint.py
       - name: The operator dashboard renders
@@ -224,13 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ needs.deps.outputs.cache-key }}
-          fail-on-cache-miss: true
+      - uses: ./.github/actions/setup-runtime
       - name: Logs reach CloudWatch
         run: .venv/bin/pytest -v tests/test_cloudwatch_handler.py
       - name: Runs are counted and reported
@@ -244,13 +173,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ needs.deps.outputs.cache-key }}
-          fail-on-cache-miss: true
+      - uses: ./.github/actions/setup-runtime
       - name: The wiring holds end to end
         run: .venv/bin/pytest -v tests/test_smoke.py
       - name: Config parses
