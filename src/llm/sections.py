@@ -31,7 +31,7 @@ import yaml
 #: is a nice-to-have, not a requirement.
 _CATEGORIES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
     (name, re.compile(pattern)) for name, pattern in (
-        ("drop", r"^about (?!(the )?(role|job|position|opportunity|you)\b)|about us|company description"
+        ("drop", r"^about (?!(the |this |your )?(role|job|position|opportunity|you)\b)|about us|company description"
                  r"|who we are|(about |our |the )team\b|culture|our values|benefits|perks|what we offer"
                  r"|why (join|work)|why you.?ll love|equal (employment )?opportunit|\beeo\b|diversity"
                  r"|inclusion|how to apply|application process|additional information|disclaimer"
