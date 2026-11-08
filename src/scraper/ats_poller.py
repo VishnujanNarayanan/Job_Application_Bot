@@ -508,10 +508,12 @@ def fetch_detail(lane: Lane, posting: ats.Posting) -> bool:
     else:
         status, body = lane.get(url)
     if status != 200:
+        posting.detail_error = f"http_{status}"
         return False
     try:
         ats.parse_detail(posting, body)
-    except (ValueError, AttributeError, TypeError):
+    except (ValueError, AttributeError, TypeError) as exc:
+        posting.detail_error = f"parse_error:{type(exc).__name__}"
         return False
     return True
 

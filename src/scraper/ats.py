@@ -59,6 +59,9 @@ class Posting:
     level: str | None = None
     # An ATS-side key the detail call needs besides the posting id (Phenom's jobSeqNo).
     ref: str | None = None
+    # Why the detail call gave no description (#202): "http_<status>" or
+    # "parse_error"; None when it was not called or succeeded.
+    detail_error: str | None = None
 
     @property
     def job_id(self) -> str:
