@@ -60,6 +60,8 @@ data/reports/*
 data/registry/
 # Match-quality benchmark (#179): JD text, the profile and gold labels.
 data/benchmark/
+# Live adverts fetched for term discovery (tools.advert_corpus): third-party text.
+data/corpus/
 data/tailored/*
 !data/tailored/.gitkeep
 # Saved role_category/role_level classifier models (local, regenerable)
