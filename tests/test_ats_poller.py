@@ -407,7 +407,9 @@ def test_the_lane_counts_the_characters_it_reads():
     assert lane.bytes == 2 and lane.requests == 2
 
 
-def test_forgetting_a_posting_clears_its_boards_etag():
+def test_forgetting_a_posting_clears_its_boards_etag_and_fingerprint():
+    """The fingerprint saved this run includes the forgotten posting: left in
+    place, the next poll would see an unchanged list and never insert it."""
     class _Session:
         def __init__(self):
             self.statements = []
@@ -420,7 +422,7 @@ def test_forgetting_a_posting_clears_its_boards_etag():
     delete, update = session.statements
     assert delete.table.name == "ats_postings"
     assert update.table.name == "ats_boards"
-    assert update.compile().params == {"etag": None, "next_poll_at": None, "ats_1": "lever", "board_id_1": "acme"}
+    assert update.compile().params == {"etag": None, "list_fp": None, "next_poll_at": None, "ats_1": "lever", "board_id_1": "acme"}
 
 
 # --- pending / done status (stranded postings) --------------------------------------

@@ -1075,8 +1075,10 @@ def requeue_pending(session) -> int:
 
 def forget(session, p: ats.Posting) -> None:
     """Drop a posting's row so the next poll treats it as new (its
-    description could not be fetched). The board's ETag goes too: the next
-    poll must read the list, not get a 304 for it."""
+    description could not be fetched). The board's ETag and list fingerprint
+    go too: the next poll must read the list in full, not get a 304 for it or
+    take the unchanged-list path, which inserts nothing and would lose the
+    posting for good (its id is in the fingerprint saved this run)."""
     from sqlalchemy import delete, update
 
     from src.state.models import AtsBoard, AtsPosting
@@ -1086,7 +1088,7 @@ def forget(session, p: ats.Posting) -> None:
     # Due again at once: a posting deferred by the detail budget should wait
     # for the next run, not for the board's tier interval.
     session.execute(update(AtsBoard).where(AtsBoard.ats == p.ats, AtsBoard.board_id == p.board_id)
-                    .values(etag=None, next_poll_at=None))
+                    .values(etag=None, list_fp=None, next_poll_at=None))
 
 
 def prune(session, *, now: datetime | None = None, days: int = 60) -> int:
