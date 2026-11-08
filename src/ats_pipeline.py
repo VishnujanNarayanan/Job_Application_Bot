@@ -314,10 +314,12 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     stats.details_deferred = sum(1 for p, _b in fresh if p.job_id not in fetched)
 
     jobs = []
+    missing: dict[str, list] = {}
     for p, board in fresh:
         if not fetched.get(p.job_id) or not (p.description or "").strip():
             # Unrecorded, so the next poll of this board tries it again.
             stats.no_description += 1
+            missing.setdefault(p.ats, []).append((p, no_description_reason(p, fetched)))
             ats_poller.forget(session, p)
             continue
         # One malformed posting must never end the run (a list where a string
@@ -335,6 +337,7 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
                         error=f"{type(exc).__name__}: {exc}"[:200])
             stats.postings_failed += 1
             ats_poller.forget(session, p)
+    log_no_description(missing, log)
     pruned = ats_poller.prune(session, now=now, days=int(a.get("closed_retention_days", 60)))
     session.commit()
     log_db_size(session, log, warn_mb=float(a.get("db_size_warn_mb", 300)))
@@ -343,6 +346,37 @@ def collect(session, cfg, *, atses=None, now=None, lanes=None, stats=None, log=N
     stats.bytes = sum(lane.bytes for lane in lanes.values())
     log.info("ats_poll_done", pruned=pruned, **vars(stats))
     return jobs
+
+
+def no_description_reason(p: ats.Posting, fetched: dict) -> str:
+    """Why a new posting has no description (#202): ``deferred`` (the detail
+    budget did not reach it), the detail call's error (``http_<status>``,
+    ``parse_error:<type>``), or ``empty`` (fetched, or listed with one, but
+    the text came out blank)."""
+    if p.job_id not in fetched:
+        return "deferred"
+    if not fetched[p.job_id]:
+        return p.detail_error or "failed"
+    return "empty"
+
+
+#: Sample postings logged per ATS and reason: enough to open and see why.
+NO_DESCRIPTION_SAMPLES = 3
+
+
+def log_no_description(missing: dict[str, list], log) -> None:
+    """One ``ats_no_description`` line per ATS: counts by reason, how many
+    boards, and a few sample postings per reason to open by hand. Forgotten
+    postings leave no row behind, so this is the only record of them."""
+    for name, items in sorted(missing.items()):
+        reasons: dict[str, int] = {}
+        samples: dict[str, list] = {}
+        for p, reason in items:
+            reasons[reason] = reasons.get(reason, 0) + 1
+            if len(samples.setdefault(reason, [])) < NO_DESCRIPTION_SAMPLES:
+                samples[reason].append({"job_id": p.job_id, "url": p.url, "detail": ats.detail_url(p)})
+        log.warning("ats_no_description", ats=name, postings=len(items),
+                    boards=len({p.board_id for p, _r in items}), reasons=reasons, samples=samples)
 
 
 def log_db_size(session, log, *, warn_mb: float) -> float:

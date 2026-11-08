@@ -439,3 +439,33 @@ def test_get_strategy_is_safe_to_call_from_many_threads_at_once():
         assert len({id(s) for s in got}) == 1
     finally:
         modes.reset_registry()
+
+
+# --- why a description is missing (#202) ---------------------------------------------------
+
+def test_no_description_reasons():
+    p = ats.Posting("successfactors", "wipro", "9", "Data Engineer", "Pune", url="https://x/job/9")
+    assert pipe.no_description_reason(p, {}) == "deferred"
+    p.detail_error = "http_404"
+    assert pipe.no_description_reason(p, {p.job_id: False}) == "http_404"
+    assert pipe.no_description_reason(p, {p.job_id: True}) == "empty"
+
+
+def test_no_description_is_logged_once_per_ats_with_samples():
+    def _post(ats_name, board, pid):
+        return ats.Posting(ats_name, board, pid, "Data Engineer", "Pune", url=f"https://{board}/job/{pid}")
+
+    missing = {
+        "successfactors": [(_post("successfactors", "wipro", str(i)), "empty") for i in range(5)]
+                          + [(_post("successfactors", "hcl", "x"), "http_404")],
+        "avature": [(_post("avature", "siemens", "1"), "parse_error:TypeError")],
+    }
+    calls = []
+    log = SimpleNamespace(warning=lambda event, **kw: calls.append((event, kw)))
+    pipe.log_no_description(missing, log)
+    assert [kw["ats"] for _e, kw in calls] == ["avature", "successfactors"]
+    sf = calls[1][1]
+    assert calls[1][0] == "ats_no_description"
+    assert sf["postings"] == 6 and sf["boards"] == 2 and sf["reasons"] == {"empty": 5, "http_404": 1}
+    assert len(sf["samples"]["empty"]) == pipe.NO_DESCRIPTION_SAMPLES
+    assert sf["samples"]["http_404"][0]["url"] == "https://hcl/job/x"

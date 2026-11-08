@@ -399,3 +399,14 @@ def test_employment_type_accepts_a_json_ld_list():
     assert p.employment_type == "FULL_TIME"
     job = ats.to_job(p, company="Deloitte")
     assert job.job_type == "fulltime"
+
+
+# --- why a description is missing (#202) ---------------------------------------------------
+
+def test_a_failed_detail_call_records_why():
+    p = ats.Posting("greenhouse", "acme", "1", "Backend Engineer", "Pune")
+    lane, _http = _lane("greenhouse", (403, "denied"))
+    assert not poller.fetch_detail(lane, p) and p.detail_error == "http_403"
+    p = ats.Posting("greenhouse", "acme", "2", "Backend Engineer", "Pune")
+    lane, _http = _lane("greenhouse", (200, "<html>not json</html>"))
+    assert not poller.fetch_detail(lane, p) and p.detail_error == "parse_error:JSONDecodeError"
