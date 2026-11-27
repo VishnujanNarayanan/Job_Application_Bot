@@ -234,6 +234,73 @@ def test_null_answer_is_unknown(facts: Facts) -> None:
     assert _one(facts, "Gender", "radio", options=["Male", "Female"])["action"] == "unknown"
 
 
+AGES = ["17 or younger", "18-20", "21-29", "30-39", "40-49", "50-59", "60 or older"]
+
+
+def _with_answers(files, extra: str) -> Facts:
+    profile, answers = files
+    answers.write_text(answers.read_text() + extra)
+    return load_facts(profile, answers)
+
+
+def test_one_answer_covers_every_wording(files) -> None:
+    """Answered once, a question is answered however a later form words it."""
+    facts = _with_answers(files, """
+  - ask: What gender do you identify as?
+    type: radio
+    options: [Female, Male, Non-binary]
+    answer: Female
+  - ask: I identify my ethnicity as Select all that apply
+    type: checkbox_group
+    answer: [Asian]
+  - ask: What is your age range?
+    type: radio
+    options: %s
+    answer: 21-29
+""" % AGES)
+    gender = ["Female", "Male", "Non-binary", "Prefer not to say"]
+    assert _one(facts, "Gender", "radio", options=gender)["value"] == "Female"
+    assert _one(facts, "What is your gender?", "select", options=gender)["action"] == "fill"
+    eth = ["Asian", "White", "Black"]
+    d = _one(facts, "What is your ethnicity?", "checkbox_group", options=eth)
+    assert (d["action"], d["value"]) == ("fill", ["Asian"])
+    # Different words, same list of options: the same question.
+    d = _one(facts, "Which age bracket are you in?", "radio", options=AGES)
+    assert (d["action"], d["value"]) == ("fill", "21-29")
+
+
+def test_probably_same_question_is_filled_for_checking(files) -> None:
+    facts = _with_answers(files, """
+  - ask: Ethnicity
+    type: text
+    answer: Asian
+""")
+    d = _one(facts, "Race / Ethnicity", "text")
+    assert (d["action"], d["value"]) == ("review", "Asian")
+
+
+def test_yes_no_options_never_link_unrelated_questions(files) -> None:
+    facts = _with_answers(files, """
+  - ask: Are you willing to travel for work?
+    type: radio
+    options: [Yes, No, Prefer not to say]
+    answer: "Yes"
+""")
+    d = _one(facts, "Have you ever been convicted of a crime?", "radio",
+             options=["Yes", "No", "Prefer not to say"])
+    assert d["action"] == "unknown"
+
+
+def test_bank_skips_a_question_it_already_holds_in_other_words(files) -> None:
+    profile, answers = files
+    q = [{"question": "What is your age range?", "type": "radio", "options": AGES}]
+    assert bank.record_unanswered(q, "lever/acme", answers) == 1
+    later = [{"question": "What gender do you identify as?", "type": "radio",  # answers.gender
+              "options": ["Female", "Male"]},
+             {"question": "Age group", "type": "radio", "options": AGES}]
+    assert bank.record_unanswered(later, "greenhouse/acme", answers) == 0
+
+
 # ---------------------------------------------------------------------------
 # The bank grows, and keeps the operator's file intact
 # ---------------------------------------------------------------------------

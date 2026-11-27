@@ -183,5 +183,6 @@ def load_facts(profile_path: Path = PROFILE_JSON, answers_path: Path = ANSWERS_P
             values[key] = entry
     for entry in data.get("unanswered") or []:
         if isinstance(entry, dict) and entry.get("answer") is not None and entry.get("ask"):
-            answers.append({"key": None, "asks": [entry["ask"]], "answer": entry["answer"]})
+            answers.append({"key": None, "asks": [entry["ask"]], "answer": entry["answer"],
+                            "options": list(entry.get("options") or [])})
     return Facts(values=values, salary=salary, answers=answers)
