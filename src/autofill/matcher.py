@@ -258,7 +258,15 @@ def question_text(f: dict[str, Any]) -> str:
     return re.sub(r"\s+", " ", label.replace("*", " ")).strip()[:300]
 
 
+# "If yes, please give their name and job title": a follow-up about someone or
+# something else. Never a profile fact; only the operator's own answers.
+_FOLLOW_UP = re.compile(r"^(if (yes|so|applicable|any|other)|if you (have|are|answered|selected|chose|do)"
+                        r"|if there|please (provide|specify|explain|give|share) (the )?details)\b")
+
+
 def _key_for(f: dict[str, Any], extra: dict[str, list[str]]) -> str | None:
+    if _FOLLOW_UP.match(norm(f.get("label") or "")):
+        return None
     ac = (f.get("autocomplete") or "").strip().lower().split()
     if ac and ac[-1] in _AUTOCOMPLETE:
         return _AUTOCOMPLETE[ac[-1]]
@@ -554,6 +562,10 @@ def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any
             prefs.append(v["how_heard"])
         prefs += [h for h in _HEARD_DEFAULTS if h not in prefs]
         return Answer(prefs[0], prefs), "fill"
+    if key == "phone_country_code" and v.get("phone_country_code"):
+        code, country = str(v["phone_country_code"]), str(v.get("country") or "")
+        alts = [f"{country} ({code})", f"{country} {code}", country, code.lstrip("+")] if country else [code.lstrip("+")]
+        return Answer(code, [code] + alts), "fill"
     if key == "phone_device_type":
         return Answer("Mobile", _DEVICE), "fill"
     if key == "prefix":
