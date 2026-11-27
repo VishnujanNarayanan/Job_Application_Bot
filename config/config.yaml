@@ -998,6 +998,18 @@ tailor:
   output_dir: "data/tailored"
 
 # ---------------------------------------------------------------------------
+# Application-form autofill (#154). The Telegram Apply button opens the
+# posting with #jab=<job_id>; the userscript (install from
+# <endpoint.base_url>/autofill/jab.user.js, see docs/autofill.md) fills the
+# form from master_profile.yaml, this file and data/ats_answers.yaml. Never
+# submits. Field phrasings: config/ats_fields.yaml.
+# ---------------------------------------------------------------------------
+autofill:
+  # Add the #jab tag to Telegram Apply links. Harmless with the laptop off: the
+  # fragment never reaches the ATS and the posting opens as before.
+  tag_apply_links: true
+
+# ---------------------------------------------------------------------------
 # Resume endpoint + dashboard — FastAPI (Layer 6)
 #
 # base_url is the machine's Tailscale name, reachable only from the

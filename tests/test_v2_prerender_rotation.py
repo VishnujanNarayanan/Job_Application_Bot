@@ -315,7 +315,8 @@ def test_an_unconfigured_base_url_still_delivers_the_match():
 
     assert "Resume PDF" not in buttons
     assert "Resume DOCX" not in buttons
-    assert buttons["Apply"] == "https://apply.example/123"
+    # The posting itself, tagged for the autofill (#154).
+    assert buttons["Apply"] == "https://apply.example/123#jab=job123"
 
 
 def test_a_presigned_link_survives_an_unconfigured_base_url():

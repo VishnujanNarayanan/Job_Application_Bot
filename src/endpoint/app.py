@@ -30,7 +30,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import Response as FastAPIResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.endpoint import dashboard
+from src.endpoint import autofill, dashboard
 from src.endpoint.cache import StaleSelectionError, get_or_build
 from src.resume_download import content_disposition
 from src.state.db import session_scope
@@ -76,6 +76,7 @@ app.mount(
     name="static",
 )
 app.include_router(dashboard.router)
+app.include_router(autofill.router)
 
 # Valid extensions
 _VALID_EXT = re.compile(r"^(pdf|docx)$")

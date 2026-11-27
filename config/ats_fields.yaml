@@ -1,0 +1,160 @@
+# Application-form fields the autofill recognises (#154).
+#
+# Each key names one answer. `asks` are the phrasings a form uses for it, matched
+# as whole words against the field's label after lower-casing and dropping
+# punctuation ("What is your notice period?" -> "what is your notice period").
+# When several keys match one label, the LONGEST phrase wins, so "last name"
+# beats "name" and "current and expected ctc" beats "current ctc".
+#
+# `not`: a label containing any of these never takes this key ("company name"
+# is not the applicant's name). `attrs`: the field's own name / id /
+# autocomplete attribute, matched the same way, used only when the label
+# matches nothing (Lever names its company field "org").
+#
+# NO VALUES HERE: this repo is public. Values come from master_profile.yaml,
+# config.yaml and the gitignored data/ats_answers.yaml (src/autofill/facts.py).
+
+fields:
+  # --- identity --------------------------------------------------------------
+  full_name:
+    asks: ["full name", "name", "your name", "legal name", "full legal name", "candidate name", "applicant name"]
+    not: ["first", "last", "surname", "family", "given", "middle", "company", "employer", "organisation", "organization",
+          "school", "university", "college", "institution", "manager", "referrer", "referred", "referral", "recruiter",
+          "reference", "father", "mother", "spouse", "emergency", "preferred", "nick", "user", "file", "project",
+          "job title", "position", "degree", "certificate", "course", "account", "bank", "city", "country", "street"]
+    attrs: ["name", "full name", "_systemfield name", "candidate name"]
+  first_name:
+    asks: ["first name", "given name", "legal first name", "forename", "first legal name"]
+    not: ["preferred", "father", "mother", "spouse", "emergency", "referrer", "manager"]
+    attrs: ["first name", "firstname", "given name", "fname", "legalname firstname", "legal name section first name"]
+  last_name:
+    asks: ["last name", "surname", "family name", "legal last name", "last legal name"]
+    not: ["preferred", "father", "mother", "spouse", "emergency", "referrer", "manager"]
+    attrs: ["last name", "lastname", "family name", "lname", "legalname lastname", "legal name section last name"]
+  email:
+    asks: ["email", "e mail", "email address", "email id"]
+    not: ["confirm", "re enter", "retype", "referrer", "manager", "reference", "alternate", "alternative", "secondary"]
+    attrs: ["email"]
+  email_confirm:
+    asks: ["confirm email", "confirm your email", "re enter email", "retype email", "verify email"]
+  phone:
+    asks: ["phone", "phone number", "mobile", "mobile number", "contact number", "telephone", "cell phone", "whatsapp number"]
+    not: ["country code", "phone code", "extension", "device type", "type of phone", "referrer", "emergency",
+          "alternate", "alternative", "secondary", "landline"]
+    attrs: ["phone", "tel", "mobile", "phone number"]
+  phone_country_code:
+    asks: ["country code", "phone code", "country phone code", "dialling code", "dialing code"]
+    attrs: ["country phone code", "phone country code", "countryphonecode"]
+
+  # --- where ----------------------------------------------------------------
+  location:
+    asks: ["location", "current location", "where are you located", "where are you based", "address",
+           "current address", "city and country", "location city"]
+    not: ["preferred", "willing", "relocate", "relocation", "work location", "job location", "office", "postal",
+          "pin", "zip", "line 2", "street", "permanent", "remote", "hybrid", "which of our", "time zone"]
+    attrs: ["location", "address"]
+  city:
+    asks: ["city", "current city", "city of residence", "town", "town city", "city town"]
+    not: ["preferred", "willing", "relocate", "birth"]
+    attrs: ["city", "address city", "addresssection city"]
+  state:
+    asks: ["state", "province", "state province", "region", "state region"]
+    not: ["united states", "statement", "state your", "please state", "birth"]
+    attrs: ["state", "region", "province", "addresssection countryregion"]
+  country:
+    asks: ["country", "country of residence", "current country", "country region", "country territory"]
+    not: ["code", "phone", "birth", "citizenship", "passport", "nationality", "authorized", "authorised", "eligible"]
+    attrs: ["country", "addresssection country"]
+  willing_to_relocate:
+    asks: ["willing to relocate", "open to relocation", "open to relocating", "relocate", "relocation",
+           "willing to move", "comfortable relocating"]
+    not: ["assistance", "package", "support", "allowance"]
+
+  # --- links ----------------------------------------------------------------
+  linkedin:
+    asks: ["linkedin", "linkedin url", "linkedin profile", "linked in"]
+    attrs: ["linkedin"]
+  github:
+    asks: ["github", "github url", "github profile", "git hub"]
+    attrs: ["github"]
+  portfolio:
+    asks: ["portfolio", "portfolio url", "website", "personal website", "personal site", "web site", "blog",
+           "other website", "other links", "other link", "website url", "link to your work", "links"]
+    not: ["company website", "our website", "linkedin", "github", "twitter", "how did you hear", "where did you hear"]
+    attrs: ["portfolio", "website", "urls other", "urls portfolio"]
+  certificates:
+    asks: ["certificates", "certifications link", "certification link", "link to certificates"]
+
+  # --- work & education -----------------------------------------------------
+  current_company:
+    asks: ["current company", "current employer", "current organisation", "current organization", "company name",
+           "employer", "present employer", "most recent employer", "current or most recent company",
+           "current or previous employer", "organization", "organisation", "company"]
+    not: ["why", "previous companies", "would you", "our company", "this company", "join", "referr*", "how did",
+          "worked at", "worked for", "ever been employed", "have you", "related to", "relative", "website",
+          "school", "university", "size", "type of"]
+    attrs: ["org", "company", "current company", "employer"]
+  current_title:
+    asks: ["current title", "current job title", "current role", "current designation", "job title", "title",
+           "designation", "current position", "most recent title", "position title"]
+    not: ["applying", "desired", "interested", "position you", "role you", "this role", "this position", "how did",
+          "posting", "requisition"]
+    attrs: ["title", "job title", "current title", "designation"]
+  years_experience:
+    asks: ["years of experience", "total experience", "total years of experience", "years experience",
+           "how many years of experience", "work experience years", "overall experience", "relevant experience",
+           "experience in years", "years of relevant experience", "total work experience"]
+    not: ["describe", "tell us", "explain", "managing", "management", "leading", "people"]
+  degree:
+    asks: ["degree", "highest degree", "highest qualification", "qualification", "highest level of education",
+           "education level", "level of education", "highest education"]
+    not: ["institution", "university", "college", "school", "year", "major", "field", "gpa", "grade", "percentage"]
+  field_of_study:
+    asks: ["field of study", "major", "discipline", "specialisation", "specialization", "branch", "stream"]
+  university:
+    asks: ["university", "college", "school", "institution", "institute", "school name", "university name",
+           "college name", "name of institution", "alma mater"]
+    not: ["year", "graduat*", "degree", "major", "gpa", "high school", "location", "city"]
+  graduation_year:
+    asks: ["graduation year", "year of graduation", "year of passing", "passing year", "graduation date",
+           "when did you graduate", "year graduated", "batch"]
+
+  # --- money & availability -------------------------------------------------
+  ctc_both:
+    asks: ["current ctc and expected ctc", "current and expected ctc", "current and expected salary",
+           "current salary and expected salary", "current and expected compensation", "current expected ctc",
+           "current ctc expected ctc", "ctc current and expected", "current and expected package"]
+  current_ctc:
+    asks: ["current ctc", "current salary", "current compensation", "current package", "present ctc",
+           "current annual ctc", "current fixed ctc", "current annual salary", "current pay", "existing ctc",
+           "current cost to company", "last drawn salary", "last drawn ctc", "ctc current"]
+  expected_ctc:
+    asks: ["expected ctc", "expected salary", "expected compensation", "desired salary", "salary expectation",
+           "salary expectations", "expected package", "compensation expectation", "compensation expectations",
+           "desired compensation", "expected annual ctc", "expected annual salary", "salary requirement",
+           "salary requirements", "desired pay", "expected pay", "ctc expected", "what are your salary"]
+    not: ["current and", "and current"]
+
+  # --- files ----------------------------------------------------------------
+  resume:
+    asks: ["resume", "cv", "resume cv", "cv resume", "upload resume", "upload your resume", "attach resume",
+           "resume upload"]
+    not: ["cover", "autofill", "parse", "link to"]
+    attrs: ["resume", "cv", "_systemfield resume", "resume upload input"]
+  cover_letter:
+    asks: ["cover letter", "covering letter", "motivation letter"]
+    attrs: ["cover letter", "cover_letter"]
+  # The ATS's own "fill the form from your resume / LinkedIn" helpers: not a
+  # question, so left alone and not outlined.
+  ats_helper:
+    asks: ["autofill from resume", "autofill with resume", "autofill from linkedin", "apply with linkedin",
+           "import from linkedin", "apply with indeed", "use my last application", "upload your resume here to autofill"]
+
+# Labels that say nothing about the question: the field's surrounding text is
+# used instead ("Attach" beside Greenhouse's "Resume/CV" heading).
+generic_labels: ["attach", "upload", "choose file", "browse", "type here", "start typing", "select", "search",
+                 "enter", "enter manually", "drop files here", "or drag and drop", "add file", "your answer"]
+
+# Choice options that are placeholders, not answers.
+placeholder_options: ["select", "select one", "select an option", "please select", "choose", "choose one",
+                      "choose an option", "none selected", "pick one", "please choose", ""]

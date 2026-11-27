@@ -94,6 +94,24 @@ def match_display_fields(
     }
 
 
+def tag_apply_url(url: str, job_id: str) -> str:
+    """The apply URL with ``#jab=<job_id>`` so the autofill knows the match (#154).
+
+    A fragment never reaches the ATS's server, so the link opens exactly as
+    before with the laptop off; with it on, the userscript reads the tag (and
+    removes it). A URL that already has a fragment is left alone: on a page
+    routed by its fragment ("#/job/123") the tag would break the route. Off
+    when ``autofill.tag_apply_links`` is false.
+    """
+    if not url or not job_id or "#" in url:
+        return url
+    if not settings.get("autofill", {}).get("tag_apply_links", True):
+        return url
+    from urllib.parse import quote
+
+    return f"{url}#jab={quote(job_id, safe='')}"
+
+
 def _usable_apply_url(candidate: str | None) -> str:
     """The model's apply_url, but only when it is really a link.
 
@@ -195,7 +213,7 @@ def send_match_notification(
         # cost a real match its notification on 2026-08-08. A message with two
         # buttons beats no message at all.
         row = []
-        links = [("Apply", apply_url)]
+        links = [("Apply", tag_apply_url(apply_url, job.job_id))]
         if resume_pdf is None:
             links += [("Resume PDF", pdf_url), ("Resume DOCX", docx_url)]
         for label, url in links:
