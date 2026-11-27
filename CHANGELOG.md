@@ -23,6 +23,23 @@ and this project loosely tracks iterations rather than semver.
   `tools/ats_catalog_sync.py` to merge into `docs/ats_questions.yaml`. It
   never submits, never ticks a consent box unasked, and never guesses. Checked
   on live Lever, Greenhouse and Ashby forms; see `docs/autofill.md`.
+- **Autofill learns from what you submit (#154).** On Submit (or Next), the
+  userscript reports each field to `POST /autofill/learn`. A field it couldn't
+  answer becomes a learned answer; a stored answer you corrected is replaced.
+  Facts, salary, open prompts ("why us"), long text and files are never
+  learned, and company questions ("worked here before?") stay with that
+  company. Learned answers live in the gitignored `data/ats_learned.yaml` and
+  are outlined for checking until submitted unchanged twice. Matching stays
+  rule-based and instant: no AI.
+- **Autofill answers worked out per form (#154).**
+  - Notice period, and earliest start date (today plus the notice).
+  - Date of birth, age and age range.
+  - Work authorisation and visa sponsorship, from the country the question
+    or the job names.
+  - "How did you hear", naming the job board a job came from.
+  - Address lines, PIN code and preferred name.
+  - Answers in the answers file can list `choose:` (options to pick, in order)
+    and `only_if_required:`.
 
 ## [v3.3.2] — 2026-11-07
 

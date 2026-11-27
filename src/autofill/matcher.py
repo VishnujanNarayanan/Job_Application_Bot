@@ -17,7 +17,8 @@ here...") is matched on the text around it instead.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -130,6 +131,8 @@ _AUTOCOMPLETE = {
     "tel": "phone", "tel-national": "phone", "tel-country-code": "phone_country_code",
     "address-level2": "city", "address-level1": "state", "country": "country", "country-name": "country",
     "organization": "current_company", "organization-title": "current_title", "url": "portfolio",
+    "postal-code": "postal_code", "street-address": "address", "address-line1": "address_line1",
+    "address-line2": "address_line2", "bday": "date_of_birth", "nickname": "preferred_name",
 }
 
 
@@ -308,23 +311,156 @@ def question_score(question: str, ask: str, options: Any = (), ask_options: Any 
     return score
 
 
-def _operator_answer(question: str, options: Any, facts: Facts) -> tuple[Any, float]:
-    """The operator's answer to the most alike stored question, and how alike."""
-    best: tuple[Any, float] = (None, 0.0)
+def _operator_answer(question: str, options: Any, facts: Facts,
+                     site: str = "") -> tuple[dict[str, Any] | None, float]:
+    """The operator's entry for the most alike stored question, and how alike."""
+    best: tuple[dict[str, Any] | None, float] = (None, 0.0)
     for entry in facts.answers:
+        if entry.get("answer") is None or entry.get("key") in field_keys():
+            continue
+        if entry.get("company") and entry["company"] != site:
+            continue
         for ask in entry["asks"]:
             score = question_score(question, ask, options, entry.get("options"))
             if score >= LIKELY and score > best[1]:
-                best = (entry["answer"], score)
+                best = (entry, score)
     return best
 
 
+# ---------------------------------------------------------------------------
+# Answers worked out per form: dates, age, visas, how you heard
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Answer:
+    """``text`` for a text box; ``choose`` the options to look for, in order of preference."""
+
+    text: Any
+    choose: list[Any] = field(default_factory=list)
+    only_if_required: bool = False
+
+
+_DATE_FORMATS = (("dd/mm/yyyy", "%d/%m/%Y"), ("mm/dd/yyyy", "%m/%d/%Y"), ("yyyy-mm-dd", "%Y-%m-%d"),
+                 ("dd-mm-yyyy", "%d-%m-%Y"), ("mm-dd-yyyy", "%m-%d-%Y"), ("dd.mm.yyyy", "%d.%m.%Y"),
+                 ("yyyy/mm/dd", "%Y/%m/%d"))
+
+
+def date_text(d: date, f: dict[str, Any]) -> str:
+    """A date as this field wants it: ISO for a date picker, the format its hint shows, else "9 May 2002"."""
+    if (f.get("type") or "") == "date":
+        return d.isoformat()
+    hint = re.sub(r"\s+", "", f"{f.get('placeholder') or ''} {f.get('label') or ''}".lower())
+    for pattern, fmt in _DATE_FORMATS:
+        if pattern in hint:
+            return d.strftime(fmt)
+    return f"{d.day} {d.strftime('%B %Y')}"
+
+
+def _as_date(value: Any) -> date | None:
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError:
+        return None
+
+
+def age_on(born: date, today: date) -> int:
+    return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+
+
+# Country names a question or a job location may carry, by the name used in the answers file.
+_COUNTRIES = {
+    "india": ["india"],
+    "united states": ["united states", "usa", "america"],
+    "united kingdom": ["united kingdom", "uk", "england", "britain", "great britain"],
+    "canada": ["canada"], "germany": ["germany"], "france": ["france"], "netherlands": ["netherlands"],
+    "ireland": ["ireland"], "singapore": ["singapore"], "australia": ["australia"], "japan": ["japan"],
+    "united arab emirates": ["united arab emirates", "uae", "dubai", "abu dhabi"],
+    "europe": ["europe", "european union", "eu", "eea"], "switzerland": ["switzerland"],
+    "sweden": ["sweden"], "spain": ["spain"], "poland": ["poland"], "israel": ["israel"],
+    "new zealand": ["new zealand"], "saudi arabia": ["saudi arabia"], "qatar": ["qatar"],
+    "hong kong": ["hong kong"], "malaysia": ["malaysia"], "philippines": ["philippines"],
+    "mexico": ["mexico"], "brazil": ["brazil"], "portugal": ["portugal"], "italy": ["italy"],
+}
+_US = re.compile(r"\bU\.?S\.?A?\b")
+
+
+def country_in(text: str) -> str | None:
+    """The one country a text names, or None (none, or several)."""
+    n = norm(text)
+    found = {c for c, names in _COUNTRIES.items() if any(_has_phrase(n, x) for x in names)}
+    if _US.search(text or ""):
+        found.add("united states")
+    return found.pop() if len(found) == 1 else None
+
+
+_BOARDS = {"linkedin": "LinkedIn", "naukri": "Naukri", "indeed": "Indeed", "glassdoor": "Glassdoor",
+           "instahyre": "Instahyre", "wellfound": "Wellfound", "hirist": "Hirist", "cutshort": "Cutshort",
+           "foundit": "Foundit", "iimjobs": "IIMJobs"}
+_HEARD_DEFAULTS = ["Company website", "Company careers page", "Careers page", "Career site", "Careers website",
+                   "Company site", "Website", "Job board", "Online", "Internet", "Other"]
+
+
+def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any],
+              today: date) -> tuple[Any, str] | None:
+    """(value, action) for answers worked out per form, or None when ``key`` isn't one."""
+    question = question_text(f)
+    if key == "notice_period" and v.get("notice_period") is not None:
+        return v["notice_period"], "fill"  # written out in the answers file
+    if key in ("notice_period", "start_date"):
+        days = v.get("notice_days")
+        if days is None:
+            return None, "unknown"
+        days = int(days)
+        if key == "notice_period":
+            choose = [days, f"{days} days"] + (["Immediate", "Immediately"] if days == 0 else [])
+            return Answer(f"{days} days", choose), "fill"
+        return date_text(today + timedelta(days=days), f), "fill"
+    if key in ("date_of_birth", "age", "adult"):
+        born = _as_date(v.get("date_of_birth"))
+        if born is None:
+            return None, "unknown"
+        if key == "date_of_birth":
+            return date_text(born, f), "fill"
+        age = age_on(born, today)
+        if key == "adult":
+            return ("Yes" if age >= 18 else "No"), "fill"
+        return Answer(str(age), [age]), "fill"
+    if key in ("work_authorization", "sponsorship"):
+        home = norm(str(v.get("citizenship") or ""))
+        if not home:
+            return None, "unknown"
+        where = country_in(question) or country_in(str(job.get("location") or ""))
+        sure = where is not None
+        abroad = sure and where != home
+        if key == "work_authorization":
+            value = "No" if abroad else "Yes"
+        else:
+            value = "Yes" if abroad and v.get("sponsorship_abroad", True) else "No"
+        # No country in the question or the job: home is assumed, and outlined.
+        return value, ("fill" if sure else "review")
+    if key == "how_heard":
+        site = str(job.get("site") or "").lower()
+        prefs = [name for k, name in _BOARDS.items() if k in site]
+        if v.get("how_heard"):
+            prefs.append(v["how_heard"])
+        prefs += [h for h in _HEARD_DEFAULTS if h not in prefs]
+        return Answer(prefs[0], prefs), "fill"
+    if key == "willing_to_relocate" and norm(str(v.get(key) or "")) == "yes":
+        return Answer("Yes, I'm open to relocating.", ["Yes"]), "fill"
+    return None
+
+
 def _value_for(key: str, f: dict[str, Any], facts: Facts, job: dict[str, Any],
-               form_has_code: bool) -> tuple[Any, str]:
+               form_has_code: bool, today: date | None = None) -> tuple[Any, str]:
     """(value, action) for a matched key; value None means unknown."""
     v = facts.values
     label = question_text(f)
     ftype = f.get("type") or ""
+    worked = _computed(key, f, v, job, today or date.today())
+    if worked is not None:
+        return worked
     if key == "phone":
         if "phone" not in v:
             return None, "unknown"
@@ -356,16 +492,86 @@ def _value_for(key: str, f: dict[str, Any], facts: Facts, job: dict[str, Any],
     return v[key], "fill"
 
 
+def _number(value: Any) -> str | None:
+    m = re.search(r"-?\d+(?:\.\d+)?", str(value))
+    return m.group() if m else None
+
+
+def _shape(decision: dict[str, Any], f: dict[str, Any], value: Any, action: str, key: str | None,
+           facts: Facts) -> bool:
+    """Put ``value`` into ``decision`` as this field takes it. False: it doesn't fit."""
+    ftype = f.get("type") or ""
+    ans = value if isinstance(value, Answer) else Answer(value)
+    options = [str(o) for o in f.get("options") or []]
+    if ftype in _CHOICE_TYPES and options:
+        text = ans.text if isinstance(ans.text, list) else [ans.text]
+        wanted = list(ans.choose) + [t for t in text if t not in ans.choose]
+        if key == "phone_country_code":
+            wanted = [facts.values.get("phone_country_code"), facts.values.get("country")]
+        if ftype in ("checkbox_group", "multiselect") and (isinstance(ans.text, list) or ans.choose):
+            picks: list[str] = []
+            for w in wanted:
+                hit = pick_option(options, [w])
+                if hit and hit not in picks:
+                    picks.append(hit)
+            if not picks:
+                decision.update(action="unknown", reason="no answer is among the options")
+                return False
+            decision.update(action=action, value=picks)
+            return True
+        pick = pick_option(options, wanted)
+        if pick is None:
+            decision.update(action="unknown", reason="the answer is not among the options")
+            return False
+        decision.update(action=action, value=pick)
+        return True
+    if ftype == "checkbox":
+        # A lone checkbox (consent, "I agree") is ticked only on an explicit yes.
+        v = ans.text
+        yes = v is True or norm(str(v)) in ("yes", "true", "i agree", "agree")
+        decision.update(action=action, value=bool(yes))
+        return True
+    if ftype == "file":
+        decision["action"] = "unknown"
+        return False
+    if ans.only_if_required and not f.get("required"):
+        decision["action"] = "skip"
+        return True
+    v = ans.text
+    if isinstance(v, list):
+        v = ", ".join(str(x) for x in v)
+    v = str(v)
+    if ftype == "number":
+        v = _number(v)
+        if v is None:
+            decision.update(action="unknown", reason="the answer is not a number")
+            return False
+    decision.update(action=action, value=v)
+    # A type-ahead location box finds "Pune" where it may not find the
+    # whole "Pune, Maharashtra, India"; the userscript searches with this.
+    if key == "location" and facts.values.get("city"):
+        decision["search"] = str(facts.values["city"])
+    return True
+
+
 def match_form(fields: list[dict[str, Any]], facts: Facts, job: dict[str, Any] | None = None,
-               ) -> list[dict[str, Any]]:
-    """One decision per field, in the order sent."""
+               site: str = "", today: date | None = None) -> list[dict[str, Any]]:
+    """One decision per field, in the order sent.
+
+    Each decision carries ``source``: where its answer came from ("fact:email",
+    "answers:notice", "learned:l7"), which the userscript sends back at submit
+    so a correction lands on the answer it corrects.
+    """
     job = job or {}
     keys = field_keys()
     extra: dict[str, list[str]] = {}
+    key_entry: dict[str, dict[str, Any]] = {}
     for entry in facts.answers:
         if entry.get("key") in keys:
             extra.setdefault(entry["key"], []).extend(entry["asks"])
-            facts.values.setdefault(entry["key"], entry["answer"])
+            if entry.get("answer") is not None and entry["key"] not in facts.values:
+                facts.values[entry["key"]] = entry["answer"]
+                key_entry[entry["key"]] = entry
 
     matched = [(f, _key_for(f, extra)) for f in fields]
     form_has_code = any(k == "phone_country_code" for _, k in matched)
@@ -377,51 +583,36 @@ def match_form(fields: list[dict[str, Any]], facts: Facts, job: dict[str, Any] |
             continue
         question = question_text(f)
         ftype = f.get("type") or ""
-        value, action = (None, "unknown")
+        value, action, source = (None, "unknown", None)
         if key:
-            value, action = _value_for(key, f, facts, job, form_has_code)
+            value, action = _value_for(key, f, facts, job, form_has_code, today)
+            if value is not None:
+                own = key_entry.get(key)
+                source = own.get("source") if own else f"fact:{key}"
+                if own and not own.get("trusted", True) and action == "fill":
+                    action = "review"
         if value is None and action == "unknown" and question:
             # Not a known key, or a known key with no value: the operator's own answers.
-            own, score = _operator_answer(question, f.get("options"), facts)
+            own, score = _operator_answer(question, f.get("options"), facts, site)
             if own is not None:
-                value, action = own, ("fill" if score >= SAME else "review")
-        decision: dict[str, Any] = {"ref": ref, "key": key, "question": question}
+                value = Answer(own["answer"], own.get("choose") or [], own.get("only_if_required", False))
+                action = "fill" if score >= SAME and own.get("trusted", True) else "review"
+                source = own.get("source")
+        decision: dict[str, Any] = {"ref": ref, "key": key, "question": question, "source": source}
         if action in ("resume", "skip") or value is None:
             decision["action"] = action
             out.append(decision)
             continue
-        options = [str(o) for o in f.get("options") or []]
-        if ftype in _CHOICE_TYPES and options:
-            wanted = value if isinstance(value, list) else [value]
-            if key == "phone_country_code":
-                wanted = [facts.values.get("phone_country_code"), facts.values.get("country")]
-            if ftype in ("checkbox_group", "multiselect") and isinstance(value, list):
-                picks = [pick_option(options, [w]) for w in wanted]
-                if not all(picks):
-                    decision["action"] = "unknown"
-                    decision["reason"] = "an answer is not among the options"
-                else:
-                    decision.update(action=action, value=picks)
-            else:
-                pick = pick_option(options, wanted)
-                if pick is None:
-                    decision["action"] = "unknown"
-                    decision["reason"] = "the answer is not among the options"
-                else:
-                    decision.update(action=action, value=pick)
-        elif ftype == "checkbox":
-            # A lone checkbox (consent, "I agree") is ticked only on an explicit yes.
-            yes = value is True or norm(str(value)) in ("yes", "true", "i agree", "agree")
-            decision.update(action=action, value=bool(yes))
-        elif ftype == "file":
-            decision["action"] = "unknown"
-        else:
-            if isinstance(value, list):
-                value = ", ".join(str(x) for x in value)
-            decision.update(action=action, value=str(value))
-            # A type-ahead location box finds "Pune" where it may not find the
-            # whole "Pune, Maharashtra, India"; the userscript searches with this.
-            if key == "location" and facts.values.get("city"):
-                decision["search"] = str(facts.values["city"])
+        ok = _shape(decision, f, value, action, key, facts)
+        if not ok and key and source and source.startswith("fact:") and ftype in _CHOICE_TYPES:
+            # A field the table read as a profile fact whose value is no option here
+            # ("relatives working at the company?": Yes/No): try the operator's answers.
+            own, score = _operator_answer(question, f.get("options"), facts, site)
+            if own is not None:
+                retry = {"ref": ref, "key": None, "question": question, "source": own.get("source")}
+                act = "fill" if score >= SAME and own.get("trusted", True) else "review"
+                if _shape(retry, f, Answer(own["answer"], own.get("choose") or [],
+                                           own.get("only_if_required", False)), act, None, facts):
+                    decision = retry
         out.append(decision)
     return out
