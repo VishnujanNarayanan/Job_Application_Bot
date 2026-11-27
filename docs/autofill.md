@@ -39,7 +39,10 @@ doesn't know which match they belong to.
 2. With the endpoint running, open
    `<endpoint.base_url>/autofill/jab.user.js` (for example
    `https://<machine>.ts.net/autofill/jab.user.js`) and confirm the install.
-   Updates come from the same URL.
+   Updates come from the same URL. Without Tailscale, install from
+   `http://localhost:8000/autofill/jab.user.js` instead: the script then
+   calls the endpoint on localhost, which works in a browser on the same
+   laptop.
 3. Check `data/ats_answers.yaml` (gitignored). It was created with the salary
    rule and blank answers for common questions.
 
