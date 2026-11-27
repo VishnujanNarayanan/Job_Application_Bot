@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.5.0
+// @version      1.5.1
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -633,7 +633,7 @@
 
   function pressOn(el) {
     for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
-      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+      el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true }));
     }
   }
 

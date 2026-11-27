@@ -219,3 +219,10 @@ def test_years_and_months_split_and_currency(facts) -> None:
     assert _one(facts, "Expected Gross Pay", "text")["key"] == "expected_ctc"
     assert _one(facts, "Country/Region Code", "select", options=["- Select -", "India (+91)", "USA (+1)"])["value"] == "India (+91)"
     assert _one(facts, "No Selection", "combobox")["action"] == "unknown"  # a placeholder is no question
+
+
+def test_userscript_never_passes_window_to_event_constructors() -> None:
+    """Violentmonkey on Firefox (Zen) runs the script in a sandbox whose `window` is not the
+    page's: `new MouseEvent(t, {view: window})` throws there, and every click fails."""
+    js = (Path(__file__).resolve().parents[1] / "src" / "endpoint" / "static" / "jab.user.js").read_text()
+    assert "view: window" not in js and "view:window" not in js
