@@ -2,6 +2,7 @@
 
     GET  /autofill/jab.user.js   the userscript, with this endpoint's address in it
     POST /autofill/match         form fields in, one decision per field out
+    POST /autofill/learn         what was submitted: learn answers (src/autofill/learn.py)
 
 The Telegram Apply button opens the posting itself with ``#jab=<job_id>``
 appended (:func:`src.notifications.tag_apply_url`), so Apply works with the
@@ -32,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from src.autofill import bank
 from src.autofill.facts import load_facts
+from src.autofill.learn import record_submission
 from src.autofill.matcher import ats_of, match_form
 from src.config import resolve_endpoint_base_url, settings
 
@@ -51,6 +53,7 @@ class FormField(BaseModel):
     id: str = Field("", max_length=300)
     automation_id: str = Field("", max_length=300)
     autocomplete: str = Field("", max_length=100)
+    placeholder: str = Field("", max_length=300)
     type: str = Field("", max_length=40)
     options: list[str] = Field(default_factory=list, max_length=400)
     required: bool = False
@@ -64,6 +67,27 @@ class MatchRequest(BaseModel):
     fields: list[FormField] = Field(default_factory=list, max_length=_MAX_FIELDS)
 
 
+Value = str | list[str] | bool | None
+
+
+class SubmittedField(BaseModel):
+    question: str = Field("", max_length=2000)
+    type: str = Field("", max_length=40)
+    options: list[str] = Field(default_factory=list, max_length=400)
+    #: What the field holds at submit, and what the autofill put there (None: nothing).
+    value: Value = None
+    filled: Value = None
+    key: str | None = Field(None, max_length=60)
+    source: str | None = Field(None, max_length=400)
+    required: bool = False
+
+
+class LearnRequest(BaseModel):
+    url: str = Field(..., max_length=4000)
+    job_id: str | None = Field(None, max_length=200)
+    fields: list[SubmittedField] = Field(default_factory=list, max_length=_MAX_FIELDS)
+
+
 # job_id -> (fetched_at, job facts). Failures are cached too, so a locked or
 # unreachable database costs one connect timeout per job, not one per page.
 _JOB_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -71,7 +95,7 @@ _JOB_TTL = 600.0
 
 
 def _job_facts(job_id: str | None) -> dict[str, Any]:
-    """The advert's salary range, from the database when it is reachable."""
+    """The advert's company, site, location and salary range, from the database when reachable."""
     if not job_id:
         return {}
     hit = _JOB_CACHE.get(job_id)
@@ -85,7 +109,8 @@ def _job_facts(job_id: str | None) -> dict[str, Any]:
         with session_scope() as session:
             job = session.get(AllJobs, job_id)
             if job is not None:
-                facts = {"found": True, "company": job.company, "role": job.role,
+                facts = {"found": True, "company": job.company, "role": job.role, "site": job.site,
+                         "location": job.location,
                          "salary_min_lpa": job.salary_min_lpa, "salary_max_lpa": job.salary_max_lpa}
             else:
                 facts = {"found": False}
@@ -132,7 +157,7 @@ def match(req: MatchRequest, request: Request,
     fields = [f.model_dump() for f in req.fields]
     job = _job_facts(req.job_id)
     facts = load_facts()
-    decisions = match_form(fields, facts, job)
+    decisions = match_form(fields, facts, job, site=seen_at)
 
     by_ref = {f["ref"]: f for f in fields}
     unknown = [{**d, "type": by_ref[d["ref"]]["type"], "options": by_ref[d["ref"]]["options"]}
@@ -164,3 +189,16 @@ def match(req: MatchRequest, request: Request,
                                  if job.get("salary_min_lpa") or job.get("salary_max_lpa") else None)},
         "new_questions": added,
     }
+
+
+@router.post("/autofill/learn")
+def learn(req: LearnRequest, x_jab: str | None = Header(None)) -> dict[str, int]:
+    """The userscript reports a submitted page; answers worth keeping are learned."""
+    if x_jab != "1":
+        raise HTTPException(status_code=403, detail="X-JAB header required")
+    job = _job_facts(req.job_id)
+    try:
+        return record_submission([f.model_dump() for f in req.fields], req.url, job)
+    except Exception as exc:  # noqa: BLE001 - a failed learn must not error the page
+        log.warning("autofill_learn_failed", error=str(exc)[:200])
+        return {"added": 0, "corrected": 0, "confirmed": 0}

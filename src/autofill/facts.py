@@ -12,6 +12,12 @@ Facts already in the codebase are never typed twice:
 
 The answers file is the operator's. Code only ever APPENDS to it (new questions
 under ``unanswered:``), so their comments and layout survive; see :mod:`.bank`.
+
+What the operator types into a form and submits is kept apart, in
+``data/ats_learned.yaml`` (gitignored, rewritten by code; see :mod:`.learn`).
+A learned answer either answers a new question or replaces one from the
+answers file (``replaces:``). It is outlined for checking until it has been
+submitted unchanged twice.
 """
 
 from __future__ import annotations
@@ -29,6 +35,9 @@ from src.config import settings
 _ROOT = Path(__file__).resolve().parents[2]
 PROFILE_JSON = _ROOT / "master_profile.json"
 ANSWERS_PATH = _ROOT / "data" / "ats_answers.yaml"
+LEARNED_PATH = _ROOT / "data" / "ats_learned.yaml"
+#: Submitted unchanged this many times, a learned answer is filled without an outline.
+TRUSTED_AFTER = 2
 
 
 @dataclass
@@ -62,7 +71,8 @@ class Facts:
     values: dict[str, Any] = field(default_factory=dict)
     salary: Salary = field(default_factory=Salary)
     #: Operator answers keyed by field key, plus free-form ones matched on wording:
-    #: each ``{"asks": [...], "answer": ...}``.
+    #: each ``{"key", "asks", "answer", "choose", "only_if_required", "options",
+    #: "company", "source", "trusted"}``. ``answer`` None: asked, not answered yet.
     answers: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -161,11 +171,29 @@ def load_answers_file(path: Path = ANSWERS_PATH) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def load_facts(profile_path: Path = PROFILE_JSON, answers_path: Path = ANSWERS_PATH) -> Facts:
-    """All facts, read fresh on every call so an edit to either file applies at once."""
+def load_learned(path: Path = LEARNED_PATH) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    rows = data.get("learned") if isinstance(data, dict) else None
+    return [r for r in rows or [] if isinstance(r, dict) and r.get("id")]
+
+
+def _entry(key: str | None, asks: list[str], raw: dict[str, Any], source: str) -> dict[str, Any]:
+    return {"key": key, "asks": [a for a in asks if a], "answer": raw.get("answer"),
+            "choose": list(raw.get("choose") or []), "only_if_required": bool(raw.get("only_if_required")),
+            "options": list(raw.get("options") or []), "company": raw.get("company"),
+            "source": source, "trusted": True}
+
+
+def load_facts(profile_path: Path = PROFILE_JSON, answers_path: Path = ANSWERS_PATH,
+               learned_path: Path | None = None) -> Facts:
+    """All facts, read fresh on every call so an edit to any file applies at once."""
     profile = json.loads(profile_path.read_text(encoding="utf-8")) if profile_path.exists() else {}
     values = profile_facts(profile)
     data = load_answers_file(answers_path)
+    if learned_path is None:
+        learned_path = answers_path.with_name(LEARNED_PATH.name)
 
     salary_cfg = data.get("salary") or {}
     salary = Salary(current=salary_cfg.get("current_ctc_lpa"),
@@ -174,15 +202,25 @@ def load_facts(profile_path: Path = PROFILE_JSON, answers_path: Path = ANSWERS_P
     answers: list[dict[str, Any]] = []
     for key, entry in (data.get("answers") or {}).items():
         if isinstance(entry, dict):
-            if entry.get("answer") is None:
-                continue
-            answers.append({"key": key, "asks": list(entry.get("asks") or []),
-                            "answer": entry["answer"]})
+            answers.append(_entry(key, list(entry.get("asks") or []), entry, f"answers:{key}"))
         elif entry is not None:
             # Shorthand `key: value` overrides a profile fact ("city: Bengaluru").
             values[key] = entry
     for entry in data.get("unanswered") or []:
-        if isinstance(entry, dict) and entry.get("answer") is not None and entry.get("ask"):
-            answers.append({"key": None, "asks": [entry["ask"]], "answer": entry["answer"],
-                            "options": list(entry.get("options") or [])})
+        if isinstance(entry, dict) and entry.get("ask"):
+            answers.append(_entry(None, [entry["ask"]], entry, f"unanswered:{entry['ask']}"))
+
+    by_source = {a["source"]: a for a in answers}
+    for row in load_learned(learned_path):
+        trusted = int(row.get("confirms") or 0) >= TRUSTED_AFTER
+        target = by_source.get(row.get("replaces") or "")
+        if target is not None:
+            # A correction typed into a form beats what the answers file says.
+            target.update(answer=row.get("answer"), choose=[], only_if_required=False,
+                          source=f"learned:{row['id']}", trusted=trusted)
+            continue
+        if row.get("ask") and row.get("answer") is not None:
+            entry = _entry(None, [row["ask"]], row, f"learned:{row['id']}")
+            entry["trusted"] = trusted
+            answers.append(entry)
     return Facts(values=values, salary=salary, answers=answers)

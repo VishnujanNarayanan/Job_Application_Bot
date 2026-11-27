@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.0.0
+// @version      1.1.0
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        https://*.greenhouse.io/*
 // @match        https://jobs.lever.co/*
@@ -20,6 +20,8 @@
 // @match        https://amazon.jobs/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @connect      __JAB_HOST__
 // @run-at       document-idle
 // @downloadURL  __JAB_ENDPOINT__/autofill/jab.user.js
@@ -38,6 +40,9 @@
  *    (Workday's next step) are filled as they appear.
  *  - It never clicks a submit button, never presses Enter, never touches a
  *    field that already has a value.
+ *  - When you press Submit (or Next on a multi-page form), it reads what each
+ *    field now holds and sends it to /autofill/learn, so an answer you typed
+ *    or corrected is used next time. It doesn't delay or block the submit.
  */
 (function () {
   'use strict';
@@ -261,7 +266,7 @@
         ref: remember(ftype, [el]), label, context: contextOf(el, [label]),
         name: el.name || '', id: el.id || '', automation_id: el.getAttribute('data-automation-id') || '',
         autocomplete: el.getAttribute('autocomplete') || '', type: ftype, options,
-        required: requiredOf(el, label),
+        placeholder: el.getAttribute('placeholder') || '', required: requiredOf(el, label),
       };
       fields.push(f);
     }
@@ -416,6 +421,102 @@
   }
 
   // ------------------------------------------------------------------------
+  // Reading what a field holds now (at submit)
+  // ------------------------------------------------------------------------
+
+  function selectedText(sel) {
+    const o = sel.options[sel.selectedIndex];
+    return o && o.value && !/^(select|choose|please)/i.test(o.text.trim()) ? clean(o.text) : '';
+  }
+
+  function readValue(r) {
+    const el = r.els[0];
+    switch (r.kind) {
+      case 'select': return selectedText(el);
+      case 'multiselect': return [...el.selectedOptions].map((o) => clean(o.text));
+      case 'radio': { const c = r.els.find((e) => e.checked); return c ? optionLabel(c) : ''; }
+      case 'checkbox_group': return r.els.filter((e) => e.checked).map(optionLabel);
+      case 'checkbox': return el.checked ? 'Yes' : '';
+      case 'file': return '';
+      case 'buttons': {
+        const b = r.buttons.find((x) => x.getAttribute('aria-pressed') === 'true'
+          || /(^|[\s_-])(active|selected|checked)\b/i.test(x.className));
+        return b ? clean(b.textContent) : '';
+      }
+      case 'combobox': {
+        if (el.tagName === 'BUTTON') return clean(el.textContent);
+        const box = el.closest('[class*="control" i], [class*="container" i]');
+        const one = box && box.querySelector('[class*="single-value" i], [class*="singleValue" i]');
+        if (one) return clean(one.textContent);
+        const many = box ? [...box.querySelectorAll('[class*="multi-value__label" i], [class*="multiValueLabel" i]')]
+          .map((x) => clean(x.textContent)) : [];
+        return many.length ? many : clean(el.value);
+      }
+      default: return clean(el.value);
+    }
+  }
+
+  const isEmpty = (v) => (Array.isArray(v) ? !v.length : !v);
+
+  // ------------------------------------------------------------------------
+  // Learning from what you submit
+  // ------------------------------------------------------------------------
+
+  const QUEUE = 'jab-learn-queue';
+  const sent = new Map();  // ref -> the value last reported, so each is sent once
+  const SUBMITISH = /^(submit|submit application|submit your application|apply|apply now|send|send application|next|continue|save and continue|save & continue|review|review and submit|finish)\b/i;
+
+  async function flush() {
+    const q = GM_getValue(QUEUE, []);
+    if (!q.length) return;
+    GM_setValue(QUEUE, []);
+    const failed = [];
+    for (const body of q) {
+      try {
+        await request('POST', ENDPOINT + '/autofill/learn', {
+          headers: { 'Content-Type': 'application/json', 'X-JAB': '1' }, data: JSON.stringify(body),
+        });
+      } catch (e) { failed.push(body); }
+    }
+    if (failed.length) GM_setValue(QUEUE, failed.concat(GM_getValue(QUEUE, [])).slice(-20));
+  }
+
+  function report() {
+    const fields = [];
+    for (const [ref, r] of refs) {
+      if (!r.decision || !r.decision.question || !r.els[0] || !r.els[0].isConnected) continue;
+      const value = readValue(r);
+      if (isEmpty(value)) continue;
+      const k = JSON.stringify(value);
+      if (sent.get(ref) === k) continue;
+      sent.set(ref, k);
+      fields.push({
+        question: r.decision.question, type: r.ftype || r.kind, options: r.options || [], value,
+        filled: r.filled === undefined ? null : r.filled, key: r.decision.key || null,
+        source: r.decision.source || null, required: !!r.required,
+      });
+    }
+    if (!fields.length) return;
+    // Queued first: if the page unloads before the request goes out, the next
+    // ATS page sends it.
+    const q = GM_getValue(QUEUE, []);
+    q.push({ url: location.href, job_id: current && current.jobId, fields });
+    GM_setValue(QUEUE, q.slice(-20));
+    flush();
+  }
+
+  function onSubmitish(e) {
+    if (!active) return;
+    if (e.type === 'click') {
+      const t = e.target && e.target.closest && e.target.closest('button, input[type=submit], [role=button], a');
+      if (!t || t.closest('#' + PANEL_ID)) return;
+      const text = clean(t.textContent || t.value || t.getAttribute('aria-label') || '');
+      if (!(t.type === 'submit' || SUBMITISH.test(text))) return;
+    }
+    try { report(); } catch (err) { /* never get in the way of a submit */ }
+  }
+
+  // ------------------------------------------------------------------------
   // Showing what happened
   // ------------------------------------------------------------------------
 
@@ -552,7 +653,10 @@
     try {
       const fields = scan();
       if (!fields.length) return;
-      fields.forEach((f) => { refs.get(f.ref).required = f.required; });
+      fields.forEach((f) => {
+        const r = refs.get(f.ref);
+        Object.assign(r, { required: f.required, ftype: f.type, options: f.options });
+      });
       let res;
       try {
         res = await matchFields({
@@ -569,6 +673,13 @@
         const f = fields.find((x) => x.ref === d.ref);
         d.required = f && f.required;
         try { await apply(d, res.resume); } catch (e) { mark(d.ref, 'jab-missing', 'fill failed: ' + e.message); }
+        const r = refs.get(d.ref);
+        if (r) {
+          r.decision = d;
+          // What the autofill left in the field: compared at submit to spot a correction.
+          const now = (d.action === 'fill' || d.action === 'review') ? readValue(r) : '';
+          r.filled = isEmpty(now) ? null : now;
+        }
       }
       say(summary());
     } finally {
@@ -606,6 +717,9 @@
   }
 
   current = session();
+  document.addEventListener('submit', onSubmitish, true);
+  document.addEventListener('click', onSubmitish, true);
+  flush();
   GM_registerMenuCommand('Autofill this form', run);
   if (current) run(); else offer();
 })();

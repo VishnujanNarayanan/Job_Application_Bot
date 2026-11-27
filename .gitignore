@@ -122,3 +122,5 @@ data/ats_answers.yaml
 # tools/ats_catalog_sync.py; and the answers file's temp copy while it is written.
 data/ats_questions_seen.jsonl
 data/ats_answers.yaml.tmp
+data/ats_learned.yaml
+data/ats_learned.yaml.tmp

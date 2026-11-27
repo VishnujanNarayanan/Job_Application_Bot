@@ -48,11 +48,30 @@ fields:
 
   # --- where ----------------------------------------------------------------
   location:
-    asks: ["location", "current location", "where are you located", "where are you based", "address",
-           "current address", "city and country", "location city"]
+    asks: ["location", "current location", "where are you located", "where are you based",
+           "city and country", "location city"]
     not: ["preferred", "willing", "relocate", "relocation", "work location", "job location", "office", "postal",
           "pin", "zip", "line 2", "street", "permanent", "remote", "hybrid", "which of our", "time zone"]
-    attrs: ["location", "address"]
+    attrs: ["location"]
+  address:
+    asks: ["address", "current address", "residential address", "full address", "postal address", "mailing address",
+           "permanent address", "home address", "correspondence address", "communication address"]
+    not: ["email", "e mail", "web", "ip", "url", "line 1", "line 2", "street", "city", "zip", "postal code",
+          "pin", "website", "wallet"]
+    attrs: ["address", "full address"]
+  address_line1:
+    asks: ["address line 1", "address line one", "address 1", "street address", "street", "address1",
+           "house number", "flat house no"]
+    not: ["email"]
+    attrs: ["address line1", "addressline1", "address1", "address section address line1", "street"]
+  address_line2:
+    asks: ["address line 2", "address line two", "address 2", "address2", "apartment", "suite", "locality", "area"]
+    not: ["email", "area of", "areas", "functional area", "interest", "expertise", "focus", "specialization"]
+    attrs: ["address line2", "addressline2", "address2", "address section address line2"]
+  postal_code:
+    asks: ["postal code", "post code", "postcode", "pin code", "pincode", "pin", "zip", "zip code", "zipcode",
+           "zip postal code", "postal"]
+    attrs: ["postal code", "postalcode", "zip", "zipcode", "pincode", "pin code", "address section postal code"]
   city:
     asks: ["city", "current city", "city of residence", "town", "town city", "city town"]
     not: ["preferred", "willing", "relocate", "birth"]
@@ -65,10 +84,36 @@ fields:
     asks: ["country", "country of residence", "current country", "country region", "country territory"]
     not: ["code", "phone", "birth", "citizenship", "passport", "nationality", "authorized", "authorised", "eligible"]
     attrs: ["country", "addresssection country"]
+  work_authorization:
+    asks: ["authorized to work", "authorised to work", "legally authorized", "legally authorised", "eligible to work",
+           "right to work", "work authorization", "work authorisation", "legally eligible", "legal right to work",
+           "permitted to work", "work permit", "authorization to work", "authorisation to work"]
+    not: ["relocat*"]
+  sponsorship:
+    asks: ["sponsorship", "visa sponsorship", "require sponsorship", "need sponsorship", "sponsor", "require a visa",
+           "need a visa", "work visa", "employment visa", "visa support", "h 1b", "h1b"]
+    not: ["relocation", "sponsored by", "sponsor a", "event"]
   willing_to_relocate:
     asks: ["willing to relocate", "open to relocation", "open to relocating", "relocate", "relocation",
            "willing to move", "comfortable relocating"]
     not: ["assistance", "package", "support", "allowance"]
+
+  # --- you -------------------------------------------------------------------
+  preferred_name:
+    asks: ["preferred name", "preferred first name", "nickname", "nick name", "what should we call you",
+           "name you go by", "what do you like to be called", "known as"]
+    not: ["company", "pronoun*"]
+    attrs: ["preferred name", "preferredname", "nickname"]
+  date_of_birth:
+    asks: ["date of birth", "dob", "birth date", "birthdate", "birthday", "d o b"]
+    not: ["place of birth", "country of birth", "city of birth"]
+    attrs: ["dob", "date of birth", "birth date", "birthdate"]
+  age:
+    asks: ["age", "your age", "current age", "age range", "age group", "age bracket", "how old are you"]
+    not: ["minimum age", "legal age"]
+  adult:
+    asks: ["at least 18", "18 years of age", "over 18", "18 years or older", "above 18", "18 or older",
+           "legal working age", "of legal age", "minimum age"]
 
   # --- links ----------------------------------------------------------------
   linkedin:
@@ -91,7 +136,7 @@ fields:
            "employer", "present employer", "most recent employer", "current or most recent company",
            "current or previous employer", "organization", "organisation", "company"]
     not: ["why", "previous companies", "would you", "our company", "this company", "join", "referr*", "how did",
-          "worked at", "worked for", "ever been employed", "have you", "related to", "relative", "website",
+          "worked at", "worked for", "ever been employed", "have you", "related to", "relative*", "website",
           "school", "university", "size", "type of"]
     attrs: ["org", "company", "current company", "employer"]
   current_title:
@@ -119,21 +164,40 @@ fields:
     asks: ["graduation year", "year of graduation", "year of passing", "passing year", "graduation date",
            "when did you graduate", "year graduated", "batch"]
 
+  # --- availability ---------------------------------------------------------
+  notice_period:
+    asks: ["notice period", "notice", "how soon can you join", "joining time", "time to join", "availability to join",
+           "days notice", "official notice period", "how soon can you start", "how early can you join"]
+    not: ["are you serving", "currently serving", "buyout", "buy out", "negotiable", "last working", "privacy notice", "notice of",
+          "notice at collection", "read the", "acknowledge", "agree"]
+  start_date:
+    asks: ["start date", "earliest start date", "earliest date", "when can you start", "available to start",
+           "availability date", "date available", "joining date", "date of joining", "expected joining date",
+           "earliest joining date", "available from", "when could you start", "earliest available start date"]
+    not: ["end date", "graduation", "education", "employment", "project", "course", "degree", "school",
+          "university", "history", "previous", "from date"]
+  how_heard:
+    asks: ["how did you hear", "where did you hear", "how did you find", "how did you learn about",
+           "source of application", "how did you come across", "where did you find", "referral source",
+           "application source", "how did you get to know", "where did you see", "how did you discover"]
+
   # --- money & availability -------------------------------------------------
   ctc_both:
     asks: ["current ctc and expected ctc", "current and expected ctc", "current and expected salary",
            "current salary and expected salary", "current and expected compensation", "current expected ctc",
            "current ctc expected ctc", "ctc current and expected", "current and expected package"]
+    not: ["negotiable"]
   current_ctc:
     asks: ["current ctc", "current salary", "current compensation", "current package", "present ctc",
            "current annual ctc", "current fixed ctc", "current annual salary", "current pay", "existing ctc",
            "current cost to company", "last drawn salary", "last drawn ctc", "ctc current"]
+    not: ["negotiable", "variable"]
   expected_ctc:
     asks: ["expected ctc", "expected salary", "expected compensation", "desired salary", "salary expectation",
            "salary expectations", "expected package", "compensation expectation", "compensation expectations",
            "desired compensation", "expected annual ctc", "expected annual salary", "salary requirement",
            "salary requirements", "desired pay", "expected pay", "ctc expected", "what are your salary"]
-    not: ["current and", "and current"]
+    not: ["current and", "and current", "negotiable", "flexible"]
 
   # --- files ----------------------------------------------------------------
   resume:

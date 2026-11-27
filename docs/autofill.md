@@ -54,7 +54,36 @@ doesn't know which match they belong to.
 | `master_profile.yaml` work & education | current company and title (the `employment` entry still `present`), degree, field of study, university, graduation year |
 | `config.yaml` | portfolio / website (`operator.resume_header.portfolio_url`), years of experience (`operator.years_experience`), willing to relocate (`relocation.enabled`) |
 | `data/ats_answers.yaml` `salary` | current CTC, and expected CTC: the middle of the advert's range, never below `expected_min_lpa`. If the advert gives no range, the floor is used. A lone "8+ LPA" counts as 8. |
-| `data/ats_answers.yaml` `answers` | anything else, matched on wording (`asks:`) |
+| `data/ats_answers.yaml` `answers`, facts (`key: value`) | `notice_days` (notice period; earliest start date = today + notice), `date_of_birth` (age, age range, "at least 18"), `citizenship` and `sponsorship_abroad` (see below), `how_heard`, `preferred_name`, `address`, `address_line1`, `address_line2`, `postal_code`; any profile fact can be overridden the same way |
+| `data/ats_answers.yaml` `answers`, questions | anything else, matched on wording (`asks:`) |
+| `data/ats_learned.yaml` | answers learned from what you submitted (below) |
+
+Worked out for each form:
+
+- **Dates** follow the field: a date picker gets `2026-12-12`, a box whose
+  hint shows `DD/MM/YYYY` gets that, anything else `12 December 2026`.
+- **Work authorisation and sponsorship** depend on the country the question
+  names ("…to work in the US?"), else the job's location. Your citizenship
+  country: authorised, no sponsorship. Anywhere else: not authorised, needs
+  sponsorship. No country anywhere: your own is assumed, outlined.
+- **How did you hear**: a job found on a board (LinkedIn, Naukri…) names that
+  board; otherwise `how_heard` (e.g. company website).
+- **Years with a tool** ("years of experience with Python") get your total
+  years of experience.
+
+A question answer can carry more than one form:
+
+```yaml
+  pronouns:
+    asks: ["pronouns", "preferred pronouns"]
+    answer: He/him            # a text box
+    only_if_required: true    # ...left empty unless required
+    choose: ["Prefer not to say", "Decline to state", "He/him"]   # options, first found wins
+```
+
+In a "select all that apply" group, every `choose` item present is ticked.
+`answer:` may also be a list for that. A number box gets the number in the
+answer ("89%" → 89).
 
 Salary units follow the label. A field marked "(in LPA)" gets `6`. A
 "per month" field gets a monthly rupee figure, and "INR" gets annual rupees. A
@@ -97,6 +126,29 @@ later form asking the same thing gets it. You answer each question once:
 An answer that isn't one of the form's options is never forced in; the field
 stays outlined. Code only ever appends to that file, so keep `unanswered:` as
 its last key.
+
+## It learns from what you submit
+
+When you press Submit (or Next, on a multi-page form), the script reads what
+each field now holds and sends it to `/autofill/learn`. It doesn't delay or
+block the submit; if the endpoint is down, the report is queued and sent from
+the next ATS page you open.
+
+- A field it couldn't answer, and you filled in: learned.
+- A stored answer you changed before submitting: your version replaces it, for
+  every wording of that question.
+- A learned answer is filled with an amber outline until you have submitted it
+  unchanged twice; after that it fills like any other. A correction starts the
+  count again.
+- Questions about one company ("have you worked here before?", "who referred
+  you?", any question naming the company) are kept for that company only.
+- Never learned: profile facts and the worked-out answers above (change those
+  in the files), salary, open prompts ("why us", "tell us about…", cover
+  letters), anything longer than a short answer, files, consent boxes.
+
+Learned answers are in `data/ats_learned.yaml` (gitignored), with `confirms`
+and a `history` of earlier answers. Edit an `answer:` or delete an entry
+freely. Matching is word rules only, so it's instant and needs no AI.
 
 Every question seen (questions and options, never values) is also logged to
 `data/ats_questions_seen.jsonl`. To add the new ones to the public catalog:
