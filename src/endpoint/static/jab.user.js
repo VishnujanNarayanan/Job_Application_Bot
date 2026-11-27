@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.4.0
+// @version      1.5.0
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -215,7 +215,9 @@
     // Not a tooltip this script wrote itself.
     const title = /^Job Bot/.test(el.getAttribute('title') || '') ? '' : el.getAttribute('title');
     const hint = clean(el.getAttribute('placeholder') || title || '');
-    return hint || labelNear(el);
+    // "No Selection" / "- Select -" say nothing: the label beside the box does.
+    if (hint && !PLACEHOLDER.test(hint)) return hint;
+    return labelNear(el) || hint;
   }
 
   // The nearest enclosing text that is not the field's own: a question heading
@@ -262,7 +264,7 @@
 
   // Workday's search-and-pick boxes ("How did you hear", School, Skills).
   const promptBox = (el) => el.closest('[data-automation-id="multiselectInputContainer"]');
-  const PLACEHOLDER = /^(select( one)?|choose( one)?|please select|--|none selected|search)\b/i;
+  const PLACEHOLDER = /^\s*(?:(?:select( one| an option)?|choose( one| an option)?|please (select|choose)|none selected|no selection|search)\b|-+\s*(select|choose)?\s*-*\s*$|--)/i;
 
   function hasValue(el) {
     if (el.tagName === 'BUTTON' || !NATIVE.test(el.tagName)) { const t = clean(el.textContent); return !!t && !PLACEHOLDER.test(t); }
@@ -271,7 +273,7 @@
     if (el.type === 'file') return el.files && el.files.length > 0;
     if (el.tagName === 'SELECT') {
       const o = el.options[el.selectedIndex];
-      return !!(o && o.value && !/^(select|choose|please)/i.test(o.text.trim()));
+      return !!(o && o.value && !PLACEHOLDER.test(o.text));
     }
     return !!(el.value && el.value.trim());
   }
@@ -280,7 +282,7 @@
   // standard widget roles, rich-text editors.
   const CONTROLS = 'input, select, textarea, [role="combobox"], button[aria-haspopup="listbox"], '
     + '[contenteditable="true"], [contenteditable=""], [role="textbox"], [role="radiogroup"], '
-    + '[role="checkbox"], [role="switch"]';
+    + '[role="checkbox"], [role="switch"], [aria-pressed]';
   const NATIVE = /^(INPUT|SELECT|TEXTAREA|BUTTON)$/;
   const SKIP_TYPES = ['hidden', 'submit', 'button', 'image', 'reset', 'password'];
   const OUTSIDE_FORM = 'header, nav, footer, [role="navigation"], [role="banner"], [role="contentinfo"]';
@@ -311,7 +313,7 @@
     return null;
   }
 
-  const ariaChecked = (el) => el.getAttribute('aria-checked') === 'true';
+  const ariaChecked = (el) => el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-pressed') === 'true';
   const richText = (el) => !NATIVE.test(el.tagName) && (el.isContentEditable || el.getAttribute('role') === 'textbox');
 
   let siteExtra = [];  // selectors of controls learned on this site (fields you filled that the scan missed)
@@ -392,6 +394,39 @@
         radios.forEach((x) => handled.add(x));
         continue;
       }
+      // A row of toggle buttons (aria-pressed) not tied to a hidden input: Yes/No, or chips.
+      if (el.hasAttribute('aria-pressed') && !el.getAttribute('role') && el.parentElement) {
+        const row = [...el.parentElement.children].filter((c) => c.hasAttribute('aria-pressed'));
+        if (row.length < 2 || row.some((c) => handled.has(c))) { handled.add(el); continue; }
+        row.forEach((c) => handled.add(c));
+        if (row.some(ariaChecked)) continue;
+        const question = labelOf(el.parentElement) || headingBefore(el.parentElement) || labelNear(el.parentElement)
+          || contextOf(el.parentElement, row.map((c) => clean(c.textContent)));
+        const yesNo = row.length === 2 && row.every((c) => /^(yes|no)$/i.test(clean(c.textContent)));
+        fields.push({
+          ref: remember(yesNo ? 'ariaradio' : 'ariachecks', [el.parentElement], yesNo ? { radios: row } : { chips: row }),
+          label: question, context: question, name: '', id: '', automation_id: '', autocomplete: '',
+          type: yesNo ? 'radio' : 'checkbox_group', options: row.map((c) => clean(c.textContent)),
+          group: groupOf(el), required: /[*✱]/.test(question),
+        });
+        continue;
+      }
+      // A row of chips you tick several of ("Onsite / Hybrid / Remote"): one question.
+      if (!NATIVE.test(el.tagName) && el.getAttribute('role') === 'checkbox' && el.parentElement) {
+        const chips = [...el.parentElement.children].filter((c) => c.getAttribute('role') === 'checkbox');
+        if (chips.length >= 2) {
+          chips.forEach((c) => handled.add(c));
+          if (chips.some(ariaChecked)) continue;
+          const question = labelOf(el.parentElement) || headingBefore(el.parentElement) || labelNear(el.parentElement)
+            || contextOf(el.parentElement, chips.map((c) => clean(c.textContent)));
+          fields.push({
+            ref: remember('ariachecks', [el.parentElement], { chips }), label: question, context: question, name: '',
+            id: '', automation_id: '', autocomplete: '', type: 'checkbox_group', options: chips.map((c) => clean(c.textContent)),
+            group: groupOf(el), required: /[*✱]/.test(question),
+          });
+          continue;
+        }
+      }
       // Custom checkbox / switch: <div role="checkbox" aria-checked>.
       if (!NATIVE.test(el.tagName) && /^(checkbox|switch)$/.test(el.getAttribute('role') || '')) {
         if (ariaChecked(el)) { handled.add(el); continue; }
@@ -420,6 +455,9 @@
       const toggles = isTick && el.parentElement
         ? [...el.parentElement.querySelectorAll(':scope > button[aria-pressed], :scope > button[data-option]')] : [];
       if (toggles.length >= 2) {
+        // Read once: through this hidden input, or already as a row of toggle buttons.
+        if (toggles.some((b) => handled.has(b))) { handled.add(el); continue; }
+        toggles.forEach((b) => handled.add(b));
         if (toggles.some((b) => b.getAttribute('aria-pressed') === 'true')) { handled.add(el); continue; }
         const label = labelOf(el) || contextOf(el, toggles.map((b) => clean(b.textContent)));
         fields.push({
@@ -463,6 +501,24 @@
         required: requiredOf(el, label) || (isFile && /[*✱]/.test(context)) || !!(fieldBox && isRequiredBox(el)),
       };
       fields.push(f);
+    }
+
+    for (const { el, box, about } of uploadButtons()) {
+      fields.push({
+        ref: remember('uploadbutton', [el], { markEl: box, box }), label: about, context: about, name: '',
+        id: el.id || '', automation_id: '', autocomplete: '', type: 'file', options: [], group: '',
+        required: /[*✱]|required/i.test(about),
+      });
+    }
+
+    for (const zone of dropZones()) {
+      const label = headingBefore(zone) || labelNear(zone) || contextOf(zone, []) || textOf(zone);
+      const context = clean(headingBefore(zone) + ' ' + textOf(zone)).slice(0, 300);
+      fields.push({
+        ref: remember('dropzone', [zone]), label: 'Drop files here', context, name: '', id: zone.id || '',
+        automation_id: '', autocomplete: '', type: 'file', options: [], group: '',
+        required: /[*✱]/.test(label + ' ' + context),
+      });
     }
 
     for (const g of groups.values()) {
@@ -725,13 +781,80 @@
     return false;
   }
 
+  const pdfFile = (blob, filename) => new File([blob], filename, { type: 'application/pdf' });
+
   function attach(el, blob, filename) {
     const dt = new DataTransfer();
-    dt.items.add(new File([blob], filename, { type: 'application/pdf' }));
+    dt.items.add(pdfFile(blob, filename));
     el.files = dt.files;
     fire(el, 'input');
     fire(el, 'change');
     return el.files.length === 1;
+  }
+
+  // An upload area you drag a file onto (react-dropzone, Uppy, Filestack, Dropzone.js):
+  // the same events a real drag-and-drop sends, carrying the PDF.
+  function dropOn(zone, blob, filename) {
+    const dt = new DataTransfer();
+    dt.items.add(pdfFile(blob, filename));
+    for (const type of ['dragenter', 'dragover', 'drop']) {
+      zone.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }
+  }
+
+  // Did the page take the file? Its name, "uploaded", or a progress bar appears near it.
+  async function uploadShows(area, filename, before, pageBefore) {
+    const stem = n(filename.replace(/\.pdf$/i, ''));
+    const pageHad = (pageBefore || '').includes(stem);
+    for (let i = 0; i < 10; i++) {
+      await sleep(300);
+      const now = n(textOf(area));
+      if (now !== before && (now.includes(stem) || /\b(uploaded|uploading|attached|remove|replace|\d+ ?%)\b/.test(now))) return true;
+      if (!pageHad && n(document.body.innerText).includes(stem)) return true;
+    }
+    return false;
+  }
+
+  // An "Upload a CV" / "+" button whose file input appears only in the dialog it
+  // opens (SuccessFactors, iCIMS, Taleo attachment fields).
+  const RESUME_WORDS = /\b(resume|résumé|cv|curriculum vitae)\b/i;
+  function uploadButtons() {
+    const out = [];
+    const seenBoxes = new Set();
+    for (const el of deepAll('button, [role="button"], a')) {
+      if (!visible(el) || handled.has(el) || el.closest('#' + PANEL_ID) || el.closest(OUTSIDE_FORM)) continue;
+      const own = clean(labelOf(el) + ' ' + textOf(el) + ' ' + (el.className || ''));
+      if (!/upload|attach|add|browse|choose|select|plus/i.test(own)) continue;
+      // The field around it must be about the resume, not a cover letter or photo.
+      let box = el.parentElement;
+      for (let d = 0; box && d < 6 && !RESUME_WORDS.test(textOf(box).slice(0, 200)); d++) box = box.parentElement;
+      if (!box || seenBoxes.has(box)) continue;
+      const about = textOf(box).slice(0, 200);
+      if (/cover letter|photo|picture|transcript|certificate/i.test(about) && !RESUME_WORDS.test(own)) continue;
+      if (textOf(box).length > 600) continue;  // a whole section, not one field
+      if ([...box.querySelectorAll('input[type="file"]')].some((f) => handled.has(f))) continue;
+      seenBoxes.add(box);
+      out.push({ el, box, about });
+    }
+    return out;
+  }
+
+  // A visible area that asks for a file to be dropped, with no file input of its own.
+  const DROP_TEXT = /drag (and|&|n) drop|drop (your |the |a )?(file|files|resume|cv|document)s?( here)?|drop here|browse files|choose file|select file/i;
+  function dropZones() {
+    const zones = [];
+    for (const el of deepAll('div, section, label, form, [role="button"]')) {
+      if (!visible(el) || el.closest('#' + PANEL_ID) || handled.has(el)) continue;
+      const own = textOf(el);
+      if (own.length > 400 || !DROP_TEXT.test(own)) continue;
+      // The smallest such area: skip one whose child is also a zone.
+      if ([...el.children].some((c) => visible(c) && DROP_TEXT.test(textOf(c)) && textOf(c).length <= 400)) continue;
+      // A caption beside a file input the scan already took ("Choose file"): not a second upload.
+      const near = (el.parentElement && el.parentElement.parentElement) || el;
+      if ([...near.querySelectorAll('input[type="file"]')].some((f) => handled.has(f))) continue;
+      zones.push(el);
+    }
+    return zones;
   }
 
   // ------------------------------------------------------------------------
@@ -753,6 +876,7 @@
       case 'checkbox': return el.checked ? 'Yes' : '';
       case 'ariacheck': return ariaChecked(el) ? 'Yes' : '';
       case 'ariaradio': { const c = r.radios.find(ariaChecked); return c ? clean(c.textContent) : ''; }
+      case 'ariachecks': return r.chips.filter(ariaChecked).map((c) => clean(c.textContent));
       case 'richtext': return clean(el.textContent);
       case 'file': return '';
       case 'buttons': {
@@ -977,8 +1101,9 @@
   function mark(ref, cls, why) {
     const r = refs.get(ref);
     if (!r) return;
+    r.outcome = cls.replace('jab-', '') + (why ? ': ' + why : '');
     let target = r.markEl || (r.kind === 'buttons' ? r.buttons[0].parentElement : r.els[0]);
-    if (!r.markEl && !/^(buttons|ariaradio|ariacheck|richtext)$/.test(r.kind) && (r.els.length > 1 || r.kind === 'file' || target.type === 'checkbox' || target.type === 'radio')) {
+    if (!r.markEl && !/^(buttons|ariaradio|ariacheck|ariachecks|richtext|dropzone|uploadbutton)$/.test(r.kind) && (r.els.length > 1 || r.kind === 'file' || target.type === 'checkbox' || target.type === 'radio')) {
       target = r.els[0].closest('fieldset, [role="radiogroup"], [role="group"]') || r.els[0].parentElement || target;
       if (r.els.length > 1) {
         while (target && !r.els.every((e) => target.contains(e))) target = target.parentElement;
@@ -1022,11 +1147,51 @@
       }
       try {
         const blob = await fetchResume(resume.url);
-        if (attach(el, blob, resume.filename)) { totals.resume = 'resume attached'; return; }
+        const area = r.kind === 'dropzone' ? el : (uploadArea(el) || el.parentElement || el);
+        const before = n(textOf(area));
+        const pageBefore = n(document.body.innerText);
+        if (r.kind === 'uploadbutton') {
+          // Open its dialog, then give the file to the input that appears there.
+          const had = new Set(deepAll('input[type="file"]'));
+          pressOn(el);
+          let input = null;
+          for (let i = 0; i < 20 && !input; i++) {
+            await sleep(200);
+            input = deepAll('input[type="file"]').find((f) => !had.has(f) && !f.disabled);
+          }
+          if (input && attach(input, blob, resume.filename)
+              && await uploadShows(r.box, resume.filename, n(textOf(r.box)), pageBefore)) {
+            totals.resume = 'resume attached'; return;
+          }
+          if (input) {
+            totals.resume = 'resume set in the upload dialog; please check it shows';
+            totals.review++;
+            return mark(decision.ref, 'jab-review', 'resume set in the upload dialog; check it shows (also in Downloads)');
+          }
+        } else if (r.kind === 'dropzone') {
+          dropOn(el, blob, resume.filename);
+          if (await uploadShows(area, resume.filename, before, pageBefore)) { totals.resume = 'resume attached (dropped)'; return; }
+          // A hidden input may have appeared once the area was used.
+          const input = el.querySelector('input[type="file"]');
+          if (input && attach(input, blob, resume.filename) && await uploadShows(area, resume.filename, before, pageBefore)) {
+            totals.resume = 'resume attached'; return;
+          }
+        } else if (attach(el, blob, resume.filename)) {
+          // Most pages show the file at once; one that doesn't may want it dropped instead.
+          if (await uploadShows(area, resume.filename, before, pageBefore)) { totals.resume = 'resume attached'; return; }
+          const zone = area !== el && DROP_TEXT.test(textOf(area)) ? area : null;
+          if (zone) {
+            dropOn(zone, blob, resume.filename);
+            if (await uploadShows(area, resume.filename, before, pageBefore)) { totals.resume = 'resume attached (dropped)'; return; }
+          }
+          totals.resume = 'resume set; please check it shows';
+          totals.review++;
+          return mark(decision.ref, 'jab-review', 'resume set; check the page shows it (it is also in Downloads)');
+        }
       } catch (e) {
         totals.resume = 'resume: not available (' + e.message + ')';
       }
-      return mark(decision.ref, 'jab-missing', 'attach your resume');
+      return mark(decision.ref, 'jab-missing', 'attach your resume (the PDF is in Downloads)');
     }
     if (a === 'unknown') {
       if (decision.required || r.required) { totals.missing++; return mark(decision.ref, 'jab-missing', decision.reason || 'no answer yet'); }
@@ -1035,7 +1200,14 @@
     }
     const v = decision.value;
     let ok = false;
-    if (r.kind === 'ariaradio') {
+    if (r.kind === 'ariachecks') {
+      const want = Array.isArray(v) ? v : [v];
+      for (const w of want) {
+        const chip = bestOption(r.chips, [String(w)]);
+        if (chip && !ariaChecked(chip)) { pressOn(chip); await sleep(120); if (!ariaChecked(chip)) chip.click(); }
+      }
+      ok = r.chips.some(ariaChecked);
+    } else if (r.kind === 'ariaradio') {
       const hit = bestOption(r.radios, [String(v)].concat(decision.alts || []));
       if (hit) { pressOn(hit); await sleep(150); ok = ariaChecked(hit) || (hit.click(), await sleep(150), ariaChecked(hit)); }
     } else if (r.kind === 'ariacheck') {
@@ -1080,7 +1252,7 @@
       return mark(decision.ref, 'jab-optional', 'could not choose: ' + v);
     }
     if (a === 'review') { totals.review++; mark(decision.ref, 'jab-review', 'filled; please check'); }
-    else totals.filled++;
+    else { totals.filled++; r.outcome = 'filled: ' + String(readValue(r)).slice(0, 60); }
   }
 
   let recipeLoaded = false;
@@ -1149,6 +1321,8 @@
 
   function run() {
     active = true;
+    // Steps that load as new pages on the same site keep going in this tab.
+    try { sessionStorage.setItem('jab-active', JSON.stringify({ host: location.hostname, at: Date.now() })); } catch (e) { /* private mode */ }
     observer.observe(document.body, { childList: true, subtree: true });
     pass();
   }
@@ -1226,7 +1400,8 @@
         html: box.outerHTML.slice(0, 2500),
       };
     });
-    const seen = [...refs.entries()].map(([ref, r]) => ({ ref, kind: r.kind, decision: r.decision || null }));
+    const seen = [...refs.entries()].map(([ref, r]) => ({
+      ref, kind: r.kind, decision: r.decision || null, outcome: r.outcome || null, now: readValue(r) }));
     try {
       await request('POST', ENDPOINT + '/autofill/debug', {
         headers: { 'Content-Type': 'application/json', 'X-JAB': '1' },
@@ -1247,11 +1422,13 @@
 
   // A page that looks like a job application, on a site not known as an ATS.
   function looksLikeApplication() {
-    const inputs = [...document.querySelectorAll('input:not([type=hidden]), select, textarea')].filter(visible);
-    if (inputs.length < 3) return false;
-    const files = [...document.querySelectorAll('input[type=file]')];
     const words = (document.title + ' ' + (document.body.innerText || '').slice(0, 20000)).toLowerCase();
     const resume = /\b(resume|résumé|curriculum vitae|cv)\b/.test(words);
+    const files = deepAll('input[type=file]');
+    // "Upload your resume" pages: one drop area, no other fields (Archer, Filestack pickers).
+    if (resume && (files.length || DROP_TEXT.test(words)) && /upload|attach|drop/.test(words)) return true;
+    const inputs = deepAll('input:not([type=hidden]), select, textarea').filter(visible);
+    if (inputs.length < 3) return false;
     return (files.length > 0 && resume) || (/\bappl(y|ication)\b/.test(words) && resume);
   }
 
@@ -1271,6 +1448,10 @@
     GM_registerMenuCommand('Autofill this form', run);
     GM_registerMenuCommand('Send this form to Job Bot (debugging)', debugSnapshot);
     if (current) { run(); return; }
+    try {
+      const was = JSON.parse(sessionStorage.getItem('jab-active') || 'null');
+      if (was && was.host === location.hostname && Date.now() - was.at < SESSION_MS) { run(); return; }
+    } catch (e) { /* none */ }
     if (known) {
       const p = pending();
       if (p) { fromPending(p); return; }

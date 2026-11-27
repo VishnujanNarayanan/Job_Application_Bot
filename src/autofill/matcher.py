@@ -568,6 +568,21 @@ def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any
         return Answer(code, [code] + alts), "fill"
     if key == "phone_device_type":
         return Answer("Mobile", _DEVICE), "fill"
+    if key == "salary_currency":
+        cur = str(v.get("salary_currency") or "INR")
+        names = {"INR": ["INR", "Indian Rupee", "INR - Indian Rupee", "Indian Rupee (INR)", "Rupee", "Rupees", "₹"]}
+        return Answer(cur, names.get(cur.upper(), [cur])), "fill"
+    if key == "years_experience" and v.get("years_experience") is not None:
+        # "Total experience (Years)" / "(Months)" pairs: 1.5 -> 1 and 6.
+        years = float(v["years_experience"])
+        unit = re.search(r"\(\s*(years?|months?)\s*\)|\bin (years|months)\b", question, re.I)
+        unit = (unit.group(1) or unit.group(2)).lower() if unit else ""
+        if unit.startswith("month"):
+            months = round((years - int(years)) * 12)
+            return Answer(str(months), [months, f"{months} months"]), "fill"
+        if unit.startswith("year") and years != int(years):
+            whole = int(years)
+            return Answer(str(whole), [whole, f"{whole} years", f"{whole} year", years]), "fill"
     if key == "prefix":
         if not v.get("prefix"):
             return None, "unknown"

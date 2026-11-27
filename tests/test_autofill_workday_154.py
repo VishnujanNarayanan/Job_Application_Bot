@@ -206,3 +206,16 @@ def test_site_recipe_learned_from_a_missed_field(client) -> None:
 def test_a_lone_checkbox_ticks_on_a_yes_choice(facts) -> None:
     facts.values["willing_to_relocate"] = "Yes"
     assert _one(facts, "Willing to relocate", "checkbox")["value"] is True
+
+
+def test_years_and_months_split_and_currency(facts) -> None:
+    facts.values["years_experience"] = 1.5
+    assert _one(facts, "Total Work Experience (Years)", "combobox")["value"] == "1"
+    assert _one(facts, "Total Work Experience (Months)", "combobox")["value"] == "6"
+    assert _one(facts, "Total Relevant Experience(Years)", "combobox")["value"] == "1"
+    assert _one(facts, "Years of experience", "number")["value"] == "1.5"
+    d = _one(facts, "Paid in (Currency)", "combobox")
+    assert d["value"] == "INR" and "Indian Rupee" in d["alts"]
+    assert _one(facts, "Expected Gross Pay", "text")["key"] == "expected_ctc"
+    assert _one(facts, "Country/Region Code", "select", options=["- Select -", "India (+91)", "USA (+1)"])["value"] == "India (+91)"
+    assert _one(facts, "No Selection", "combobox")["action"] == "unknown"  # a placeholder is no question

@@ -46,7 +46,7 @@ fields:
     asks: ["phone device type", "phone type", "device type", "type of phone", "phone number type"]
   phone_country_code:
     asks: ["country code", "phone code", "country phone code", "dialling code", "dialing code", "calling code",
-           "international calling code", "isd code", "isd", "country calling code"]
+           "international calling code", "isd code", "isd", "country calling code", "country region code"]
     attrs: ["country phone code", "phone country code", "countryphonecode"]
 
   # --- where ----------------------------------------------------------------
@@ -204,8 +204,13 @@ fields:
     asks: ["expected ctc", "expected salary", "expected compensation", "desired salary", "salary expectation",
            "salary expectations", "expected package", "compensation expectation", "compensation expectations",
            "desired compensation", "expected annual ctc", "expected annual salary", "salary requirement",
-           "salary requirements", "desired pay", "expected pay", "ctc expected", "what are your salary"]
+           "salary requirements", "desired pay", "expected pay", "ctc expected", "what are your salary",
+           "expected gross pay", "expected gross salary", "expected gross", "expected gross ctc", "gross pay expected"]
     not: ["current and", "and current", "negotiable", "flexible"]
+
+  salary_currency:
+    asks: ["paid in currency", "salary currency", "currency", "paid in", "currency of salary", "pay currency"]
+    not: ["expected", "current ctc", "amount"]
 
   # --- files ----------------------------------------------------------------
   resume:
@@ -224,7 +229,7 @@ fields:
 
 # Labels that say nothing about the question: the field's surrounding text is
 # used instead ("Attach" beside Greenhouse's "Resume/CV" heading).
-generic_labels: ["attach", "upload", "choose file", "browse", "type here", "start typing", "select", "search",
+generic_labels: ["no selection", "attach", "upload", "choose file", "browse", "type here", "start typing", "select", "search",
                  "enter", "enter manually", "drop files here", "or drag and drop", "add file", "your answer"]
 
 # A label made only of these words is generic too ("Drop files here or Select files").
@@ -232,5 +237,5 @@ generic_words: ["drop", "files", "file", "here", "or", "select", "upload", "brow
                 "and", "add", "a", "your", "to", "click", "from", "computer", "device"]
 
 # Choice options that are placeholders, not answers.
-placeholder_options: ["select", "select one", "select an option", "please select", "choose", "choose one",
+placeholder_options: ["no selection", "- select -", "select", "select one", "select an option", "please select", "choose", "choose one",
                       "choose an option", "none selected", "pick one", "please choose", ""]
