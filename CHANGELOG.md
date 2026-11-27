@@ -7,6 +7,23 @@ and this project loosely tracks iterations rather than semver.
 
 ## [Unreleased]
 
+### Added
+
+- **Application-form autofill (#154).** The Telegram Apply link now carries
+  `#jab=<job_id>`, which the ATS's server never sees, so it opens the posting
+  exactly as before when the laptop is off. A Violentmonkey userscript, served
+  at `/autofill/jab.user.js`, reads the tag and the form's empty fields. It asks
+  `POST /autofill/match` what goes in each field, fills the known ones,
+  attaches the tailored resume PDF, and outlines the rest; each later page
+  (Workday) is filled as it appears. Answers come from `master_profile.yaml`
+  and `config.yaml`, plus the gitignored `data/ats_answers.yaml`, which holds
+  the salary rule (expected CTC = the middle of the advert's range, never below
+  the floor) and anything else. Unanswered questions are appended there for
+  the operator to fill once, and logged (questions only) for
+  `tools/ats_catalog_sync.py` to merge into `docs/ats_questions.yaml`. It
+  never submits, never ticks a consent box unasked, and never guesses. Checked
+  on live Lever, Greenhouse and Ashby forms; see `docs/autofill.md`.
+
 ## [v3.3.2] — 2026-11-07
 
 ### Changed

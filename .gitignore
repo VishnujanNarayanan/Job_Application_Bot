@@ -118,3 +118,7 @@ Thumbs.db
 
 # ATS form answers (personal; questions live in docs/ats_questions.yaml)
 data/ats_answers.yaml
+# Questions the autofill has seen (#154), merged into the catalog by
+# tools/ats_catalog_sync.py; and the answers file's temp copy while it is written.
+data/ats_questions_seen.jsonl
+data/ats_answers.yaml.tmp
