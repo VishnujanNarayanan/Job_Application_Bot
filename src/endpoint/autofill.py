@@ -26,7 +26,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
@@ -96,14 +96,26 @@ def _job_facts(job_id: str | None) -> dict[str, Any]:
     return facts
 
 
-def _base_url() -> str:
+_LOOPBACK = {"localhost", "127.0.0.1", "::1"}
+
+
+def _base_url(request: Request | None = None) -> str:
+    """The address the browser reached this endpoint at.
+
+    A request to localhost (Zen on the same laptop, no Tailscale needed) gets
+    the local address, so a userscript installed from there calls back there.
+    Anything else gets the configured ``endpoint.base_url``; a Host header is
+    never trusted beyond the loopback names.
+    """
+    if request is not None and request.url.hostname in _LOOPBACK:
+        return str(request.base_url).rstrip("/")
     return resolve_endpoint_base_url(str(settings.endpoint.get("base_url") or ""))
 
 
 @router.get("/autofill/jab.user.js")
-def userscript() -> Response:
+def userscript(request: Request) -> Response:
     """Install from this URL in Violentmonkey; updates come from the same URL."""
-    base = _base_url()
+    base = _base_url(request)
     host = urlparse(base).hostname or "localhost"
     body = (_SCRIPT.read_text(encoding="utf-8")
             .replace("__JAB_ENDPOINT__", base).replace("__JAB_HOST__", host))
@@ -112,7 +124,8 @@ def userscript() -> Response:
 
 
 @router.post("/autofill/match")
-def match(req: MatchRequest, x_jab: str | None = Header(None)) -> dict[str, Any]:
+def match(req: MatchRequest, request: Request,
+          x_jab: str | None = Header(None)) -> dict[str, Any]:
     if x_jab != "1":
         raise HTTPException(status_code=403, detail="X-JAB header required")
     seen_at = ats_of(req.url)
@@ -136,7 +149,7 @@ def match(req: MatchRequest, x_jab: str | None = Header(None)) -> dict[str, Any]
 
     resume = None
     if req.job_id and any(d["action"] == "resume" for d in decisions):
-        resume = {"url": f"{_base_url()}/resume/{req.job_id}.pdf",
+        resume = {"url": f"{_base_url(request)}/resume/{req.job_id}.pdf",
                   "filename": settings.resume_filename}
     counts: dict[str, int] = {}
     for d in decisions:

@@ -346,6 +346,14 @@ def test_userscript_route_has_this_endpoint(client) -> None:
     assert "/autofill/jab.user.js" in r.text
 
 
+def test_userscript_from_localhost_calls_localhost(client) -> None:
+    r = client.get("http://localhost:8000/autofill/jab.user.js")
+    assert "const ENDPOINT = 'http://localhost:8000';" in r.text
+    assert "// @connect      localhost" in r.text
+    other = client.get("http://evil.example/autofill/jab.user.js")
+    assert "evil.example" not in other.text
+
+
 # ---------------------------------------------------------------------------
 # The Telegram Apply link
 # ---------------------------------------------------------------------------
