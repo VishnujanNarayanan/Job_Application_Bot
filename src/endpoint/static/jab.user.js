@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.3.0
+// @version      1.4.0
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -153,25 +153,69 @@
     return clean(parts.join(' '));
   }
 
-  function byIds(ids) {
-    return clean((ids || '').split(/\s+/).map((i) => textOf(document.getElementById(i))).join(' '));
+  // The document or shadow root an element lives in: ids and labels are looked up there.
+  const rootOf = (el) => (el && el.getRootNode ? el.getRootNode() : document);
+
+  function byIds(ids, root) {
+    const r = root && root.getElementById ? root : document;
+    return clean((ids || '').split(/\s+/).map((i) => textOf(r.getElementById(i) || document.getElementById(i))).join(' '));
+  }
+
+  // Every element matching ``selector``, inside open web components (shadow DOM) too.
+  function deepAll(selector, root) {
+    const out = [];
+    const visit = (r) => {
+      out.push(...r.querySelectorAll(selector));
+      for (const host of r.querySelectorAll('*')) if (host.shadowRoot) visit(host.shadowRoot);
+    };
+    visit(root || document);
+    return out;
+  }
+
+  // The text a person would read as this field's question when the page links
+  // none to it: the nearest short text just above it, or just left of it.
+  function labelNear(el) {
+    const box = el.getBoundingClientRect();
+    if (!box.width && !box.height) return '';
+    let best = null;
+    let node = el.parentElement;
+    for (let depth = 0; node && depth < 4 && !best; depth++, node = node.parentElement) {
+      for (const t of node.querySelectorAll('label, legend, span, p, div, h1, h2, h3, h4, h5, h6, strong, b')) {
+        if (t.contains(el) || t.closest('#' + PANEL_ID)) continue;
+        const own = clean([...t.childNodes].filter((c) => c.nodeType === 3).map((c) => c.nodeValue).join(' '));
+        if (!own || own.length > 160) continue;
+        const r = t.getBoundingClientRect();
+        let d = null;
+        if (r.bottom <= box.top + 4 && box.top - r.bottom < 70 && r.left < box.right && r.right > box.left - 20) {
+          d = box.top - r.bottom;
+        } else if (r.right <= box.left + 4 && box.left - r.right < 260 && Math.abs((r.top + r.bottom) / 2 - (box.top + box.bottom) / 2) < box.height) {
+          d = (box.left - r.right) / 2;
+        }
+        if (d !== null && (!best || d < best.d)) best = { d, text: own };
+      }
+    }
+    return best ? best.text : '';
   }
 
   function labelOf(el) {
+    const root = rootOf(el);
     const lb = el.getAttribute('aria-labelledby');
-    if (lb) { const t = byIds(lb); if (t) return t; }
+    if (lb) { const t = byIds(lb, root); if (t) return t; }
     if (el.labels && el.labels.length) {
       const t = textOf(el.labels[0]);
       if (t) return t;
     }
     for (const ref of [el.id, el.name]) {
-      if (!ref) continue;
-      const l = document.querySelector(`label[for="${CSS.escape(ref)}"]`);
+      if (!ref || !root.querySelector) continue;
+      const l = root.querySelector(`label[for="${CSS.escape(ref)}"]`);
       if (l && textOf(l)) return textOf(l);
     }
     const aria = el.getAttribute('aria-label');
     if (aria) return clean(aria);
-    return clean(el.getAttribute('placeholder') || el.getAttribute('title') || '');
+    // Not a tooltip this script wrote itself.
+    const title = /^Job Bot/.test(el.getAttribute('title') || '') ? '' : el.getAttribute('title');
+    const hint = clean(el.getAttribute('placeholder') || title || '');
+    return hint || labelNear(el);
   }
 
   // The nearest enclosing text that is not the field's own: a question heading
@@ -183,7 +227,7 @@
       const legend = node.tagName === 'FIELDSET' && node.querySelector('legend');
       if (legend && textOf(legend)) return textOf(legend).slice(0, 300);
       const lb = node.getAttribute('aria-labelledby');
-      if (lb && byIds(lb)) return byIds(lb).slice(0, 300);
+      if (lb && byIds(lb, rootOf(node))) return byIds(lb, rootOf(node)).slice(0, 300);
       let t = textOf(node);
       for (const x of exclude || []) t = t.replace(x, ' ');
       t = clean(t);
@@ -221,7 +265,7 @@
   const PLACEHOLDER = /^(select( one)?|choose( one)?|please select|--|none selected|search)\b/i;
 
   function hasValue(el) {
-    if (el.tagName === 'BUTTON') { const t = clean(el.textContent); return !!t && !PLACEHOLDER.test(t); }
+    if (el.tagName === 'BUTTON' || !NATIVE.test(el.tagName)) { const t = clean(el.textContent); return !!t && !PLACEHOLDER.test(t); }
     const box = promptBox(el);
     if (box) return !!box.querySelector('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"] li');
     if (el.type === 'file') return el.files && el.files.length > 0;
@@ -232,6 +276,45 @@
     return !!(el.value && el.value.trim());
   }
 
+  // Everything that can hold an answer, whatever the design: native fields,
+  // standard widget roles, rich-text editors.
+  const CONTROLS = 'input, select, textarea, [role="combobox"], button[aria-haspopup="listbox"], '
+    + '[contenteditable="true"], [contenteditable=""], [role="textbox"], [role="radiogroup"], '
+    + '[role="checkbox"], [role="switch"]';
+  const NATIVE = /^(INPUT|SELECT|TEXTAREA|BUTTON)$/;
+  const SKIP_TYPES = ['hidden', 'submit', 'button', 'image', 'reset', 'password'];
+  const OUTSIDE_FORM = 'header, nav, footer, [role="navigation"], [role="banner"], [role="contentinfo"]';
+
+  // A read-only box that opens a list or calendar when clicked (Ant Design, date pickers).
+  function looksPicker(el) {
+    return !!(el.getAttribute('aria-haspopup') || el.getAttribute('role') === 'combobox' || el.getAttribute('aria-controls')
+      || /date|picker|calendar|select|dropdown|combo/i.test((el.className || '') + ' ' + (el.id || '') + ' ' + (el.name || ''))
+      || (el.parentElement && el.parentElement.querySelector('button, [role="button"]')));
+  }
+
+  // A native <select> hidden behind a styled widget (Select2, Chosen, Choices, bootstrap-select):
+  // the widget follows the select's value, so the select is filled and the widget outlined.
+  const WIDGET = /select2|chosen|selectize|choices|bootstrap-select|nice-select|ms-parent|custom-select|dropdown/i;
+  function backingWidget(sel) {
+    for (const c of [sel.nextElementSibling, sel.previousElementSibling, sel.parentElement]) {
+      if (c && c !== sel && visible(c) && WIDGET.test((c.className && String(c.className)) || '')) return c;
+    }
+    return null;
+  }
+
+  // A hidden file input inside a visible area that talks about uploading a resume.
+  function uploadArea(el) {
+    let node = el.parentElement;
+    for (let d = 0; node && d < 4; d++, node = node.parentElement) {
+      if (visible(node) && /resume|cv|curriculum|upload|attach|drop|browse/i.test(textOf(node).slice(0, 300))) return node;
+    }
+    return null;
+  }
+
+  const ariaChecked = (el) => el.getAttribute('aria-checked') === 'true';
+  const richText = (el) => !NATIVE.test(el.tagName) && (el.isContentEditable || el.getAttribute('role') === 'textbox');
+
+  let siteExtra = [];  // selectors of controls learned on this site (fields you filled that the scan missed)
   const handled = new WeakSet();
   const prefilled = new Set();  // labels of fields already answered (the phone code Workday pre-selects)
   let refSeq = 0;
@@ -277,21 +360,62 @@
   function scan() {
     const fields = [];
     const groups = new Map();
-    const nodes = document.querySelectorAll(
-      'input, select, textarea, [role="combobox"], button[aria-haspopup="listbox"]');
+    const nodes = deepAll(CONTROLS + (siteExtra.length ? ', ' + siteExtra.join(', ') : ''));
     for (const el of nodes) {
       if (handled.has(el) || el.closest('#' + PANEL_ID) || inPopup(el)) continue;
-      if (el.disabled || el.readOnly) continue;
+      if (el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+      if (el.readOnly && !looksPicker(el)) continue;
       const type = (el.getAttribute('type') || el.type || '').toLowerCase();
       // A listbox button (Workday's dropdowns) is a question, though its type is "button".
-      if (el.tagName !== 'BUTTON' && ['hidden', 'submit', 'button', 'image', 'reset', 'password'].includes(type)) continue;
-      if (/captcha/i.test((el.name || '') + (el.id || ''))) continue;
+      if (NATIVE.test(el.tagName) && el.tagName !== 'BUTTON' && SKIP_TYPES.includes(type)) continue;
+      if (/captcha/i.test((el.name || '') + (el.id || '') + (el.className || ''))) continue;
       const isFile = type === 'file';
-      const isTick = type === 'radio' || type === 'checkbox';
+      const isTick = el.tagName === 'INPUT' && (type === 'radio' || type === 'checkbox');
+      const widget = el.tagName === 'SELECT' && !visible(el) ? backingWidget(el) : null;
       // Styled file inputs and ticks hide the real element: judge by its label.
-      const shown = visible(el) || ((isFile || isTick) && (
-        (el.labels && [...el.labels].some(visible)) || visible(el.parentElement)));
+      const shown = visible(el) || widget || ((isFile || isTick) && (
+        (el.labels && [...el.labels].some(visible)) || visible(el.parentElement)))
+        || (isFile && uploadArea(el));
       if (!shown) continue;
+
+      // Custom radio group: <div role="radiogroup"> of <div role="radio">.
+      if (el.getAttribute('role') === 'radiogroup') {
+        const radios = [...el.querySelectorAll('[role="radio"]')].filter((x) => !NATIVE.test(x.tagName));
+        if (!radios.length) continue;  // native radios inside: read as a group below
+        if (radios.some(ariaChecked)) { radios.concat(el).forEach((x) => handled.add(x)); continue; }
+        const question = labelOf(el) || contextOf(el, radios.map((x) => clean(x.textContent)));
+        fields.push({
+          ref: remember('ariaradio', [el], { radios }), label: question, context: question, name: '', id: el.id || '',
+          automation_id: '', autocomplete: '', type: 'radio', options: radios.map((x) => clean(x.textContent)),
+          group: groupOf(el), required: requiredOf(el, question) || isRequiredBox(el),
+        });
+        radios.forEach((x) => handled.add(x));
+        continue;
+      }
+      // Custom checkbox / switch: <div role="checkbox" aria-checked>.
+      if (!NATIVE.test(el.tagName) && /^(checkbox|switch)$/.test(el.getAttribute('role') || '')) {
+        if (ariaChecked(el)) { handled.add(el); continue; }
+        const own = labelOf(el) || clean(el.textContent) || contextOf(el, []);
+        fields.push({
+          ref: remember('ariacheck', [el]), label: own, context: contextOf(el, [own]), name: '', id: el.id || '',
+          automation_id: '', autocomplete: '', type: 'checkbox', options: [], group: groupOf(el),
+          required: requiredOf(el, own),
+        });
+        continue;
+      }
+      // Rich-text editor (contenteditable): the outermost one only.
+      if (richText(el)) {
+        if (el.parentElement && el.parentElement.closest('[contenteditable="true"], [contenteditable=""]')) continue;
+        if (clean(el.textContent)) { handled.add(el); continue; }
+        const label = labelOf(el) || contextOf(el, []);
+        fields.push({
+          ref: remember('richtext', [el]), label, context: contextOf(el, [label]), name: '', id: el.id || '',
+          automation_id: '', autocomplete: '', type: 'textarea', options: [], group: groupOf(el),
+          required: requiredOf(el, label) || isRequiredBox(el),
+        });
+        continue;
+      }
+      if (!NATIVE.test(el.tagName) && el.getAttribute('role') !== 'combobox' && !siteExtra.length) continue;
 
       const toggles = isTick && el.parentElement
         ? [...el.parentElement.querySelectorAll(':scope > button[aria-pressed], :scope > button[data-option]')] : [];
@@ -322,14 +446,15 @@
         || el.getAttribute('aria-autocomplete') === 'list';
       let ftype = el.tagName === 'SELECT' ? (el.multiple ? 'multiselect' : 'select')
         : el.tagName === 'TEXTAREA' ? 'textarea' : combo ? 'combobox' : (type || 'text');
-      if (el.tagName === 'BUTTON') ftype = 'combobox';
+      if (el.tagName === 'BUTTON' || (el.readOnly && el.tagName === 'INPUT')) ftype = 'combobox';
+      if (!NATIVE.test(el.tagName)) ftype = 'combobox';  // a learned custom control (site recipe)
       if (promptBox(el)) ftype = 'prompt';
       const options = el.tagName === 'SELECT' ? [...el.options].map((o) => clean(o.text)) : [];
       let context = contextOf(el, [label]);
       if (isFile) context = clean(headingBefore(el) + ' ' + context);
       const fieldBox = el.closest('[data-automation-id^="formField-"]');
       const f = {
-        ref: remember(ftype, [el]), label, context,
+        ref: remember(ftype, [el], widget ? { markEl: widget } : null), label, context,
         name: el.name || '', id: el.id || '', automation_id: el.getAttribute('data-automation-id') || '',
         autocomplete: el.getAttribute('autocomplete') || '', type: ftype, options,
         placeholder: el.getAttribute('placeholder') || '', group: groupOf(el),
@@ -396,6 +521,49 @@
   }
 
   const n = (t) => clean(t).toLowerCase().replace(/[^a-z0-9+]+/g, ' ').trim();
+
+  // The slow way, for fields that ignore a value set at once: one key at a time.
+  function typeKeys(el, value) {
+    el.focus();
+    setNative(el, '');
+    fire(el, 'input');
+    for (const ch of String(value)) {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent('keypress', { key: ch, bubbles: true }));
+      setNative(el, el.value + ch);
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: ch, inputType: 'insertText' }));
+      el.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));
+    }
+    fire(el, 'change');
+    el.blur();
+    fire(el, 'blur');
+  }
+
+  function setRich(el, value) {
+    el.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    // insertText goes through the editor's own input handling (Quill, ProseMirror, Draft).
+    if (!document.execCommand('insertText', false, value) || !clean(el.textContent)) {
+      el.textContent = value;
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+    }
+    el.blur();
+  }
+
+  // Did the field keep the answer? Compared as a person would read it.
+  const stuck = (r, v) => {
+    const now = readValue(r);
+    const have = Array.isArray(now) ? now.join(' ') : now;
+    if (!have) return false;
+    const digits = (x) => String(x).replace(/\D/g, '');
+    // A box that formats what is typed ("+91 90000 00000"): the digits are what count.
+    if (digits(v).length >= 6 && digits(have).endsWith(digits(v))) return true;
+    return n(have) === n(v) || n(have).includes(n(v)) || n(v).includes(n(have));
+  };
 
   function chooseSelect(el, text) {
     const want = n(text);
@@ -583,6 +751,9 @@
       case 'radio': { const c = r.els.find((e) => e.checked); return c ? optionLabel(c) : ''; }
       case 'checkbox_group': return r.els.filter((e) => e.checked).map(optionLabel);
       case 'checkbox': return el.checked ? 'Yes' : '';
+      case 'ariacheck': return ariaChecked(el) ? 'Yes' : '';
+      case 'ariaradio': { const c = r.radios.find(ariaChecked); return c ? clean(c.textContent) : ''; }
+      case 'richtext': return clean(el.textContent);
       case 'file': return '';
       case 'buttons': {
         const b = r.buttons.find((x) => x.getAttribute('aria-pressed') === 'true'
@@ -596,7 +767,7 @@
         return items.length > 1 ? items : (items[0] || '');
       }
       case 'combobox': {
-        if (el.tagName === 'BUTTON') { const t = clean(el.textContent); return PLACEHOLDER.test(t) ? '' : t; }
+        if (el.tagName === 'BUTTON' || !NATIVE.test(el.tagName)) { const t = clean(el.textContent); return PLACEHOLDER.test(t) ? '' : t; }
         const box = el.closest('[class*="control" i], [class*="container" i]');
         const one = box && box.querySelector('[class*="single-value" i], [class*="singleValue" i]');
         if (one) return clean(one.textContent);
@@ -609,6 +780,78 @@
   }
 
   const isEmpty = (v) => (Array.isArray(v) ? !v.length : !v);
+
+  // ------------------------------------------------------------------------
+  // Nothing missed silently
+  // ------------------------------------------------------------------------
+
+  // How to find this element again on this site: id, name, or tag + role + stable classes.
+  function fingerprint(el) {
+    const tag = el.tagName.toLowerCase();
+    if (el.id && !/\d{3,}|[:.]/.test(el.id)) return `${tag}#${CSS.escape(el.id)}`;
+    if (el.getAttribute('name')) return `${tag}[name="${CSS.escape(el.getAttribute('name'))}"]`;
+    const auto = el.getAttribute('data-automation-id') || el.getAttribute('data-testid') || el.getAttribute('data-qa');
+    if (auto) return `${tag}[${el.hasAttribute('data-automation-id') ? 'data-automation-id' : el.hasAttribute('data-testid') ? 'data-testid' : 'data-qa'}="${CSS.escape(auto)}"]`;
+    const role = el.getAttribute('role');
+    const classes = [...el.classList].filter((c) => !/\d{2,}|^(jab-|is-|has-|active|focus|hover|open|selected)/i.test(c)).slice(0, 2);
+    return tag + (role ? `[role="${role}"]` : '') + classes.map((c) => '.' + CSS.escape(c)).join('');
+  }
+
+  // Looks like a place to answer something, yet no pass took it: outline it grey.
+  const FILLABLE = CONTROLS + ', [aria-haspopup="listbox"], [aria-haspopup="true"], [tabindex="0"][class*="select" i], '
+    + '[class*="dropdown" i][tabindex], [class*="picker" i] input';
+  const unseen = new Set();
+  const sentMissed = new WeakMap();
+
+  function coverage() {
+    let added = 0;
+    for (const el of deepAll(FILLABLE)) {
+      if (handled.has(el) || unseen.has(el) || el.closest('#' + PANEL_ID) || inPopup(el) || el.closest(OUTSIDE_FORM)) continue;
+      if (!visible(el) || el.disabled || (el.readOnly && !looksPicker(el))) continue;
+      const type = (el.getAttribute('type') || '').toLowerCase();
+      if (NATIVE.test(el.tagName) && SKIP_TYPES.includes(type)) continue;
+      if (/captcha|search/i.test((el.name || '') + (el.id || '') + (el.className || '') + type)) continue;
+      if (el.closest('[role="radiogroup"], fieldset') && handled.has(el.closest('[role="radiogroup"], fieldset'))) continue;
+      if (hasValue(el)) continue;
+      unseen.add(el);
+      el.classList.add('jab-unseen');
+      el.title = "Job Bot didn't recognise this field";
+      added++;
+    }
+    totals.unseen = unseen.size;
+    if (added) debugSnapshot(true);  // so the next fix starts from this very form
+  }
+
+  // After Next / Submit, the site's own "This field is required": whatever it
+  // points at is a field this script missed or could not fill.
+  const ERROR_TEXT = /required|must (have|be|contain|select)|please (enter|select|fill|provide|choose|upload|complete)|can'?t be (blank|empty)|cannot be (blank|empty)|is (invalid|missing|mandatory)|enter a valid|mandatory/i;
+
+  function siteErrors() {
+    let found = 0;
+    const errs = deepAll('[role="alert"], [aria-live="assertive"], [aria-live="polite"], [class*="err" i], '
+      + '[class*="invalid" i], [class*="warning" i], [id*="err" i], [class*="help" i]')
+      .filter((e) => visible(e) && !e.closest('#' + PANEL_ID) && ERROR_TEXT.test(clean(e.textContent)) && clean(e.textContent).length < 220);
+    const marked = new Set();
+    for (const e of errs) {
+      const msg = clean(e.textContent).slice(0, 120);
+      let control = e.id ? deepAll(`[aria-describedby~="${CSS.escape(e.id)}"], [aria-errormessage="${CSS.escape(e.id)}"]`)[0] : null;
+      for (let node = e.parentElement, d = 0; !control && node && d < 4; d++, node = node.parentElement) {
+        control = [...node.querySelectorAll(FILLABLE)].find((c) => visible(c) && !c.closest('#' + PANEL_ID));
+      }
+      if (!control || marked.has(control)) continue;
+      marked.add(control);
+      const ref = [...refs.entries()].find(([, r]) => r.els.includes(control) || (r.radios && r.radios.includes(control)));
+      if (ref) { mark(ref[0], 'jab-missing', 'the site says: ' + msg); found++; continue; }
+      if (!unseen.has(control)) { unseen.add(control); control.classList.add('jab-unseen'); found++; }
+      control.title = 'Job Bot missed this; the site says: ' + msg;
+    }
+    for (const c of deepAll('[aria-invalid="true"]')) {
+      if (!visible(c) || marked.has(c) || handled.has(c) || unseen.has(c)) continue;
+      unseen.add(c); c.classList.add('jab-unseen'); c.title = 'Job Bot missed this; the site marks it invalid'; found++;
+    }
+    totals.unseen = unseen.size;
+    if (found) { say(summary()); debugSnapshot(true); }
+  }
 
   // ------------------------------------------------------------------------
   // Learning from what you submit
@@ -648,11 +891,22 @@
         source: r.decision.source || null, required: !!r.required,
       });
     }
+    const missed = [];
+    for (const el of unseen) {
+      if (!el.isConnected) continue;
+      const value = NATIVE.test(el.tagName) ? clean(el.value) : clean(el.textContent);
+      if (!value || PLACEHOLDER.test(value)) continue;
+      if (sentMissed.get(el) === value) continue;  // one Submit fires both click and submit
+      sentMissed.set(el, value);
+      const question = labelOf(el) || contextOf(el, []);
+      fields.push({ question, type: 'text', options: [], value, filled: null, key: null, source: null, required: false });
+      missed.push({ selector: fingerprint(el), question });
+    }
     if (!fields.length) return;
     // Queued first: if the page unloads before the request goes out, the next
     // ATS page sends it.
     const q = GM_getValue(QUEUE, []);
-    q.push({ url: location.href, job_id: current && current.jobId, fields });
+    q.push({ url: location.href, job_id: current && current.jobId, fields, missed });
     GM_setValue(QUEUE, q.slice(-20));
     flush();
   }
@@ -666,6 +920,8 @@
       if (!(t.type === 'submit' || SUBMITISH.test(text))) return;
     }
     try { report(); } catch (err) { /* never get in the way of a submit */ }
+    // Give the site a moment to show its own "required" messages.
+    setTimeout(() => { try { siteErrors(); } catch (err) { /* advisory only */ } }, 1500);
   }
 
   // ------------------------------------------------------------------------
@@ -676,6 +932,7 @@
     .jab-review  { outline: 2px solid #e0a000 !important; outline-offset: 2px; }
     .jab-missing { outline: 2px solid #d93025 !important; outline-offset: 2px; }
     .jab-optional{ outline: 2px dashed #5b8def !important; outline-offset: 2px; }
+    .jab-unseen  { outline: 2px dashed #9aa0a6 !important; outline-offset: 2px; }
     #${PANEL_ID} { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647; max-width: 340px;
       font: 13px/1.4 system-ui, sans-serif; background: #1f2328; color: #f0f0f0; border-radius: 8px;
       padding: 10px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
@@ -720,8 +977,8 @@
   function mark(ref, cls, why) {
     const r = refs.get(ref);
     if (!r) return;
-    let target = r.kind === 'buttons' ? r.buttons[0].parentElement : r.els[0];
-    if (r.kind !== 'buttons' && (r.els.length > 1 || r.kind === 'file' || target.type === 'checkbox' || target.type === 'radio')) {
+    let target = r.markEl || (r.kind === 'buttons' ? r.buttons[0].parentElement : r.els[0]);
+    if (!r.markEl && !/^(buttons|ariaradio|ariacheck|richtext)$/.test(r.kind) && (r.els.length > 1 || r.kind === 'file' || target.type === 'checkbox' || target.type === 'radio')) {
       target = r.els[0].closest('fieldset, [role="radiogroup"], [role="group"]') || r.els[0].parentElement || target;
       if (r.els.length > 1) {
         while (target && !r.els.every((e) => target.contains(e))) target = target.parentElement;
@@ -736,7 +993,7 @@
   // One pass over the page
   // ------------------------------------------------------------------------
 
-  const totals = { filled: 0, review: 0, missing: 0, optional: 0, resume: '' };
+  const totals = { filled: 0, review: 0, missing: 0, optional: 0, unseen: 0, resume: '' };
   let busy = false;
   let active = false;
   let current = null;
@@ -747,6 +1004,7 @@
     if (totals.review) bits.push(`<span class="k" style="background:#e0a000"></span>${totals.review} to check`);
     if (totals.missing) bits.push(`<span class="k" style="background:#d93025"></span>${totals.missing} required, no answer`);
     if (totals.optional) bits.push(`<span class="k" style="border:1px dashed #5b8def"></span>${totals.optional} optional, no answer`);
+    if (totals.unseen) bits.push(`<span class="k" style="border:1px dashed #9aa0a6"></span>${totals.unseen} not recognised (sent to Job Bot)`);
     if (totals.resume) bits.push(totals.resume);
     return (bits.join(' · ') || 'nothing to fill') + '<br><small>Review the form and submit it yourself.</small>';
   }
@@ -777,7 +1035,17 @@
     }
     const v = decision.value;
     let ok = false;
-    if (r.kind === 'select' || r.kind === 'multiselect') ok = chooseSelect(el, Array.isArray(v) ? v[0] : v);
+    if (r.kind === 'ariaradio') {
+      const hit = bestOption(r.radios, [String(v)].concat(decision.alts || []));
+      if (hit) { pressOn(hit); await sleep(150); ok = ariaChecked(hit) || (hit.click(), await sleep(150), ariaChecked(hit)); }
+    } else if (r.kind === 'ariacheck') {
+      if (v === true && !ariaChecked(el)) { pressOn(el); await sleep(150); if (!ariaChecked(el)) el.click(); }
+      ok = true;
+      if (v !== true) return;
+    } else if (r.kind === 'richtext') {
+      setRich(el, String(v));
+      ok = stuck(r, String(v));
+    } else if (r.kind === 'select' || r.kind === 'multiselect') ok = chooseSelect(el, Array.isArray(v) ? v[0] : v);
     else if (r.kind === 'radio' || r.kind === 'checkbox_group') ok = tick(r.els, Array.isArray(v) ? v : [v]);
     else if (r.kind === 'checkbox') { if (v === true && !el.checked) el.click(); ok = true; if (v !== true) return; }
     else if (r.kind === 'buttons') {
@@ -795,7 +1063,17 @@
         return mark(decision.ref, 'jab-review', 'typed ' + v + '; pick it from the list if one appears');
       }
       ok = true;
-    } else { typeInto(el, String(v)); ok = true; }
+    } else {
+      typeInto(el, String(v));
+      // Some fields drop a value set at once (masked phone boxes, custom inputs): type it.
+      if (!stuck(r, String(v))) typeKeys(el, String(v));
+      if (!stuck(r, String(v))) { totals.review++; return mark(decision.ref, 'jab-review', "typed " + v + " but the field didn't keep it"); }
+      ok = true;
+    }
+    if (ok && r.kind === 'combobox' && !readValue(r)) {
+      totals.review++;
+      return mark(decision.ref, 'jab-review', 'picked ' + v + '; please check it took');
+    }
     if (!ok) {
       if (r.required) { totals.missing++; return mark(decision.ref, 'jab-missing', 'could not choose: ' + v); }
       totals.optional++;
@@ -805,12 +1083,26 @@
     else totals.filled++;
   }
 
+  let recipeLoaded = false;
+  async function loadRecipe() {
+    if (recipeLoaded) return;
+    recipeLoaded = true;
+    try {
+      const r = await request('GET', ENDPOINT + '/autofill/site?host=' + encodeURIComponent(location.hostname),
+        { headers: { 'X-JAB': '1' } });
+      siteExtra = (JSON.parse(r.responseText).selectors || []).filter((sel) => {
+        try { document.querySelector(sel); return true; } catch (e) { return false; }
+      });
+    } catch (e) { /* no recipe: the generic scan alone */ }
+  }
+
   async function pass() {
     if (busy) return;
     busy = true;
     try {
+      await loadRecipe();
       const fields = scan();
-      if (!fields.length) return;
+      if (!fields.length) { coverage(); if (totals.unseen) say(summary()); return; }
       fields.forEach((f) => {
         const r = refs.get(f.ref);
         Object.assign(r, { required: f.required, ftype: f.type, options: f.options });
@@ -831,6 +1123,7 @@
         const f = fields.find((x) => x.ref === d.ref);
         d.required = f && f.required;
         try { await apply(d, res.resume); } catch (e) { mark(d.ref, 'jab-missing', 'fill failed: ' + e.message); }
+        unseen.forEach((x) => { if (handled.has(x)) { unseen.delete(x); x.classList.remove('jab-unseen'); } });
         const r = refs.get(d.ref);
         if (r) {
           r.decision = d;
@@ -839,6 +1132,7 @@
           r.filled = isEmpty(now) ? null : now;
         }
       }
+      coverage();
       say(summary());
     } finally {
       busy = false;
@@ -917,14 +1211,18 @@
   // under data/logs/autofill_debug/ (local, gitignored).
   // ------------------------------------------------------------------------
 
-  async function debugSnapshot() {
-    const els = [...document.querySelectorAll('input, select, textarea, button[aria-haspopup], [role="combobox"]')]
+  let snapshotSent = 0;
+  async function debugSnapshot(silent) {
+    if (silent && Date.now() - snapshotSent < 60000) return;  // automatic ones: at most one a minute
+    snapshotSent = Date.now();
+    const els = deepAll(FILLABLE)
       .filter((e) => !e.closest('#' + PANEL_ID) && e.type !== 'hidden').slice(0, 300);
     const fields = els.map((e) => {
       const box = e.closest('[data-automation-id^="formField-"]') || e.parentElement || e;
       return {
         tag: e.tagName, type: e.type || '', label: labelOf(e), group: groupOf(e), visible: visible(e),
-        automation_id: e.getAttribute('data-automation-id') || '', handled: handled.has(e),
+        automation_id: e.getAttribute('data-automation-id') || '', handled: handled.has(e), unseen: unseen.has(e),
+        selector: fingerprint(e),
         html: box.outerHTML.slice(0, 2500),
       };
     });
@@ -932,11 +1230,11 @@
     try {
       await request('POST', ENDPOINT + '/autofill/debug', {
         headers: { 'Content-Type': 'application/json', 'X-JAB': '1' },
-        data: JSON.stringify({ url: location.href, title: document.title, fields, refs: seen }),
+        data: JSON.stringify({ url: location.href, title: document.title, fields, refs: seen, auto: !!silent }),
       });
-      say('form sent to Job Bot for debugging.');
+      if (!silent) say('form sent to Job Bot for debugging.');
     } catch (e) {
-      say('could not send the form: ' + esc(e.message));
+      if (!silent) say('could not send the form: ' + esc(e.message));
     }
   }
 
@@ -959,9 +1257,13 @@
 
   function start() {
     if (BOARD_HOSTS.test(location.hostname)) { onBoard(tagged); return; }
+    // Any tagged page: the job is also remembered, for a form embedded in a frame
+    // (iCIMS, an embedded Greenhouse) or the next page / tab of the application.
+    if (tagged) GM_setValue(PENDING, { jobId: tagged, at: Date.now() });
     const known = ATS_HOSTS.test(location.hostname);
-    // Inside another site's frame (ads, widgets): nothing, unless it is an ATS form.
-    if (window.top !== window.self && !known && !tagged) return;
+    // Inside another site's frame (ads, widgets): nothing, unless it is an ATS form
+    // or a job opened from Telegram is pending.
+    if (window.top !== window.self && !known && !tagged && !pending()) return;
     current = session(tagged);
     document.addEventListener('submit', onSubmitish, true);
     document.addEventListener('click', onSubmitish, true);

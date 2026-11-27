@@ -6,6 +6,7 @@
     POST /autofill/opened        a job opened from Telegram: its company and role, and its
                                  resume copied to the Downloads folder
     POST /autofill/debug         what a form looks like to the script, saved under data/logs
+    GET  /autofill/site          how to find this site's fields the generic scan misses
 
 The Telegram Apply button opens the posting itself with ``#jab=<job_id>``
 appended (:func:`src.notifications.tag_apply_url`), so Apply works with the
@@ -105,10 +106,17 @@ class DebugRequest(BaseModel):
     refs: list[dict[str, Any]] = Field(default_factory=list, max_length=800)
 
 
+class MissedField(BaseModel):
+    selector: str = Field(..., max_length=300)
+    question: str = Field("", max_length=300)
+
+
 class LearnRequest(BaseModel):
     url: str = Field(..., max_length=4000)
     job_id: str | None = Field(None, max_length=200)
     fields: list[SubmittedField] = Field(default_factory=list, max_length=_MAX_FIELDS)
+    #: Fields the scan didn't recognise but the operator filled: how to find them next time.
+    missed: list[MissedField] = Field(default_factory=list, max_length=40)
 
 
 # job_id -> (fetched_at, job facts). Failures are cached too, so a locked or
@@ -216,6 +224,54 @@ def _with_source(job: dict[str, Any], url: str) -> dict[str, Any]:
     return job
 
 
+# ---------------------------------------------------------------------------
+# Site recipes: fields the generic scan missed, learned per site
+# ---------------------------------------------------------------------------
+
+_SITES_LOCK = threading.Lock()
+_MAX_PER_SITE = 40
+_SELECTOR = re.compile(r"^[a-z][a-z0-9-]*([#.\[][^<>{}]*)?$", re.I)
+
+
+def _sites_path() -> Path:
+    return _ROOT / "data" / "ats_sites.json"
+
+
+def _load_sites() -> dict[str, list[dict[str, str]]]:
+    try:
+        data = json.loads(_sites_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def remember_site_fields(host: str, missed: list[dict[str, str]]) -> int:
+    """Keep how to find fields the operator filled that the scan missed, per host."""
+    host = (host or "").lower()
+    if not host:
+        return 0
+    with _SITES_LOCK:
+        sites = _load_sites()
+        known = sites.setdefault(host, [])
+        added = 0
+        for m in missed:
+            sel = (m.get("selector") or "").strip()
+            if not _SELECTOR.match(sel) or any(k["selector"] == sel for k in known):
+                continue
+            known.append({"selector": sel, "question": (m.get("question") or "")[:200],
+                          "added": time.strftime("%Y-%m-%d")})
+            added += 1
+        sites[host] = known[-_MAX_PER_SITE:]
+        if added:
+            path = _sites_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(sites, indent=1, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
+            log.info("autofill_site_fields_learned", host=host, added=added)
+    return added
+
+
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -294,6 +350,11 @@ def learn(req: LearnRequest, x_jab: str | None = Header(None)) -> dict[str, int]
     if x_jab != "1":
         raise HTTPException(status_code=403, detail="X-JAB header required")
     job = _job_facts(req.job_id)
+    if req.missed:
+        try:
+            remember_site_fields(urlparse(req.url).hostname or "", [m.model_dump() for m in req.missed])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("autofill_site_recipe_failed", error=str(exc)[:200])
     try:
         return record_submission([f.model_dump() for f in req.fields], req.url, job)
     except Exception as exc:  # noqa: BLE001 - a failed learn must not error the page
@@ -328,3 +389,11 @@ def debug(req: DebugRequest, x_jab: str | None = Header(None)) -> dict[str, str]
     (folder / name).write_text(json.dumps(req.model_dump(), indent=1, ensure_ascii=False), encoding="utf-8")
     log.info("autofill_debug_saved", path=str(folder / name), fields=len(req.fields))
     return {"saved": name}
+
+
+@router.get("/autofill/site")
+def site(host: str = "", x_jab: str | None = Header(None)) -> dict[str, list[str]]:
+    """Selectors for this site's fields that the generic scan misses (learned from submits)."""
+    if x_jab != "1":
+        raise HTTPException(status_code=403, detail="X-JAB header required")
+    return {"selectors": [k["selector"] for k in _load_sites().get((host or "").lower(), [])]}

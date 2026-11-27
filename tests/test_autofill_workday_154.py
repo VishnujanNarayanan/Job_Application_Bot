@@ -190,3 +190,19 @@ def test_calling_code_and_someone_elses_title(facts) -> None:
 ])
 def test_follow_up_questions_take_no_profile_fact(facts, label) -> None:
     assert _one(facts, label, "textarea")["key"] is None
+
+
+def test_site_recipe_learned_from_a_missed_field(client) -> None:
+    body = {"url": "https://careers.example.com/apply", "fields": [],
+            "missed": [{"selector": "div.fancy-select", "question": "Notice"},
+                       {"selector": "<script>", "question": "bad"}]}
+    assert client.post("/autofill/learn", json=body, headers={"X-JAB": "1"}).status_code == 200
+    assert client.get("/autofill/site?host=careers.example.com").status_code == 403
+    r = client.get("/autofill/site?host=careers.example.com", headers={"X-JAB": "1"}).json()
+    assert r == {"selectors": ["div.fancy-select"]}
+    assert client.get("/autofill/site?host=other.example.com", headers={"X-JAB": "1"}).json() == {"selectors": []}
+
+
+def test_a_lone_checkbox_ticks_on_a_yes_choice(facts) -> None:
+    facts.values["willing_to_relocate"] = "Yes"
+    assert _one(facts, "Willing to relocate", "checkbox")["value"] is True

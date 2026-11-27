@@ -122,6 +122,7 @@ keeps "company name" and "hiring manager name" away from your name.
 | amber | filled, please check (salary), or a dropdown that couldn't be opened from a script; the tooltip says what to choose |
 | red | required, no answer |
 | dashed blue | optional, no answer (diversity surveys, Twitter…) |
+| dashed grey | not recognised as a field: fill it yourself; it's learned on submit |
 
 Consent boxes are never ticked unless an answer says yes. Unknown questions are
 never guessed. A field that already has a value is never changed.
@@ -207,12 +208,38 @@ endpoint, with nothing submitted:
     job ticks "I currently work here" and leaves its end date;
   - the resume drop zone is found by the "Resume/CV" heading above it.
 
-## When something isn't filled
+## Any site, any design
 
-Violentmonkey menu → **Send this form to Job Bot (debugging)**. The endpoint
-saves what each field looked like to the script under
-`data/logs/autofill_debug/` (local, gitignored: it can hold what you typed),
-for a fix to start from.
+The script is installed for every site. It fills a page opened from Telegram
+on any site, offers **Autofill** on known ATSes and on pages that look like a
+job application, and otherwise does nothing but its menu item. A job opened
+from Telegram is remembered for 30 minutes, so the next page, a new tab, or an
+application form embedded from another site gets that job's resume.
+
+Fields are found the way a person reads a form, not by one site's layout:
+
+- native fields, plus standard widget roles: comboboxes, custom radio groups,
+  checkboxes and switches built from `<div>`s, rich-text editors;
+- inside web components (open shadow DOM);
+- read-only boxes that open a list or calendar;
+- native dropdowns hidden behind a styled widget (Select2, Chosen…), and file
+  inputs hidden inside an "upload your resume" area;
+- a question the page doesn't link to its box: the nearest text above or to
+  the left of it, by where they're drawn on screen.
+
+Every fill is checked afterwards. A box that didn't keep the value is typed
+again key by key, then outlined amber if it still didn't.
+
+**Nothing is missed silently.** Anything that looks fillable but wasn't
+recognised gets a **grey dashed** outline and a count in the panel, and its
+shape is sent for debugging automatically. After Next or Submit, the site's own
+"This field is required" messages are read too: the field they point at is
+outlined. Fill a grey field yourself and submit, and the script learns how to
+find it on that site (`data/ats_sites.json`, local) and saves your answer.
+
+Violentmonkey menu → **Send this form to Job Bot (debugging)** saves what each
+field looked like to the script under `data/logs/autofill_debug/` (local,
+gitignored: it can hold what you typed), for a fix to start from.
 
 ## Limits
 
