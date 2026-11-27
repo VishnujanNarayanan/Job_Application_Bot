@@ -3,6 +3,9 @@
     GET  /autofill/jab.user.js   the userscript, with this endpoint's address in it
     POST /autofill/match         form fields in, one decision per field out
     POST /autofill/learn         what was submitted: learn answers (src/autofill/learn.py)
+    POST /autofill/opened        a job opened from Telegram: its company and role, and its
+                                 resume copied to the Downloads folder
+    POST /autofill/debug         what a form looks like to the script, saved under data/logs
 
 The Telegram Apply button opens the posting itself with ``#jab=<job_id>``
 appended (:func:`src.notifications.tag_apply_url`), so Apply works with the
@@ -21,10 +24,14 @@ a web page in the same browser calling it:
 
 from __future__ import annotations
 
+import json
+import os
+import re
+import threading
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import structlog
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -54,6 +61,9 @@ class FormField(BaseModel):
     automation_id: str = Field("", max_length=300)
     autocomplete: str = Field("", max_length=100)
     placeholder: str = Field("", max_length=300)
+    #: The repeated section a field sits in ("Work Experience 1") and Workday's field id.
+    group: str = Field("", max_length=200)
+    field_id: str = Field("", max_length=200)
     type: str = Field("", max_length=40)
     options: list[str] = Field(default_factory=list, max_length=400)
     required: bool = False
@@ -65,6 +75,8 @@ class MatchRequest(BaseModel):
     #: True on the first call of a tab's session: logs the open (the "click").
     first: bool = False
     fields: list[FormField] = Field(default_factory=list, max_length=_MAX_FIELDS)
+    #: Labels of fields the page had already answered (Workday pre-selects the phone code).
+    prefilled: list[str] = Field(default_factory=list, max_length=100)
 
 
 Value = str | list[str] | bool | None
@@ -80,6 +92,17 @@ class SubmittedField(BaseModel):
     key: str | None = Field(None, max_length=60)
     source: str | None = Field(None, max_length=400)
     required: bool = False
+
+
+class OpenedRequest(BaseModel):
+    job_id: str = Field(..., max_length=200)
+
+
+class DebugRequest(BaseModel):
+    url: str = Field("", max_length=4000)
+    title: str = Field("", max_length=1000)
+    fields: list[dict[str, Any]] = Field(default_factory=list, max_length=400)
+    refs: list[dict[str, Any]] = Field(default_factory=list, max_length=800)
 
 
 class LearnRequest(BaseModel):
@@ -121,6 +144,78 @@ def _job_facts(job_id: str | None) -> dict[str, Any]:
     return facts
 
 
+# ---------------------------------------------------------------------------
+# The tailored resume, copied to the Downloads folder
+# ---------------------------------------------------------------------------
+
+_ROOT = Path(__file__).resolve().parents[2]
+_SKIP_USERS = {"Default", "Default User", "Public", "All Users"}
+_SAVED: dict[str, float] = {}
+_SAVE_EVERY = 600.0
+
+
+def downloads_dir() -> Path | None:
+    """``autofill.save_resume_to``: a folder, ``auto`` (the one Windows user's
+    Downloads under /mnt/c, as on this WSL laptop), or off."""
+    want = (settings.get("autofill") or {}).get("save_resume_to", "auto")
+    if not want:
+        return None
+    if str(want) != "auto":
+        path = Path(str(want)).expanduser()
+        return path if path.is_dir() else None
+    users = Path("/mnt/c/Users")
+    try:
+        found = [d / "Downloads" for d in users.iterdir()
+                 if d.name not in _SKIP_USERS and (d / "Downloads").is_dir()]
+    except OSError:
+        return None
+    return found[0] if len(found) == 1 else None
+
+
+def save_resume_copy(job_id: str) -> Path | None:
+    """Write the job's tailored PDF to Downloads, replacing the last one. None if not possible."""
+    folder = downloads_dir()
+    if folder is None:
+        return None
+    target = folder / settings.resume_filename
+    try:
+        from src.endpoint.cache import get_or_build
+        from src.state.db import session_scope
+
+        with session_scope() as session:
+            data, _ = get_or_build(job_id, "pdf", session)
+        tmp = folder / f".{settings.resume_filename}.part"
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+    except Exception as exc:  # noqa: BLE001 - the form fills without it
+        log.warning("autofill_resume_copy_failed", job_id=job_id, error=str(exc)[:200])
+        return None
+    log.info("autofill_resume_copied", job_id=job_id, path=str(target), bytes=len(data))
+    return target
+
+
+def _copy_resume_soon(job_id: str | None) -> bool:
+    """Start the copy in the background, at most once per job every ten minutes."""
+    if not job_id or downloads_dir() is None:
+        return False
+    if time.monotonic() - _SAVED.get(job_id, -1e9) < _SAVE_EVERY:
+        return True
+    _SAVED[job_id] = time.monotonic()
+    threading.Thread(target=save_resume_copy, args=(job_id,), daemon=True).start()
+    return True
+
+
+def _with_source(job: dict[str, Any], url: str) -> dict[str, Any]:
+    """The board a posting was found on, from the job or the page's ``?source=LinkedIn``."""
+    if job.get("site"):
+        return job
+    query = parse_qs(urlparse(url or "").query)
+    for name in ("source", "utm_source", "src", "ref"):
+        if query.get(name):
+            return {**job, "site": query[name][0].lower()}
+    return job
+
+
 _LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 
 
@@ -155,9 +250,11 @@ def match(req: MatchRequest, request: Request,
         raise HTTPException(status_code=403, detail="X-JAB header required")
     seen_at = ats_of(req.url)
     fields = [f.model_dump() for f in req.fields]
-    job = _job_facts(req.job_id)
+    job = _with_source(_job_facts(req.job_id), req.url)
     facts = load_facts()
-    decisions = match_form(fields, facts, job, site=seen_at)
+    decisions = match_form(fields, facts, job, site=seen_at, prefilled=req.prefilled)
+    if req.first:
+        _copy_resume_soon(req.job_id)
 
     by_ref = {f["ref"]: f for f in fields}
     unknown = [{**d, "type": by_ref[d["ref"]]["type"], "options": by_ref[d["ref"]]["options"]}
@@ -184,7 +281,7 @@ def match(req: MatchRequest, request: Request,
     return {
         "decisions": decisions,
         "resume": resume,
-        "job": {"found": job.get("found"),
+        "job": {"found": job.get("found"), "company": job.get("company"), "role": job.get("role"),
                 "salary_range": ([job.get("salary_min_lpa"), job.get("salary_max_lpa")]
                                  if job.get("salary_min_lpa") or job.get("salary_max_lpa") else None)},
         "new_questions": added,
@@ -202,3 +299,32 @@ def learn(req: LearnRequest, x_jab: str | None = Header(None)) -> dict[str, int]
     except Exception as exc:  # noqa: BLE001 - a failed learn must not error the page
         log.warning("autofill_learn_failed", error=str(exc)[:200])
         return {"added": 0, "corrected": 0, "confirmed": 0}
+
+
+@router.post("/autofill/opened")
+def opened(req: OpenedRequest, x_jab: str | None = Header(None)) -> dict[str, Any]:
+    """A job opened from Telegram (on a board, or remembered from one): name it,
+    and copy its resume to Downloads."""
+    if x_jab != "1":
+        raise HTTPException(status_code=403, detail="X-JAB header required")
+    job = _job_facts(req.job_id)
+    copying = _copy_resume_soon(req.job_id) if job.get("found") is not False else False
+    return {"found": job.get("found"), "company": job.get("company"), "role": job.get("role"),
+            "saved_to": settings.resume_filename if copying else None}
+
+
+@router.post("/autofill/debug")
+def debug(req: DebugRequest, x_jab: str | None = Header(None)) -> dict[str, str]:
+    """Keep what a form looked like to the script, to see why something wasn't filled.
+
+    Saved locally under data/logs/autofill_debug/ (gitignored): it may hold
+    what was typed into the form.
+    """
+    if x_jab != "1":
+        raise HTTPException(status_code=403, detail="X-JAB header required")
+    folder = _ROOT / "data" / "logs" / "autofill_debug"
+    folder.mkdir(parents=True, exist_ok=True)
+    name = time.strftime("%Y%m%d-%H%M%S") + "-" + re.sub(r"[^a-z0-9]+", "-", ats_of(req.url).lower())[:60] + ".json"
+    (folder / name).write_text(json.dumps(req.model_dump(), indent=1, ensure_ascii=False), encoding="utf-8")
+    log.info("autofill_debug_saved", path=str(folder / name), fields=len(req.fields))
+    return {"saved": name}

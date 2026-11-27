@@ -40,6 +40,19 @@ and this project loosely tracks iterations rather than semver.
   - Address lines, PIN code and preferred name.
   - Answers in the answers file can list `choose:` (options to pick, in order)
     and `only_if_required:`.
+- **Autofill on Workday, from LinkedIn, and to Downloads (#154).**
+  - Workday's dropdown buttons and search boxes are now read and answered,
+    with alternatives tried in order ("B.Tech" → "Bachelor of Technology").
+  - "Work Experience N" / "Education N" fill from the profile, dates included.
+  - Pre-selected fields and open popups are left alone, and the resume drop
+    zone is found by its heading.
+  - Prefix, phone device type and "how did you hear" (from `?source=`) are
+    answered.
+  - A job opened on LinkedIn or Naukri is remembered for 30 minutes for the
+    company site its Apply button leads to.
+  - The tailored PDF is copied to Downloads, replacing the last one
+    (`autofill.save_resume_to`).
+  - A "send this form for debugging" menu item saves the form's shape locally.
 
 ## [v3.3.2] — 2026-11-07
 

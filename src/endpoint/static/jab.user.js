@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.1.0
+// @version      1.2.0
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        https://*.greenhouse.io/*
 // @match        https://jobs.lever.co/*
@@ -18,12 +18,14 @@
 // @match        https://*.oraclecloud.com/*
 // @match        https://www.amazon.jobs/*
 // @match        https://amazon.jobs/*
+// @match        https://www.linkedin.com/jobs/*
+// @match        https://www.naukri.com/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @connect      __JAB_HOST__
-// @run-at       document-idle
+// @run-at       document-start
 // @downloadURL  __JAB_ENDPOINT__/autofill/jab.user.js
 // @updateURL    __JAB_ENDPOINT__/autofill/jab.user.js
 // ==/UserScript==
@@ -40,6 +42,9 @@
  *    (Workday's next step) are filled as they appear.
  *  - It never clicks a submit button, never presses Enter, never touches a
  *    field that already has a value.
+ *  - Opened from Telegram on LinkedIn or Naukri, it only remembers the job
+ *    (30 minutes) and has the endpoint save that job's resume to Downloads;
+ *    the company site you reach from there is then filled for that job.
  *  - When you press Submit (or Next on a multi-page form), it reads what each
  *    field now holds and sends it to /autofill/learn, so an answer you typed
  *    or corrected is used next time. It doesn't delay or block the submit.
@@ -51,6 +56,9 @@
   const SESSION_KEY = 'jab-session';
   const SESSION_MS = 3 * 3600 * 1000;
   const TAG = /([#&])jab=([^&]*)/;
+  const PENDING = 'jab-pending';   // the job last opened from Telegram, for the site LinkedIn sends you to
+  const PENDING_MS = 30 * 60 * 1000;
+  const BOARD_HOSTS = /(^|\.)(linkedin\.com|naukri\.com)$/;
 
   // ------------------------------------------------------------------------
   // Session: which match this tab is applying to
@@ -67,8 +75,7 @@
     return id;
   }
 
-  function session() {
-    const tagged = takeTag();
+  function session(tagged) {
     if (tagged) {
       const s = { jobId: tagged, at: Date.now(), opened: false };
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
@@ -104,6 +111,13 @@
     const r = await request('POST', ENDPOINT + '/autofill/match', {
       headers: { 'Content-Type': 'application/json', 'X-JAB': '1' },
       data: JSON.stringify(body),
+    });
+    return JSON.parse(r.responseText);
+  }
+
+  async function opened(jobId) {
+    const r = await request('POST', ENDPOINT + '/autofill/opened', {
+      headers: { 'Content-Type': 'application/json', 'X-JAB': '1' }, data: JSON.stringify({ job_id: jobId }),
     });
     return JSON.parse(r.responseText);
   }
@@ -181,6 +195,20 @@
     return '';
   }
 
+  // The heading a field sits under, when it is a sibling above ("Resume/CV" over a drop zone).
+  function headingBefore(el) {
+    let node = el;
+    for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
+      let sib = node.previousElementSibling;
+      for (let i = 0; sib && i < 4; i++, sib = sib.previousElementSibling) {
+        if (/^H[1-6]$/.test(sib.tagName) || sib.getAttribute('role') === 'heading') return textOf(sib);
+        const h = sib.querySelector && sib.querySelector('h1, h2, h3, h4, h5, h6, [role="heading"]');
+        if (h && !sib.querySelector('input, select, textarea, button')) return textOf(h);
+      }
+    }
+    return '';
+  }
+
   function requiredOf(el, label) {
     return !!(el.required || el.getAttribute('aria-required') === 'true' || /[*✱]/.test(label || ''));
   }
@@ -191,7 +219,14 @@
     return !!(entry && entry.querySelector('[class*="required" i]'));
   }
 
+  // Workday's search-and-pick boxes ("How did you hear", School, Skills).
+  const promptBox = (el) => el.closest('[data-automation-id="multiselectInputContainer"]');
+  const PLACEHOLDER = /^(select( one)?|choose( one)?|please select|--|none selected|search)\b/i;
+
   function hasValue(el) {
+    if (el.tagName === 'BUTTON') { const t = clean(el.textContent); return !!t && !PLACEHOLDER.test(t); }
+    const box = promptBox(el);
+    if (box) return !!box.querySelector('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"] li');
     if (el.type === 'file') return el.files && el.files.length > 0;
     if (el.tagName === 'SELECT') {
       const o = el.options[el.selectedIndex];
@@ -201,6 +236,7 @@
   }
 
   const handled = new WeakSet();
+  const prefilled = new Set();  // labels of fields already answered (the phone code Workday pre-selects)
   let refSeq = 0;
   const refs = new Map();
 
@@ -210,6 +246,32 @@
     refs.set(ref, Object.assign({ kind, els }, extra || {}));
     return ref;
   }
+
+  // "Work Experience 1", "Education 2": the repeated section a field sits in.
+  const SECTION = /^(work experience|experience|employment|education)\s*\d+/i;
+  function groupOf(el) {
+    let node = el.parentElement;
+    for (let depth = 0; node && depth < 14; depth++, node = node.parentElement) {
+      const lb = node.getAttribute && node.getAttribute('aria-labelledby');
+      const t = (lb && byIds(lb)) || '';
+      if (SECTION.test(t)) return t.match(SECTION)[0];
+      const h = node.querySelector && node.querySelector(':scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > div > h3, :scope > div > h4, :scope > [role="heading"]');
+      if (h && SECTION.test(clean(h.textContent))) return clean(h.textContent).match(SECTION)[0];
+    }
+    return '';
+  }
+
+  // Workday splits a date into Month / Day / Year boxes under one label ("From").
+  function datePart(el) {
+    const m = (el.getAttribute('data-automation-id') || '').match(/dateSection(Month|Day|Year)/);
+    if (!m) return null;
+    const field = el.closest('[data-automation-id^="formField-"]');
+    const lab = field && field.querySelector('label, legend');
+    return { part: m[1].toLowerCase(), of: lab ? textOf(lab) : '' };
+  }
+
+  const inPopup = (el) => !!el.closest('[role="listbox"], [data-automation-id="activeListContainer"], '
+    + '[data-automation-widget="wd-popup"], [data-automation-id="promptOption"]');
 
   function optionLabel(el) {
     return clean(labelOf(el) || (el.parentElement && textOf(el.parentElement)) || el.value);
@@ -221,10 +283,11 @@
     const nodes = document.querySelectorAll(
       'input, select, textarea, [role="combobox"], button[aria-haspopup="listbox"]');
     for (const el of nodes) {
-      if (handled.has(el) || el.closest('#' + PANEL_ID)) continue;
+      if (handled.has(el) || el.closest('#' + PANEL_ID) || inPopup(el)) continue;
       if (el.disabled || el.readOnly) continue;
       const type = (el.getAttribute('type') || el.type || '').toLowerCase();
-      if (['hidden', 'submit', 'button', 'image', 'reset', 'password'].includes(type)) continue;
+      // A listbox button (Workday's dropdowns) is a question, though its type is "button".
+      if (el.tagName !== 'BUTTON' && ['hidden', 'submit', 'button', 'image', 'reset', 'password'].includes(type)) continue;
       if (/captcha/i.test((el.name || '') + (el.id || ''))) continue;
       const isFile = type === 'file';
       const isTick = type === 'radio' || type === 'checkbox';
@@ -252,21 +315,30 @@
         groups.get(key).els.push(el);
         continue;
       }
-      if (hasValue(el) && !isFile) { handled.add(el); continue; }
+      if (hasValue(el) && !isFile) { handled.add(el); prefilled.add(labelOf(el)); continue; }
       if (isFile && hasValue(el)) { handled.add(el); continue; }
 
-      const label = labelOf(el);
+      let label = labelOf(el);
+      const dp = datePart(el);
+      if (dp) label = clean(dp.of + ' ' + dp.part);
       const combo = el.getAttribute('role') === 'combobox' || el.getAttribute('aria-haspopup') === 'listbox'
         || el.getAttribute('aria-autocomplete') === 'list';
       let ftype = el.tagName === 'SELECT' ? (el.multiple ? 'multiselect' : 'select')
         : el.tagName === 'TEXTAREA' ? 'textarea' : combo ? 'combobox' : (type || 'text');
       if (el.tagName === 'BUTTON') ftype = 'combobox';
+      if (promptBox(el)) ftype = 'prompt';
       const options = el.tagName === 'SELECT' ? [...el.options].map((o) => clean(o.text)) : [];
+      let context = contextOf(el, [label]);
+      if (isFile) context = clean(headingBefore(el) + ' ' + context);
+      const fieldBox = el.closest('[data-automation-id^="formField-"]');
       const f = {
-        ref: remember(ftype, [el]), label, context: contextOf(el, [label]),
+        ref: remember(ftype, [el]), label, context,
         name: el.name || '', id: el.id || '', automation_id: el.getAttribute('data-automation-id') || '',
         autocomplete: el.getAttribute('autocomplete') || '', type: ftype, options,
-        placeholder: el.getAttribute('placeholder') || '', required: requiredOf(el, label),
+        placeholder: el.getAttribute('placeholder') || '', group: groupOf(el),
+        field_id: (fieldBox && fieldBox.getAttribute('data-automation-id')) || '',
+        // A drop zone's own label says nothing; the "*" sits on the heading above it.
+        required: requiredOf(el, label) || (isFile && /[*✱]/.test(context)) || !!(fieldBox && isRequiredBox(el)),
       };
       fields.push(f);
     }
@@ -279,8 +351,8 @@
         const own = optionLabel(el);
         fields.push({
           ref: remember('checkbox', g.els), label: own, context: contextOf(el, [own]), name: el.name || '',
-          id: el.id || '', automation_id: '', autocomplete: '', type: 'checkbox', options: [],
-          required: requiredOf(el, own),
+          id: el.id || '', automation_id: el.getAttribute('data-automation-id') || '', autocomplete: '',
+          type: 'checkbox', options: [], group: groupOf(el), required: requiredOf(el, own),
         });
         continue;
       }
@@ -294,7 +366,7 @@
       const ftype = g.type === 'radio' ? 'radio' : 'checkbox_group';
       fields.push({
         ref: remember(ftype, g.els), label: question, context: question, name: g.els[0].name || '',
-        id: '', automation_id: '', autocomplete: '', type: ftype, options: opts,
+        id: '', automation_id: '', autocomplete: '', type: ftype, options: opts, group: groupOf(g.els[0]),
         required: g.els.some((e) => e.required) || /[*✱]/.test(question),
       });
     }
@@ -353,8 +425,21 @@
     return done > 0;
   }
 
-  async function chooseCombo(el, text) {
-    const want = n(text);
+  // The option among ``opts`` for the first answer in ``wants`` that one matches.
+  function bestOption(opts, wants) {
+    for (const w of wants) {
+      const want = n(w);
+      if (!want) continue;
+      const hit = opts.find((o) => n(o.textContent) === want)
+        || opts.find((o) => n(o.textContent).startsWith(want + ' '))
+        || (want.length >= 4 ? opts.find((o) => (' ' + n(o.textContent) + ' ').includes(' ' + want + ' ')) : null);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  async function chooseCombo(el, text, alts) {
+    const wants = [text].concat(alts || []);
     const input = el.tagName === 'INPUT' ? el : el.querySelector('input');
     if (input) {
       input.focus();
@@ -366,9 +451,8 @@
     for (let i = 0; i < 12; i++) {
       await sleep(250);
       const opts = [...document.querySelectorAll('[role="option"]')].filter(visible);
-      const hit = opts.find((o) => n(o.textContent) === want)
-        || opts.find((o) => n(o.textContent).startsWith(want + ' '))
-        || (opts.length === 1 && n(opts[0].textContent).includes(want) ? opts[0] : null);
+      const hit = bestOption(opts, wants)
+        || (input && opts.length === 1 && n(opts[0].textContent).includes(n(text)) ? opts[0] : null);
       if (hit) { pressOn(hit); await sleep(150); return true; }
     }
     // Close the list without choosing. Escape never submits.
@@ -411,6 +495,44 @@
     return false;
   }
 
+  // Workday's search box: type, Enter to search (a synthetic key never submits a
+  // form), then click the result. A category ("Job Posting Sites >") opens its
+  // list, which is searched again.
+  const PROMPT_OPTS = '[data-automation-id="promptOption"], [data-automation-id="promptLeafNode"], [role="option"]';
+
+  async function choosePrompt(el, wants) {
+    const box = promptBox(el);
+    const chosen = () => !!(box && box.querySelector('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"] li'));
+    for (const want of wants) {
+      el.focus();
+      setNative(el, String(want));
+      fire(el, 'input');
+      for (const t of ['keydown', 'keypress', 'keyup']) {
+        el.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+      }
+      for (let level = 0; level < 3 && !chosen(); level++) {
+        let hit = null;
+        for (let i = 0; i < 12 && !hit; i++) {
+          await sleep(300);
+          const opts = [...document.querySelectorAll(PROMPT_OPTS)].filter((o) => visible(o) && !o.closest('#' + PANEL_ID));
+          hit = bestOption(opts, [want]);
+        }
+        if (!hit) break;
+        const tickBox = hit.querySelector('input[type="checkbox"], input[type="radio"]');
+        pressOn(tickBox || hit);
+        await sleep(500);
+      }
+      if (chosen()) {
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        return true;
+      }
+      setNative(el, '');
+      fire(el, 'input');
+    }
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return false;
+  }
+
   function attach(el, blob, filename) {
     const dt = new DataTransfer();
     dt.items.add(new File([blob], filename, { type: 'application/pdf' }));
@@ -443,8 +565,14 @@
           || /(^|[\s_-])(active|selected|checked)\b/i.test(x.className));
         return b ? clean(b.textContent) : '';
       }
+      case 'prompt': {
+        const box = promptBox(el);
+        const items = box ? [...box.querySelectorAll('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"] li')]
+          .map((x) => clean(x.textContent)).filter(Boolean) : [];
+        return items.length > 1 ? items : (items[0] || '');
+      }
       case 'combobox': {
-        if (el.tagName === 'BUTTON') return clean(el.textContent);
+        if (el.tagName === 'BUTTON') { const t = clean(el.textContent); return PLACEHOLDER.test(t) ? '' : t; }
         const box = el.closest('[class*="control" i], [class*="container" i]');
         const one = box && box.querySelector('[class*="single-value" i], [class*="singleValue" i]');
         if (one) return clean(one.textContent);
@@ -545,6 +673,9 @@
     return p;
   }
 
+  const esc = (t) => String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
   function say(html, buttons) {
     const p = panel();
     p.innerHTML = '<b>Job Bot</b> · ' + html;
@@ -629,8 +760,11 @@
       const b = r.buttons.find((x) => n(x.textContent) === n(String(v)));
       if (b) { b.click(); ok = true; }
     } else if (r.kind === 'combobox') {
-      ok = await chooseCombo(el, String(v));
+      ok = await chooseCombo(el, String(v), decision.alts);
       if (!ok) { totals.review++; return mark(decision.ref, 'jab-review', 'choose: ' + v); }
+    } else if (r.kind === 'prompt') {
+      ok = await choosePrompt(el, [String(v)].concat(decision.alts || []));
+      if (!ok) { totals.review++; return mark(decision.ref, 'jab-review', 'search and pick: ' + v); }
     } else if (decision.search && looksTypeahead(el)) {
       if (!(await typeahead(el, decision.search, String(v)))) {
         totals.review++;
@@ -661,7 +795,7 @@
       try {
         res = await matchFields({
           url: location.href, job_id: current && current.jobId,
-          first: !!(current && !current.opened), fields,
+          first: !!(current && !current.opened), fields, prefilled: [...prefilled].filter(Boolean).slice(0, 100),
         });
       } catch (e) {
         fields.forEach((f) => { const r = refs.get(f.ref); r && r.els.forEach((x) => handled.delete(x)); });
@@ -701,13 +835,13 @@
     pass();
   }
 
-  function offer() {
-    // Untagged page: never fill unasked. Offer once a real form is on screen.
+  function offer(text, buttons) {
+    // Never fill unasked: offer once a real form is on screen.
     const check = () => {
       if (active || document.getElementById(PANEL_ID)) return true;
       const inputs = [...document.querySelectorAll('input[type=text], input[type=email], input:not([type]), textarea')]
         .filter(visible);
-      if (inputs.length >= 3) { say('a form is open.', [['Autofill', run]]); return true; }
+      if (inputs.length >= 3) { say(text, buttons); return true; }
       return false;
     };
     if (check()) return;
@@ -716,10 +850,93 @@
     setTimeout(() => watch.disconnect(), 120000);
   }
 
-  current = session();
-  document.addEventListener('submit', onSubmitish, true);
-  document.addEventListener('click', onSubmitish, true);
-  flush();
-  GM_registerMenuCommand('Autofill this form', run);
-  if (current) run(); else offer();
+  // ------------------------------------------------------------------------
+  // Job boards (LinkedIn, Naukri): never filled. The job opened from Telegram
+  // is remembered for the company site their Apply button leads to.
+  // ------------------------------------------------------------------------
+
+  const jobName = (j) => [j && j.company, j && j.role].filter(Boolean).join(' — ');
+
+  async function onBoard(tagged) {
+    if (!tagged) return;
+    GM_setValue(PENDING, { jobId: tagged, at: Date.now() });
+    try {
+      const j = await opened(tagged);
+      const name = jobName(j);
+      say('remembered this job' + (name ? ': ' + esc(name) : '') + '.'
+        + (j.saved_to ? ' Resume saved to Downloads.' : '')
+        + '<br><small>Apply on the company site within 30 minutes and that form is filled for this job.</small>');
+    } catch (e) {
+      say('remembered this job (endpoint not reachable: ' + esc(e.message) + ').');
+    }
+  }
+
+  function pending() {
+    const p = GM_getValue(PENDING, null);
+    return p && Date.now() - p.at < PENDING_MS ? p : null;
+  }
+
+  async function fromPending(p) {
+    let j = {};
+    try { j = await opened(p.jobId); } catch (e) { /* still offered, unnamed */ }
+    const start = () => { current = { jobId: p.jobId, at: Date.now(), opened: false }; saveSession(current); run(); };
+    // The company's name in this site's address or title: surely the same job.
+    const here = ' ' + n(location.hostname.replace(/\./g, ' ') + ' ' + document.title) + ' ';
+    const words = n(j.company || '').split(' ').filter((w) => w.length >= 3);
+    if (words.length && words.some((w) => here.includes(' ' + w + ' '))) return start();
+    const name = jobName(j) || 'the job opened from Telegram';
+    offer('a form is open.', [['Autofill for ' + name, start], ['Autofill, no resume', run]]);
+  }
+
+  // ------------------------------------------------------------------------
+  // Debugging: what the page looks like to the script, saved by the endpoint
+  // under data/logs/autofill_debug/ (local, gitignored).
+  // ------------------------------------------------------------------------
+
+  async function debugSnapshot() {
+    const els = [...document.querySelectorAll('input, select, textarea, button[aria-haspopup], [role="combobox"]')]
+      .filter((e) => !e.closest('#' + PANEL_ID) && e.type !== 'hidden').slice(0, 300);
+    const fields = els.map((e) => {
+      const box = e.closest('[data-automation-id^="formField-"]') || e.parentElement || e;
+      return {
+        tag: e.tagName, type: e.type || '', label: labelOf(e), group: groupOf(e), visible: visible(e),
+        automation_id: e.getAttribute('data-automation-id') || '', handled: handled.has(e),
+        html: box.outerHTML.slice(0, 2500),
+      };
+    });
+    const seen = [...refs.entries()].map(([ref, r]) => ({ ref, kind: r.kind, decision: r.decision || null }));
+    try {
+      await request('POST', ENDPOINT + '/autofill/debug', {
+        headers: { 'Content-Type': 'application/json', 'X-JAB': '1' },
+        data: JSON.stringify({ url: location.href, title: document.title, fields, refs: seen }),
+      });
+      say('form sent to Job Bot for debugging.');
+    } catch (e) {
+      say('could not send the form: ' + esc(e.message));
+    }
+  }
+
+  // ------------------------------------------------------------------------
+  // Start
+  // ------------------------------------------------------------------------
+
+  // At document-start, before the page's own router can drop the tag.
+  const tagged = takeTag();
+
+  function start() {
+    if (BOARD_HOSTS.test(location.hostname)) { onBoard(tagged); return; }
+    current = session(tagged);
+    document.addEventListener('submit', onSubmitish, true);
+    document.addEventListener('click', onSubmitish, true);
+    flush();
+    GM_registerMenuCommand('Autofill this form', run);
+    GM_registerMenuCommand('Send this form to Job Bot (debugging)', debugSnapshot);
+    if (current) { run(); return; }
+    const p = pending();
+    if (p) { fromPending(p); return; }
+    offer('a form is open.', [['Autofill', run]]);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(start, 300));
+  else start();
 })();

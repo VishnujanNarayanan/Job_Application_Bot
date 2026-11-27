@@ -42,6 +42,8 @@ fields:
     not: ["country code", "phone code", "extension", "device type", "type of phone", "referrer", "emergency",
           "alternate", "alternative", "secondary", "landline"]
     attrs: ["phone", "tel", "mobile", "phone number"]
+  phone_device_type:
+    asks: ["phone device type", "phone type", "device type", "type of phone", "phone number type"]
   phone_country_code:
     asks: ["country code", "phone code", "country phone code", "dialling code", "dialing code"]
     attrs: ["country phone code", "phone country code", "countryphonecode"]
@@ -99,6 +101,10 @@ fields:
     not: ["assistance", "package", "support", "allowance"]
 
   # --- you -------------------------------------------------------------------
+  prefix:
+    asks: ["prefix", "salutation", "name prefix", "honorific", "title mr ms"]
+    not: ["phone", "country"]
+    attrs: ["prefix", "salutation", "legal name section title", "legalnamesection title"]
   preferred_name:
     asks: ["preferred name", "preferred first name", "nickname", "nick name", "what should we call you",
            "name you go by", "what do you like to be called", "known as"]
@@ -218,6 +224,10 @@ fields:
 # used instead ("Attach" beside Greenhouse's "Resume/CV" heading).
 generic_labels: ["attach", "upload", "choose file", "browse", "type here", "start typing", "select", "search",
                  "enter", "enter manually", "drop files here", "or drag and drop", "add file", "your answer"]
+
+# A label made only of these words is generic too ("Drop files here or Select files").
+generic_words: ["drop", "files", "file", "here", "or", "select", "upload", "browse", "choose", "attach", "drag",
+                "and", "add", "a", "your", "to", "click", "from", "computer", "device"]
 
 # Choice options that are placeholders, not answers.
 placeholder_options: ["select", "select one", "select an option", "please select", "choose", "choose one",

@@ -326,6 +326,8 @@ def client(monkeypatch, files):
     from src.endpoint import autofill
     from src.endpoint.app import app
 
+    monkeypatch.setattr(autofill, "downloads_dir", lambda: None)  # never the real Downloads
+
     profile, answers = files
     monkeypatch.setattr(autofill, "_job_facts", lambda job_id: {"company": "Acme"} if job_id else {})
     monkeypatch.setattr(autofill, "record_submission",
