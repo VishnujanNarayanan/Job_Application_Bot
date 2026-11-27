@@ -1,25 +1,9 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.2.0
+// @version      1.3.0
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
-// @match        https://*.greenhouse.io/*
-// @match        https://jobs.lever.co/*
-// @match        https://jobs.ashbyhq.com/*
-// @match        https://*.myworkdayjobs.com/*
-// @match        https://*.myworkdaysite.com/*
-// @match        https://jobs.smartrecruiters.com/*
-// @match        https://apply.workable.com/*
-// @match        https://*.recruitee.com/*
-// @match        https://ats.rippling.com/*
-// @match        https://*.bamboohr.com/*
-// @match        https://*.eightfold.ai/*
-// @match        https://*.keka.com/*
-// @match        https://*.oraclecloud.com/*
-// @match        https://www.amazon.jobs/*
-// @match        https://amazon.jobs/*
-// @match        https://www.linkedin.com/jobs/*
-// @match        https://www.naukri.com/*
+// @match        *://*/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
 // @grant        GM_getValue
@@ -35,6 +19,10 @@
  *  - The Telegram Apply button opens the posting with #jab=<job_id>. That tag
  *    starts autofill for this tab; without it, an "Autofill" button appears
  *    on pages with a form, and nothing happens until it is pressed.
+ *  - It is installed for every site but acts only: on a tagged page (any
+ *    site), on a known ATS, or on a page that looks like a job application
+ *    (a resume upload, or "apply" and a form). Elsewhere it does nothing
+ *    beyond its menu item, and sends nothing unless asked.
  *  - Every visible, still-empty field is described (label, surrounding text,
  *    type, options) and sent to the endpoint, which answers each one.
  *  - Known answers are typed in, the tailored resume PDF is attached, and
@@ -59,6 +47,15 @@
   const PENDING = 'jab-pending';   // the job last opened from Telegram, for the site LinkedIn sends you to
   const PENDING_MS = 30 * 60 * 1000;
   const BOARD_HOSTS = /(^|\.)(linkedin\.com|naukri\.com)$/;
+  const ATS_HOSTS = new RegExp('(^|\\.)(' + [
+    'greenhouse\\.io', 'lever\\.co', 'ashbyhq\\.com', 'myworkdayjobs\\.com', 'myworkdaysite\\.com',
+    'smartrecruiters\\.com', 'workable\\.com', 'recruitee\\.com', 'rippling\\.com', 'bamboohr\\.com',
+    'eightfold\\.ai', 'keka\\.com', 'oraclecloud\\.com', 'amazon\\.jobs', 'successfactors\\.(com|eu)',
+    'sapsf\\.(com|eu)', 'icims\\.com', 'taleo\\.net', 'jobvite\\.com', 'darwinbox\\.in', 'zohorecruit\\.(com|in)',
+    'freshteam\\.com', 'personio\\.(de|com)', 'teamtailor\\.com', 'breezy\\.hr', 'applytojob\\.com',
+    'pinpointhq\\.com', 'avature\\.net', 'phenompeople\\.com', 'ultipro\\.com', 'ukg\\.net', 'adp\\.com',
+    'paylocity\\.com', 'dayforcehcm\\.com', 'turbohire\\.co', 'hire\\.trakstar\\.com', 'workforcenow\\.adp\\.com',
+  ].join('|') + ')$');
 
   // ------------------------------------------------------------------------
   // Session: which match this tab is applying to
@@ -438,22 +435,49 @@
     return null;
   }
 
+  // The options of this combobox's own list when it names one, else any visible.
+  function comboOptions(el) {
+    const id = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+    const own = id && document.getElementById(id);
+    const scope = own && visible(own) ? own : document;
+    return [...scope.querySelectorAll('[role="option"]')].filter(visible);
+  }
+
+  async function waitOption(el, wants, tries) {
+    for (let i = 0; i < tries; i++) {
+      await sleep(250);
+      const hit = bestOption(comboOptions(el), wants);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
   async function chooseCombo(el, text, alts) {
     const wants = [text].concat(alts || []);
     const input = el.tagName === 'INPUT' ? el : el.querySelector('input');
-    if (input) {
+    const side = input && input.parentElement && input.parentElement.querySelector('button');
+    // 1. Open it: a click shows the whole list on most pick-lists (SuccessFactors, Workday).
+    pressOn(input || el);
+    let hit = await waitOption(input || el, wants, 4);
+    // 2. Type to filter (long lists, react-select).
+    if (!hit && input) {
       input.focus();
       setNative(input, text);
       fire(input, 'input');
-    } else {
-      pressOn(el);
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: text.slice(-1), bubbles: true }));
+      hit = await waitOption(input, wants, 8);
     }
-    for (let i = 0; i < 12; i++) {
-      await sleep(250);
-      const opts = [...document.querySelectorAll('[role="option"]')].filter(visible);
-      const hit = bestOption(opts, wants)
-        || (input && opts.length === 1 && n(opts[0].textContent).includes(n(text)) ? opts[0] : null);
-      if (hit) { pressOn(hit); await sleep(150); return true; }
+    // 3. The arrow button beside it.
+    if (!hit && side) {
+      if (input) { setNative(input, ''); fire(input, 'input'); }
+      pressOn(side);
+      hit = await waitOption(input || el, wants, 6);
+    }
+    if (hit) {
+      const inner = hit.querySelector('a, [role="menuitem"]');
+      pressOn(inner || hit);
+      await sleep(200);
+      return true;
     }
     // Close the list without choosing. Escape never submits.
     (input || el).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -923,8 +947,21 @@
   // At document-start, before the page's own router can drop the tag.
   const tagged = takeTag();
 
+  // A page that looks like a job application, on a site not known as an ATS.
+  function looksLikeApplication() {
+    const inputs = [...document.querySelectorAll('input:not([type=hidden]), select, textarea')].filter(visible);
+    if (inputs.length < 3) return false;
+    const files = [...document.querySelectorAll('input[type=file]')];
+    const words = (document.title + ' ' + (document.body.innerText || '').slice(0, 20000)).toLowerCase();
+    const resume = /\b(resume|résumé|curriculum vitae|cv)\b/.test(words);
+    return (files.length > 0 && resume) || (/\bappl(y|ication)\b/.test(words) && resume);
+  }
+
   function start() {
     if (BOARD_HOSTS.test(location.hostname)) { onBoard(tagged); return; }
+    const known = ATS_HOSTS.test(location.hostname);
+    // Inside another site's frame (ads, widgets): nothing, unless it is an ATS form.
+    if (window.top !== window.self && !known && !tagged) return;
     current = session(tagged);
     document.addEventListener('submit', onSubmitish, true);
     document.addEventListener('click', onSubmitish, true);
@@ -932,9 +969,24 @@
     GM_registerMenuCommand('Autofill this form', run);
     GM_registerMenuCommand('Send this form to Job Bot (debugging)', debugSnapshot);
     if (current) { run(); return; }
-    const p = pending();
-    if (p) { fromPending(p); return; }
-    offer('a form is open.', [['Autofill', run]]);
+    if (known) {
+      const p = pending();
+      if (p) { fromPending(p); return; }
+      offer('a form is open.', [['Autofill', run]]);
+      return;
+    }
+    // Any other site: look a few times as the page settles; offer only on an application.
+    let tries = 0;
+    const look = () => {
+      if (active || document.getElementById(PANEL_ID)) return;
+      if (looksLikeApplication()) {
+        const p = pending();
+        if (p) fromPending(p); else say('this looks like a job application.', [['Autofill', run]]);
+        return;
+      }
+      if (++tries < 5) setTimeout(look, [1500, 3000, 6000, 12000][tries - 1] || 12000);
+    };
+    setTimeout(look, 800);
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(start, 300));

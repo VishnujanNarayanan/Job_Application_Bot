@@ -45,7 +45,8 @@ fields:
   phone_device_type:
     asks: ["phone device type", "phone type", "device type", "type of phone", "phone number type"]
   phone_country_code:
-    asks: ["country code", "phone code", "country phone code", "dialling code", "dialing code"]
+    asks: ["country code", "phone code", "country phone code", "dialling code", "dialing code", "calling code",
+           "international calling code", "isd code", "isd", "country calling code"]
     attrs: ["country phone code", "phone country code", "countryphonecode"]
 
   # --- where ----------------------------------------------------------------
@@ -149,7 +150,8 @@ fields:
     asks: ["current title", "current job title", "current role", "current designation", "job title", "title",
            "designation", "current position", "most recent title", "position title"]
     not: ["applying", "desired", "interested", "position you", "role you", "this role", "this position", "how did",
-          "posting", "requisition"]
+          "posting", "requisition", "relative*", "auditor", "referrer", "referr*", "spouse", "manager", "if yes",
+          "if you have", "if so", "family"]
     attrs: ["title", "job title", "current title", "designation"]
   years_experience:
     asks: ["years of experience", "total experience", "total years of experience", "years experience",

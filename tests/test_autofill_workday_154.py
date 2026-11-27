@@ -174,3 +174,19 @@ def test_a_prefilled_phone_code_drops_the_code_from_the_number(facts) -> None:
     assert match_form(field, facts, {})[0]["value"] == "+91-90000-00000"
     d = match_form(field, facts, {}, prefilled=["Country / Territory Phone Code"])[0]
     assert d["value"] == "9000000000"
+
+
+def test_calling_code_and_someone_elses_title(facts) -> None:
+    d = _one(facts, "International Calling code", "combobox")
+    assert d["key"] == "phone_country_code" and "India (+91)" in d["alts"]
+    for label in ("If you have any relative working with HSBC group, please provide name, relationship and job title",
+                  "External Auditor Job Title"):
+        assert _one(facts, label, "textarea")["key"] != "current_title", label
+
+
+@pytest.mark.parametrize("label", [
+    "If you have any relative working with HSBC group, please provide name, relationship and location",
+    "If yes, please provide your Employee ID:", "If so, which city?", "Please provide details of your current role",
+])
+def test_follow_up_questions_take_no_profile_fact(facts, label) -> None:
+    assert _one(facts, label, "textarea")["key"] is None
