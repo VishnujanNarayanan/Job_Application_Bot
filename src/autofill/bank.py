@@ -27,7 +27,7 @@ import structlog
 import yaml
 
 from src.autofill.facts import ANSWERS_PATH, load_answers_file
-from src.autofill.matcher import _content, is_generic, norm
+from src.autofill.matcher import LIKELY, _content, is_generic, norm, question_score
 
 log = structlog.get_logger(__name__)
 
@@ -60,12 +60,14 @@ def _same_question(a: str, b: str) -> bool:
     return bool(ca and cb) and len(ca & cb) / len(ca | cb) >= 0.75
 
 
-def _known_asks(data: dict[str, Any]) -> list[str]:
-    asks = [e.get("ask", "") for e in data.get("unanswered") or [] if isinstance(e, dict)]
+def _known_asks(data: dict[str, Any]) -> list[tuple[str, list[Any]]]:
+    """Every stored question, answered or not, with its options."""
+    asks = [(e.get("ask", ""), e.get("options") or [])
+            for e in data.get("unanswered") or [] if isinstance(e, dict)]
     for entry in (data.get("answers") or {}).values():
         if isinstance(entry, dict):
-            asks.extend(entry.get("asks") or [])
-    return [a for a in asks if a]
+            asks.extend((a, []) for a in entry.get("asks") or [])
+    return [(a, o) for a, o in asks if a]
 
 
 def _entry_yaml(entry: dict[str, Any]) -> str:
@@ -84,7 +86,8 @@ def record_unanswered(questions: list[dict[str, Any]], seen_at: str,
             text = (q.get("question") or "").strip()
             if not text or len(text) > _MAX_QUESTION or is_generic(text):
                 continue
-            if any(_same_question(text, k) for k in known):
+            # Already in the bank in some wording: one answer there covers it.
+            if any(question_score(text, k, q.get("options"), o) >= LIKELY for k, o in known):
                 continue
             entry: dict[str, Any] = {"ask": text, "type": q.get("type") or "text"}
             options = [o for o in q.get("options") or [] if str(o).strip()][:40]
@@ -93,7 +96,7 @@ def record_unanswered(questions: list[dict[str, Any]], seen_at: str,
             entry["seen_at"] = seen_at
             entry["answer"] = None
             new.append(entry)
-            known.append(text)
+            known.append((text, entry.get("options") or []))
         if not new:
             return 0
         original = path.read_text(encoding="utf-8") if path.exists() else _HEADER

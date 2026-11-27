@@ -82,8 +82,21 @@ never guessed. A field that already has a value is never changed.
 
 A question with no answer is appended to `data/ats_answers.yaml` under
 `unanswered:`, with its type and options and `answer: null`. Fill `answer:` in
-place, and every later form asking the same thing, in any close wording, gets
-it. Code only ever appends to that file, so keep `unanswered:` as its last key.
+place (an option's text, or a list for "select all that apply"), and every
+later form asking the same thing gets it. You answer each question once:
+
+- Same question, other words ("Gender" / "What gender do you identify as?",
+  "What is your ethnicity?" / "I identify my ethnicity as…"): filled.
+- Different words but the same list of options (two age-range questions with
+  the same brackets): filled. Yes/No lists never count as the same.
+- Probably the same ("Gender" / "Gender identity", "Ethnicity" / "Race /
+  Ethnicity"): filled and outlined amber for checking.
+- A question already in the file in any of these wordings, answered or not, is
+  not added again.
+
+An answer that isn't one of the form's options is never forced in; the field
+stays outlined. Code only ever appends to that file, so keep `unanswered:` as
+its last key.
 
 Every question seen (questions and options, never values) is also logged to
 `data/ats_questions_seen.jsonl`. To add the new ones to the public catalog:

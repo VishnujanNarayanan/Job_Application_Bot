@@ -32,7 +32,9 @@ _FIELDS_PATH = Path(__file__).resolve().parents[2] / "config" / "ats_fields.yaml
 _STOP = frozenset(
     "a an and any are as at be by can do does for from have how i if in is it kindly me mention "
     "my of on or our please provide share so state tell that the this to us we what when where "
-    "which will with would you your enter specify".split()
+    "which will with would you your enter specify "
+    # Survey filler: "What gender do you identify as?" asks what "Gender" asks.
+    "identify identifies describe describes best select apply all choose one yourself following".split()
 )
 # Fields that are part of the page's machinery, not the application.
 _MACHINERY = re.compile(r"captcha|recaptcha|honeypot|csrf|authenticity_token", re.I)
@@ -264,24 +266,57 @@ def _key_for(f: dict[str, Any], extra: dict[str, list[str]]) -> str | None:
     return _match_attrs([f.get("name") or "", f.get("id") or "", f.get("automation_id") or ""])
 
 
-def _operator_answer(question: str, facts: Facts) -> Any:
-    """A free-form answer whose wording matches this question, else None."""
-    q = norm(question)
-    qc = _content(question)
+# Two questions this alike are the same question (answer filled as is) ...
+SAME = 0.75
+# ... and this alike, probably the same (answer filled, outlined for checking).
+LIKELY = 0.7
+# Options shared by unrelated questions: never evidence that two are the same.
+_COMMON_OPTIONS = frozenset({"yes", "no", "other", "prefer not to say", "decline to answer",
+                             "i don t wish to answer", "i do not wish to answer", "n a", "none"})
+
+
+def _option_set(options: Any) -> frozenset[str]:
+    return frozenset(n for n in (norm(str(o)) for o in options or []) if n)
+
+
+def question_score(question: str, ask: str, options: Any = (), ask_options: Any = ()) -> float:
+    """How surely a stored question ``ask`` is the same as ``question``.
+
+    2.0 same words; >= SAME same content words, or a multi-word ``ask`` inside
+    the question, or the same list of (non-yes/no) options with a shared word;
+    LIKELY when one question's content words contain the other's ("Gender" vs
+    "Gender identity"); below that, a different question.
+    """
+    q, a = norm(question), norm(ask)
+    if not q or not a:
+        return 0.0
+    if q == a:
+        return 2.0
+    qc, ac = _content(question), _content(ask)
+    score = 0.0
+    if qc and ac:
+        score = len(qc & ac) / len(qc | ac)
+        if score < SAME and len(a.split()) >= 2 and _has_phrase(q, ask):
+            score = SAME + len(a) / 1000
+        small, big = sorted((qc, ac), key=len)
+        if score < LIKELY and small <= big and len(big) - len(small) <= 2:
+            score = LIKELY
+    qo, ao = _option_set(options), _option_set(ask_options)
+    if (len(qo) >= 3 and len(ao) >= 3 and not qo <= _COMMON_OPTIONS
+            and len(qo & ao) / len(qo | ao) >= 0.8 and qc & ac):
+        score = max(score, 0.9)
+    return score
+
+
+def _operator_answer(question: str, options: Any, facts: Facts) -> tuple[Any, float]:
+    """The operator's answer to the most alike stored question, and how alike."""
     best: tuple[Any, float] = (None, 0.0)
     for entry in facts.answers:
         for ask in entry["asks"]:
-            ac = _content(ask)
-            score = 0.0
-            if norm(ask) == q:
-                score = 2.0
-            elif ac and qc:
-                score = len(ac & qc) / len(ac | qc)
-                if score < 0.75 and len(norm(ask).split()) >= 2 and _has_phrase(q, ask):
-                    score = 0.75 + len(norm(ask)) / 1000
-            if score >= 0.75 and score > best[1]:
+            score = question_score(question, ask, options, entry.get("options"))
+            if score >= LIKELY and score > best[1]:
                 best = (entry["answer"], score)
-    return best[0]
+    return best
 
 
 def _value_for(key: str, f: dict[str, Any], facts: Facts, job: dict[str, Any],
@@ -347,9 +382,9 @@ def match_form(fields: list[dict[str, Any]], facts: Facts, job: dict[str, Any] |
             value, action = _value_for(key, f, facts, job, form_has_code)
         if value is None and action == "unknown" and question:
             # Not a known key, or a known key with no value: the operator's own answers.
-            own = _operator_answer(question, facts)
+            own, score = _operator_answer(question, f.get("options"), facts)
             if own is not None:
-                value, action = own, "fill"
+                value, action = own, ("fill" if score >= SAME else "review")
         decision: dict[str, Any] = {"ref": ref, "key": key, "question": question}
         if action in ("resume", "skip") or value is None:
             decision["action"] = action
