@@ -161,7 +161,53 @@ def profile_facts(profile: dict[str, Any]) -> dict[str, Any]:
 
     if settings.get("relocation", {}).get("enabled"):
         out["willing_to_relocate"] = "Yes"
+    out["_work"] = work_entries(profile)
+    out["_education"] = education_entries(profile)
     return {k: v for k, v in out.items() if v not in (None, "")}
+
+
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
+
+
+def _ym(text: Any) -> tuple[int, int | None] | None:
+    """(year, month) from "2025-06", "Jun 2025", "2025"; None for "present" or nothing."""
+    t = str(text or "").strip().lower()
+    if m := re.fullmatch(r"((?:19|20)\d{2})-(\d{1,2})(?:-\d{1,2})?", t):
+        return int(m.group(1)), int(m.group(2))
+    if m := re.fullmatch(r"([a-z]{3})[a-z]*\.?\s+((?:19|20)\d{2})", t):
+        return int(m.group(2)), _MONTHS.get(m.group(1))
+    if m := re.fullmatch(r"(?:19|20)\d{2}", t):
+        return int(t), None
+    return None
+
+
+def work_entries(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    """Jobs with dates, newest first: what a form's "Work Experience 1, 2..." asks for."""
+    rows = []
+    for w in profile.get("work_experience") or []:
+        start = _ym(w.get("start_date"))
+        if start is None:
+            continue
+        current = str(w.get("end_date", "")).strip().lower() == "present"
+        location = str(w.get("location") or "")
+        rows.append({"title": w.get("actual_title") or "", "company": w.get("company") or "",
+                     "location": "" if location.lower() in ("none", "") else location,
+                     "start": start, "end": None if current else _ym(w.get("end_date")), "current": current})
+    rows.sort(key=lambda r: (r["current"], r["end"] or (9999, 12), r["start"]), reverse=True)
+    return rows
+
+
+def education_entries(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    """Education as listed in the profile (highest first), with start and end."""
+    rows = []
+    for e in profile.get("education") or []:
+        parts = [p.strip() for p in re.split(r"\s+[-–]\s+", str(e.get("dates") or "")) if p.strip()]
+        degree, study = _degree_parts(e.get("degree", ""))
+        rows.append({"institution": e.get("institution") or "", "degree": degree, "degree_full": e.get("degree", ""),
+                     "field": study, "score": e.get("score") or "",
+                     "start": _ym(parts[0]) if parts else None, "end": _ym(parts[-1]) if len(parts) > 1 else None})
+    return rows
 
 
 def load_answers_file(path: Path = ANSWERS_PATH) -> dict[str, Any]:

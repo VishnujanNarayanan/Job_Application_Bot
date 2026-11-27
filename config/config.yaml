@@ -1008,6 +1008,10 @@ autofill:
   # Add the #jab tag to Telegram Apply links. Harmless with the laptop off: the
   # fragment never reaches the ATS and the posting opens as before.
   tag_apply_links: true
+  # Copy the tailored resume of a job opened from Telegram into this folder,
+  # replacing the last one (named as resume_filename). "auto": the one Windows
+  # user's Downloads under /mnt/c (WSL). A path, or false to turn it off.
+  save_resume_to: auto
 
 # ---------------------------------------------------------------------------
 # Resume endpoint + dashboard — FastAPI (Layer 6)

@@ -368,6 +368,8 @@ def client(monkeypatch, files, tmp_path):
     from src.endpoint import autofill
     from src.endpoint.app import app
 
+    monkeypatch.setattr(autofill, "downloads_dir", lambda: None)  # never the real Downloads
+
     profile, answers = files
     monkeypatch.setattr(autofill, "load_facts", lambda: load_facts(profile, answers))
     monkeypatch.setattr(autofill, "_job_facts",

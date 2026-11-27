@@ -33,6 +33,25 @@ appears once a form is on screen. The Violentmonkey menu also has
 "Autofill this form". Untagged pages get no tailored resume, because the script
 doesn't know which match they belong to.
 
+### Jobs opened on LinkedIn or Naukri
+
+A Telegram link to a LinkedIn or Naukri posting can't be filled there, and
+their Apply button drops the tag on the way to the company's site. So on those
+two sites the script only remembers the job, for 30 minutes, and says which
+one it is. On the company site you reach next, that form is filled for that
+job, with its tailored resume, if the company's name is in the site's address
+or title. Otherwise the panel asks: "Autofill for <company — role>" or
+"Autofill, no resume".
+
+### The resume in Downloads
+
+When a job opens from Telegram, the endpoint also copies its tailored PDF into
+your Downloads folder as `<Name>_Resume.pdf`, replacing the last one, so it's
+ready for a site the script doesn't cover. It is written by the endpoint, not
+downloaded by the browser, so no save dialog appears. `autofill.save_resume_to`
+in config.yaml: `auto` (the one Windows user's Downloads under `/mnt/c`), a
+folder, or `false`.
+
 ## Setup
 
 1. Install Violentmonkey in Zen.
@@ -176,10 +195,24 @@ endpoint, with nothing submitted:
   dropdown, and the resume attached. Its own "Autofill from resume" upload is
   left alone.
 - **Workday:** step 1 is "Create Account/Sign In", which stays yours (the
-  script never handles passwords). The later steps could not be reached
-  without an account, so they are untested. They use the same generic reader
-  and refill on each page change, but expect more amber outlines there at
-  first.
+  script never handles passwords). On the later steps (checked on a live PwC
+  form, then fixed against a mock of its widgets):
+  - dropdowns (Prefix, Region, Phone Device Type, Degree) are buttons that
+    open a list; the script opens them and picks the answer, trying other
+    names for it ("B.Tech" → "Bachelor of Technology");
+  - search boxes ("How did you hear", School, Field of Study) are typed into,
+    searched with Enter, and the result picked, opening a category if needed;
+  - "Work Experience 1, 2…" and "Education 1…" are filled from those entries
+    of your profile, newest job first, with Month / Year date boxes; a current
+    job ticks "I currently work here" and leaves its end date;
+  - the resume drop zone is found by the "Resume/CV" heading above it.
+
+## When something isn't filled
+
+Violentmonkey menu → **Send this form to Job Bot (debugging)**. The endpoint
+saves what each field looked like to the script under
+`data/logs/autofill_debug/` (local, gitignored: it can hold what you typed),
+for a fix to start from.
 
 ## Limits
 

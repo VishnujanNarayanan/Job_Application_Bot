@@ -82,7 +82,7 @@ class FieldSpec:
 
 
 @lru_cache(maxsize=1)
-def _table() -> tuple[tuple[FieldSpec, ...], frozenset[str], frozenset[str]]:
+def _table() -> tuple[tuple[FieldSpec, ...], frozenset[str], frozenset[str], frozenset[str]]:
     data = yaml.safe_load(_FIELDS_PATH.read_text(encoding="utf-8"))
     specs = tuple(
         FieldSpec(k, tuple(v.get("asks") or ()), tuple(v.get("not") or ()), tuple(v.get("attrs") or ()))
@@ -90,7 +90,8 @@ def _table() -> tuple[tuple[FieldSpec, ...], frozenset[str], frozenset[str]]:
     )
     generic = frozenset(norm(g) for g in data.get("generic_labels") or ())
     placeholders = frozenset(norm(p) for p in data.get("placeholder_options") or ())
-    return specs, generic, placeholders
+    words = frozenset(norm(w) for w in data.get("generic_words") or ())
+    return specs, generic, placeholders, words
 
 
 def field_keys() -> frozenset[str]:
@@ -99,7 +100,9 @@ def field_keys() -> frozenset[str]:
 
 def is_generic(label: str) -> bool:
     n = norm(label)
-    return not n or n in _table()[1] or len(n) < 2
+    if not n or n in _table()[1] or len(n) < 2:
+        return True
+    return all(w in _table()[3] for w in n.split())
 
 
 def _match_spec(label: str, extra: dict[str, list[str]]) -> tuple[str | None, int]:
@@ -402,6 +405,110 @@ _HEARD_DEFAULTS = ["Company website", "Company careers page", "Careers page", "C
                    "Company site", "Website", "Job board", "Online", "Internet", "Other"]
 
 
+_DEGREES = {
+    "btech": ["B.Tech", "BTech", "Bachelor of Technology", "Bachelor of Engineering", "Bachelor's Degree",
+              "Bachelors Degree", "Bachelor's", "Bachelors", "Bachelor", "Undergraduate"],
+    "be": ["B.E.", "BE", "Bachelor of Engineering", "Bachelor of Technology", "Bachelor's Degree", "Bachelors",
+           "Bachelor"],
+    "bsc": ["B.Sc", "BSc", "Bachelor of Science", "Bachelor's Degree", "Bachelors", "Bachelor"],
+    "bca": ["BCA", "Bachelor of Computer Applications", "Bachelor's Degree", "Bachelors", "Bachelor"],
+    "mtech": ["M.Tech", "MTech", "Master of Technology", "Master's Degree", "Masters", "Master"],
+    "msc": ["M.Sc", "MSc", "Master of Science", "Master's Degree", "Masters", "Master"],
+    "mca": ["MCA", "Master of Computer Applications", "Master's Degree", "Masters", "Master"],
+    "mba": ["MBA", "Master of Business Administration", "Master's Degree", "Masters", "Master"],
+}
+
+
+def degree_answer(degree: str, full: str = "") -> Answer:
+    """A degree and the names forms list it under ("B.Tech" -> "Bachelor of Technology", "Bachelor's")."""
+    alts = [x for x in (degree, full) if x] + _DEGREES.get(norm(degree).replace(" ", ""), [])
+    return Answer(degree, list(dict.fromkeys(alts)))
+
+
+def _study_answer(study: str) -> Answer:
+    """"Computer Science (Big Data)": also "Computer Science", which a pick-list is likelier to hold."""
+    plain = re.sub(r"\s*\([^)]*\)", "", study).strip()
+    return Answer(study, list(dict.fromkeys(x for x in (study, plain) if x)))
+
+
+def _ym_text(ym: tuple[int, int | None] | None, part: str | None, f: dict[str, Any]) -> str | None:
+    """A (year, month) as one date box wants it: "2025", "06", "06/2025", "2025-06"."""
+    if ym is None:
+        return None
+    year, month = ym
+    if part == "year":
+        return str(year)
+    if part == "month":
+        return f"{month:02d}" if month else None
+    hint = norm(f"{f.get('placeholder') or ''} {f.get('label') or ''}")
+    if (f.get("type") or "") == "month" and month:
+        return f"{year}-{month:02d}"
+    if "mm" in hint.split() and month:
+        return f"{month:02d}/{year}"
+    if "yyyy" in hint.split() and "mm" not in hint.split():
+        return str(year)
+    return f"{month:02d}/{year}" if month else str(year)
+
+
+_SECTION = re.compile(r"^(work experience|experience|employment|education) (\d+)")
+
+
+def _group_answer(f: dict[str, Any], v: dict[str, Any]) -> tuple[Any, str] | None:
+    """A field inside "Work Experience 2" / "Education 1": that entry of the profile."""
+    m = _SECTION.match(norm(f.get("group") or ""))
+    if not m:
+        return None
+    idx = int(m.group(2)) - 1
+    # The label itself: in a section, "From" / "To" are the question, not filler.
+    words = set(norm(f.get("label") or f.get("context") or "").split())
+    part = "month" if "month" in words else "year" if "year" in words else None
+    is_from, is_to = bool(words & {"from", "start"}), bool(words & {"to", "end"})
+    if m.group(1) == "education":
+        rows = v.get("_education") or []
+        if idx >= len(rows):
+            return None
+        e = rows[idx]
+        if words & {"school", "university", "college", "institution", "institute"}:
+            return (Answer(e["institution"], [e["institution"]]), "fill") if e["institution"] else None
+        if words & {"field", "study", "major", "specialization", "specialisation", "discipline"}:
+            return (_study_answer(e["field"]), "fill") if e["field"] else None
+        if "degree" in words:
+            return (degree_answer(e["degree"], e["degree_full"]), "fill") if e["degree"] else None
+        if words & {"gpa", "cgpa", "grade", "result", "score", "percentage", "marks"}:
+            num = _number(e["score"])
+            return (num, "fill") if num else None
+        if is_from or is_to:
+            text = _ym_text(e["start"] if is_from else e["end"], part, f)
+            return (text, "fill") if text else None
+        return None
+    rows = v.get("_work") or []
+    if idx >= len(rows):
+        return None
+    w = rows[idx]
+    if "currently" in words or ("current" in words and "work" in words):
+        return ("Yes" if w["current"] else "No"), "fill"
+    if "description" in words or "responsibilities" in words:
+        return None
+    if words & {"title", "position", "designation", "role"}:
+        return w["title"], "fill"
+    if words & {"company", "employer", "organization", "organisation"}:
+        return w["company"], "fill"
+    if "location" in words:
+        return (w["location"], "fill") if w["location"] else None
+    if is_from:
+        text = _ym_text(w["start"], part, f)
+        return (text, "fill") if text else None
+    if is_to:
+        if w["current"]:
+            return None, "skip"  # "I currently work here" is ticked instead
+        text = _ym_text(w["end"], part, f)
+        return (text, "fill") if text else None
+    return None
+
+
+_DEVICE = ["Mobile", "Mobile Phone", "Cell", "Cell Phone", "Cellular", "Personal Mobile", "Mobile (Personal)"]
+
+
 def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any],
               today: date) -> tuple[Any, str] | None:
     """(value, action) for answers worked out per form, or None when ``key`` isn't one."""
@@ -447,6 +554,19 @@ def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any
             prefs.append(v["how_heard"])
         prefs += [h for h in _HEARD_DEFAULTS if h not in prefs]
         return Answer(prefs[0], prefs), "fill"
+    if key == "phone_device_type":
+        return Answer("Mobile", _DEVICE), "fill"
+    if key == "prefix":
+        if not v.get("prefix"):
+            return None, "unknown"
+        pre = str(v["prefix"])
+        return Answer(pre, list(dict.fromkeys([pre, pre.rstrip("."), pre.rstrip(".") + "."]))), "fill"
+    if key == "degree" and v.get("degree"):
+        return degree_answer(str(v["degree"]), str(v.get("degree_full") or "")), "fill"
+    if key == "field_of_study" and v.get("field_of_study"):
+        return _study_answer(str(v["field_of_study"])), "fill"
+    if key == "university" and v.get("university"):
+        return Answer(str(v["university"]), [str(v["university"])]), "fill"
     if key == "willing_to_relocate" and norm(str(v.get(key) or "")) == "yes":
         return Answer("Yes, I'm open to relocating.", ["Yes"]), "fill"
     return None
@@ -547,6 +667,11 @@ def _shape(decision: dict[str, Any], f: dict[str, Any], value: Any, action: str,
             decision.update(action="unknown", reason="the answer is not a number")
             return False
     decision.update(action=action, value=v)
+    if ans.choose and ftype in ("combobox", "prompt", "text", "search", ""):
+        # A dropdown whose options load only when opened: the page tries these in order.
+        alts = [str(x) for x in ans.choose if str(x) != v]
+        if alts:
+            decision["alts"] = alts
     # A type-ahead location box finds "Pune" where it may not find the
     # whole "Pune, Maharashtra, India"; the userscript searches with this.
     if key == "location" and facts.values.get("city"):
@@ -555,7 +680,8 @@ def _shape(decision: dict[str, Any], f: dict[str, Any], value: Any, action: str,
 
 
 def match_form(fields: list[dict[str, Any]], facts: Facts, job: dict[str, Any] | None = None,
-               site: str = "", today: date | None = None) -> list[dict[str, Any]]:
+               site: str = "", today: date | None = None,
+               prefilled: list[str] | None = None) -> list[dict[str, Any]]:
     """One decision per field, in the order sent.
 
     Each decision carries ``source``: where its answer came from ("fact:email",
@@ -574,7 +700,9 @@ def match_form(fields: list[dict[str, Any]], facts: Facts, job: dict[str, Any] |
                 key_entry[entry["key"]] = entry
 
     matched = [(f, _key_for(f, extra)) for f in fields]
-    form_has_code = any(k == "phone_country_code" for _, k in matched)
+    # A country-code field, even one the page filled itself: the phone number goes without the code.
+    form_has_code = any(k == "phone_country_code" for _, k in matched) or any(
+        _key_for({"label": label}, extra) == "phone_country_code" for label in prefilled or [])
     out = []
     for f, key in matched:
         ref = f.get("ref")
@@ -584,7 +712,13 @@ def match_form(fields: list[dict[str, Any]], facts: Facts, job: dict[str, Any] |
         question = question_text(f)
         ftype = f.get("type") or ""
         value, action, source = (None, "unknown", None)
-        if key:
+        grouped = _group_answer(f, facts.values)
+        if grouped is not None:
+            (value, action), source = grouped, "fact:profile"
+            if action == "skip":
+                out.append({"ref": ref, "key": key, "question": question, "source": source, "action": "skip"})
+                continue
+        elif key:
             value, action = _value_for(key, f, facts, job, form_has_code, today)
             if value is not None:
                 own = key_entry.get(key)
