@@ -1,7 +1,9 @@
 """CLI — move operator assets between the laptop and S3.
 
-    python -m src.cli.assets push    # laptop -> S3 (run after editing the profile)
-    python -m src.cli.assets pull    # S3 -> here (run by the GitHub Actions job)
+    python -m src.cli.assets push              # laptop -> S3 (run after editing the profile)
+    python -m src.cli.assets pull              # S3 -> here (run by the GitHub Actions job)
+    python -m src.cli.assets push --backups    # only the backup-only files below
+    python -m src.cli.assets pull --backups    # restore them on a new laptop
 
 The pipeline needs three operator-owned files that are deliberately NOT in
 git (they carry personal data):
@@ -20,6 +22,12 @@ new secret.
 
 Assets live under ``assets/`` in the bucket, outside the ``*_cache/``
 prefixes so the 1-month cache lifecycle rule can't expire them.
+
+Backup-only files (``assets/backup/``) are personal files the pipeline never
+reads -- the autofill's answers (#154). ``push`` uploads them too, so a WSL
+reset can't lose them; the runner's ``pull`` leaves them alone, and only
+``pull --backups`` brings them back. They are pushed when present and never
+required. They must never go in git: the repo is public.
 """
 
 from __future__ import annotations
@@ -59,6 +67,53 @@ def _asset_paths() -> list[tuple[Path, str]]:
 _REGISTRY_LOCAL = Path("config/skills_registry.local.yaml")
 _OPTIONAL = {_REGISTRY_LOCAL.name}
 
+#: Personal files kept only for safe keeping: pushed when present, pulled only on request.
+_BACKUPS = (Path("data/ats_answers.yaml"), Path("data/ats_learned.yaml"))
+
+
+def _backup_paths() -> list[tuple[Path, str]]:
+    return [(_ROOT / p, f"{_PREFIX}/backup/{p.name}") for p in _BACKUPS]
+
+
+def push_backups(s3=None) -> int:
+    """Upload the backup-only files that exist. Returns how many were pushed."""
+    if s3 is None:
+        from src.aws.iam_session import get_session
+
+        s3 = get_session().client("s3")
+    bucket = settings.aws.s3_bucket
+    pushed = 0
+    for path, key in _backup_paths():
+        if not path.is_file():
+            print(f"no {path.name} yet; skipped")
+            continue
+        s3.upload_file(str(path), bucket, key, ExtraArgs={"ServerSideEncryption": "AES256"})
+        log.info("backup_pushed", path=str(path), key=key, bytes=path.stat().st_size)
+        print(f"pushed {path.name} -> s3://{bucket}/{key}")
+        pushed += 1
+    return pushed
+
+
+def pull_backups() -> int:
+    """Restore the backup-only files. Refuses to overwrite a local copy."""
+    from src.aws.iam_session import get_session
+
+    s3 = get_session().client("s3")
+    bucket = settings.aws.s3_bucket
+    failed = False
+    for path, key in _backup_paths():
+        if path.exists():
+            print(f"kept local {path} (delete it first to restore from S3)")
+            continue
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            s3.download_file(bucket, key, str(path))
+            print(f"pulled s3://{bucket}/{key} -> {path}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"no backup at s3://{bucket}/{key}: {exc}", file=sys.stderr)
+            failed = failed or path.name == "ats_answers.yaml"
+    return 1 if failed else 0
+
 
 def push() -> int:
     """Upload local assets to S3. Fails loudly — a silent partial push would
@@ -82,6 +137,7 @@ def push() -> int:
         s3.upload_file(str(path), bucket, key)
         log.info("asset_pushed", path=str(path), key=key, bytes=path.stat().st_size)
         print(f"pushed {path.name} -> s3://{bucket}/{key}")
+    push_backups(s3)
     return 0
 
 
@@ -124,10 +180,17 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="src.cli.assets")
     parser.add_argument("direction", choices=("push", "pull"))
+    parser.add_argument("--backups", action="store_true",
+                        help="only the backup-only personal files (autofill answers)")
     parser.add_argument("--allow-keyword-gaps", action="store_true",
                         help="push even if a bullet proves a keyword with no phrase (#138)")
     args = parser.parse_args(argv)
 
+    if args.backups:
+        if args.direction == "pull":
+            return pull_backups()
+        push_backups()
+        return 0
     if args.direction == "push" and not args.allow_keyword_gaps and keyword_gaps():
         return 1
     return push() if args.direction == "push" else pull()
