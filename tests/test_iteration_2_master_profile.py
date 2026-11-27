@@ -347,3 +347,23 @@ def test_load_profile_skips_a_deactivated_bullet(tmp_path) -> None:
 def test_load_profile_missing_json_raises(tmp_path) -> None:
     with pytest.raises(mp.MasterProfileError, match="not found"):
         load_profile(FakeSession(), json_path=tmp_path / "nope.json")
+
+
+def test_rebuild_skips_a_fresh_copy_of_an_unchanged_profile(tmp_path) -> None:
+    """A runner downloads the profile anew every poll, so its file time always
+    differs. The sync (which reads every bullet's embedding back) must still
+    skip when the CONTENT is the same, and run when it changed."""
+    import os
+    import yaml as _yaml
+
+    yaml_path = tmp_path / "master_profile.yaml"
+    yaml_path.write_text(_yaml.safe_dump(_valid_profile()))
+    session = FakeSession()
+    rebuild(session, path=yaml_path, embed_fn=_embed)
+    later = os.path.getmtime(yaml_path) + 3600
+    os.utime(yaml_path, (later, later))  # a fresh download: new mtime, same bytes
+    assert rebuild(session, path=yaml_path, embed_fn=_embed).skipped is True
+    edited = _valid_profile()
+    edited["work_experience"][0]["role_blocks"][0]["bullets"][1]["text"] += " Edited."
+    yaml_path.write_text(_yaml.safe_dump(edited))
+    assert rebuild(session, path=yaml_path, embed_fn=_embed).skipped is False

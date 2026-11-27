@@ -407,7 +407,9 @@ def test_the_lane_counts_the_characters_it_reads():
     assert lane.bytes == 2 and lane.requests == 2
 
 
-def test_forgetting_a_posting_clears_its_boards_etag():
+def test_forgetting_a_posting_clears_its_boards_etag_and_fingerprint():
+    """The fingerprint saved this run includes the forgotten posting: left in
+    place, the next poll would see an unchanged list and never insert it."""
     class _Session:
         def __init__(self):
             self.statements = []
@@ -420,7 +422,7 @@ def test_forgetting_a_posting_clears_its_boards_etag():
     delete, update = session.statements
     assert delete.table.name == "ats_postings"
     assert update.table.name == "ats_boards"
-    assert update.compile().params == {"etag": None, "next_poll_at": None, "ats_1": "lever", "board_id_1": "acme"}
+    assert update.compile().params == {"etag": None, "list_fp": None, "next_poll_at": None, "ats_1": "lever", "board_id_1": "acme"}
 
 
 # --- pending / done status (stranded postings) --------------------------------------
@@ -537,3 +539,73 @@ def test_upsert_scraped_inserts_a_repeated_job_id_once():
     a2 = AllJobs(job_id="ats-x-1", company="A", role="R", site="ats:x", location="new")
     out = _upsert_scraped(session, [a1, a2])
     assert session.added == [a1] and out == [a1, a1] and a1.location == "new"
+
+
+# --- unchanged lists skip the full load (0019) -----------------------------------------
+
+def _unchanged_ledger(board, postings, pending=(), summary=(None, None)):
+    """A ledger as ``Ledger.load`` builds it for a board whose list is unchanged:
+    only its PENDING rows are known, plus the tier summary."""
+    key = (board.ats, board.board_id)
+    known = {pid: poller.Known(NOW - timedelta(hours=2), None, None, None, poller.PENDING) for pid in pending}
+    ledger = poller.Ledger(NOW, {key: known})
+    ledger.unchanged, ledger.summary = {key}, {key: summary}
+    return ledger
+
+
+def test_the_fingerprint_is_the_lists_posting_ids_and_only_for_a_full_list():
+    b = _board()
+    full = poller.BoardResult(b, [_posting("2"), _posting("1"), _posting("1")])
+    assert full.fp == poller.BoardResult(b, [_posting("1"), _posting("2")]).fp, "order and repeats do not matter"
+    assert full.fp != poller.BoardResult(b, [_posting("1")]).fp
+    assert poller.BoardResult(b, [_posting("1")], complete=False).fp is None
+    assert poller.BoardResult(b, [], error="HTTP 503").fp is None
+
+
+def test_a_list_matching_the_boards_fingerprint_is_unchanged():
+    import dataclasses
+
+    b0 = _board()
+    b = dataclasses.replace(b0, list_fp=poller.BoardResult(b0, [_posting("1"), _posting("2")]).fp)
+    assert poller.BoardResult(b, [_posting("2"), _posting("1")]).unchanged
+    assert not poller.BoardResult(b, [_posting("1"), _posting("3")]).unchanged
+    assert poller.BoardResult(b, [], not_modified=True).unchanged
+
+
+def test_an_unchanged_list_inserts_and_closes_nothing_and_marks_every_posting_seen():
+    board = _board(polled_at=NOW - timedelta(hours=1))
+    ledger = _unchanged_ledger(board, ["a", "b"])
+    stats = poller.PollStats()
+    sent = ledger.record(poller.BoardResult(board, [_posting("a"), _posting("b"), _posting("x", location="Berlin")]),
+                         _classify, baseline_hours=24, stats=stats)
+    assert sent == [] and ledger.inserts == [] and ledger.closed == []
+    assert sorted(ledger.seen) == [("lever", "acme", "a"), ("lever", "acme", "b")], "dropped postings are not stamped"
+
+
+def test_an_unchanged_list_still_resends_a_posting_left_pending():
+    board = _board(polled_at=NOW - timedelta(hours=1))
+    ledger = _unchanged_ledger(board, ["a", "b"], pending=["b"])
+    stats = poller.PollStats()
+    sent = ledger.record(poller.BoardResult(board, [_posting("a"), _posting("b")]), _classify,
+                         baseline_hours=24, stats=stats)
+    assert [p.posting_id for p in sent] == ["b"] and stats.requeued == 1
+
+
+def test_an_unchanged_boards_tier_comes_from_its_summary():
+    board = _board(polled_at=NOW - timedelta(hours=1))
+    hot = _unchanged_ledger(board, [], summary=(NOW - timedelta(days=2), None))
+    assert hot.tier(poller.BoardResult(board, [_posting("a")])) == "hot"
+    quiet = _unchanged_ledger(board, [], summary=(NOW - timedelta(days=30), NOW - timedelta(days=30)))
+    assert quiet.tier(poller.BoardResult(board, [], not_modified=True)) == "quiet"
+    active = _unchanged_ledger(board, [], summary=(None, NOW - timedelta(days=1)))
+    assert active.tier(poller.BoardResult(board, [], not_modified=True)) == "active"
+
+
+def test_schedule_saves_the_fingerprint_of_a_full_list_and_keeps_the_old_one_otherwise():
+    board = _board(polled_at=NOW - timedelta(hours=1))
+    ledger = poller.Ledger(NOW, {(board.ats, board.board_id): {}})
+    full = poller.BoardResult(board, [_posting("a")])
+    ledger.schedule(full)
+    ledger.schedule(poller.BoardResult(board, [], error="HTTP 503"))
+    ledger.schedule(poller.BoardResult(board, [_posting("a")], complete=False))
+    assert [r["fp"] for r in ledger.boards] == [full.fp, None, None], "None keeps the stored one (COALESCE)"

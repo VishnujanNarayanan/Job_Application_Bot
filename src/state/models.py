@@ -487,6 +487,9 @@ class AtsBoard(Base):
     next_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # The list's last ETag, sent as If-None-Match on the next poll (#112).
     etag: Mapped[str | None] = mapped_column(Text)
+    # Fingerprint of the posting ids in the last complete list: an unchanged
+    # list skips loading the board's postings (0019).
+    list_fp: Mapped[str | None] = mapped_column(Text)
     first_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
