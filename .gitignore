@@ -124,3 +124,5 @@ data/ats_questions_seen.jsonl
 data/ats_answers.yaml.tmp
 data/ats_learned.yaml
 data/ats_learned.yaml.tmp
+data/ats_sites.json
+data/ats_sites.json.tmp

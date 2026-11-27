@@ -53,6 +53,18 @@ and this project loosely tracks iterations rather than semver.
   - The tailored PDF is copied to Downloads, replacing the last one
     (`autofill.save_resume_to`).
   - A "send this form for debugging" menu item saves the form's shape locally.
+- **Autofill on any site and any design (#154, #215).**
+  - Runs on every site; acts on tagged pages, known ATSes, and pages that look
+    like job applications.
+  - Finds fields inside web components, custom ARIA radios, checkboxes and
+    switches, rich-text editors, read-only pickers, and selects hidden behind
+    Select2-style widgets.
+  - Labels with no link are paired by on-screen position.
+  - Every fill is verified, and retyped key by key if it didn't stick.
+  - Unrecognised fields are outlined grey and reported. The site's own
+    "required" messages after Next/Submit are read. A field you fill yourself
+    is learned per site (`data/ats_sites.json`).
+  - A Telegram job is remembered across frames and tabs for 30 minutes.
 
 ## [v3.3.2] — 2026-11-07
 

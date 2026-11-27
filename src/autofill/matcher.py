@@ -659,8 +659,8 @@ def _shape(decision: dict[str, Any], f: dict[str, Any], value: Any, action: str,
         return True
     if ftype == "checkbox":
         # A lone checkbox (consent, "I agree") is ticked only on an explicit yes.
-        v = ans.text
-        yes = v is True or norm(str(v)) in ("yes", "true", "i agree", "agree")
+        # The answer or any of its choices: "Yes, I'm open to relocating." chooses "Yes".
+        yes = any(x is True or norm(str(x)) in ("yes", "true", "i agree", "agree") for x in [ans.text, *ans.choose])
         decision.update(action=action, value=bool(yes))
         return True
     if ftype == "file":
