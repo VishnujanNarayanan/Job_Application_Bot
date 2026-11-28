@@ -65,6 +65,16 @@ and this project loosely tracks iterations rather than semver.
     "required" messages after Next/Submit are read. A field you fill yourself
     is learned per site (`data/ats_sites.json`).
   - A Telegram job is remembered across frames and tabs for 30 minutes.
+- **LinkedIn Easy Apply bot (`src/autoapply`, docs/autoapply.md).**
+  - Runs every 30 min, Mon–Fri 09:00–18:00 IST, while the laptop is on.
+  - Each run: the pipeline for "data engineer", then one LinkedIn match with
+    an Easy Apply button gets applied to with its tailored PDF.
+  - Drives the real Microsoft Edge (its own profile, logged in once) over the
+    DevTools port, at a person's pace, capped at 20 a day.
+  - The form is filled by the userscript in its new auto-apply mode, and the
+    tailored PDF is confirmed as the selected resume.
+  - Unanswered questions skip the job; dry runs stop before Submit.
+  - Applied jobs are marked applied and reported on Telegram.
 - **Form zoo (#215).** `tests/e2e`: made-up copies of every form design met
   on live sites (Workday, SuccessFactors, IBM, résumé pickers, chips, board
   handover, slow lists, awkward designs), filled by the real userscript in

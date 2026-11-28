@@ -168,7 +168,9 @@ fields:
   years_experience:
     asks: ["years of experience", "total experience", "total years of experience", "years experience",
            "how many years of experience", "work experience years", "overall experience", "relevant experience",
-           "experience in years", "years of relevant experience", "total work experience"]
+           "experience in years", "years of relevant experience", "total work experience",
+           "years of work experience", "how many years of work experience", "years of professional experience",
+           "years of hands on experience", "years of industry experience", "years of experience do you have"]
     not: ["describe", "tell us", "explain", "managing", "management", "leading", "people"]
   degree:
     asks: ["degree", "highest degree", "highest qualification", "qualification", "highest level of education",

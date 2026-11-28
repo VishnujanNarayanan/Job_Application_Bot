@@ -1014,6 +1014,33 @@ autofill:
   save_resume_to: auto
 
 # ---------------------------------------------------------------------------
+# LinkedIn Easy Apply bot (src/autoapply). Runs only while the laptop is on:
+# each run (every `every_minutes` inside `hours` on `days`, IST) runs the
+# pipeline for `search_term`, then applies to at most `per_run` new LinkedIn
+# matches that have an Easy Apply button, with that match's tailored PDF.
+# It drives the real Microsoft Edge on Windows (its own "Job Bot" profile, logged
+# into LinkedIn once by hand) over the DevTools port, so LinkedIn sees an
+# ordinary Edge on this laptop. A question with no stored answer skips the job.
+# LinkedIn's terms forbid automated applying: keep the caps low.
+# ---------------------------------------------------------------------------
+autoapply:
+  enabled: false            # true once a few dry runs look right
+  dry_run: true             # fill everything, stop before Submit, screenshot it
+  search_term: "data engineer"
+  title_must_contain: ["data engineer"]
+  run_pipeline_first: true  # search + score + tailor before applying
+  per_run: 1
+  max_per_day: 20
+  every_minutes: 30
+  days: [mon, tue, wed, thu, fri]
+  hours: [9, 18]            # from 09:00 to before 18:00
+  timezone: Asia/Kolkata
+  max_match_age_hours: 48   # only matches built this recently
+  edge_exe: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
+  edge_profile: "C:\\Users\\ASUS\\AppData\\Local\\JobBot\\EdgeProfile"
+  cdp_port: 9223
+
+# ---------------------------------------------------------------------------
 # Resume endpoint + dashboard — FastAPI (Layer 6)
 #
 # base_url is the machine's Tailscale name, reachable only from the

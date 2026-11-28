@@ -126,3 +126,5 @@ data/ats_learned.yaml
 data/ats_learned.yaml.tmp
 data/ats_sites.json
 data/ats_sites.json.tmp
+# Easy Apply bot: screenshots of filled forms (personal data) and its run state.
+data/autoapply/
