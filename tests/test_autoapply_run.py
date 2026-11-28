@@ -61,3 +61,8 @@ def test_daily_cap(state_file, monkeypatch) -> None:
     day = run.now_local().strftime("%Y-%m-%d")
     run.save_state({"tried": {}, "days": {day: {"applied": 20}}})
     assert run.run_once()["why"] == "daily cap reached"
+
+
+def test_linkedin_id() -> None:
+    assert run.linkedin_id("linkedin-li-4495075579", "") == "4495075579"
+    assert run.linkedin_id("x", "https://www.linkedin.com/jobs/view/4493891384/") == "4493891384"

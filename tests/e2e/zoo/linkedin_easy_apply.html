@@ -1,71 +1,73 @@
 <!doctype html><html><head><title>Data Engineer | Acme | LinkedIn</title></head><body>
-<!-- LinkedIn-shaped job page with an Easy Apply dialog: contact step, a resume step where an
-     OLD resume is pre-selected, a questions step, review, submit, confirmation. Made-up data. -->
+<!-- LinkedIn-shaped (2026): obfuscated classes; the job's own button has aria-label "Easy Apply to
+     this job" while similar-job cards are links that also say "Easy Apply"; the apply flow is a
+     native <dialog>; contact info is pre-filled; the resume step lists old uploads with one
+     PRE-SELECTED and an "Upload resume" button that opens the system file picker; the questions
+     step comes with answers LinkedIn remembered (Python = 5); then review and submit. Made-up data. -->
 <main><h1>Data Engineer</h1><div>Acme · Pune, India</div>
-<button class="jobs-apply-button" aria-label="Easy Apply to Data Engineer at Acme">Easy Apply</button></main>
+<button class="ekfj5d ekfj5c" type="button" aria-label="Easy Apply to this job"><span>Easy Apply</span></button>
+<section><h2>Similar jobs</h2><a class="ekfhdb" href="/jobs/view/999/">Azure Data Engineer · Easy Apply</a></section></main>
+<dialog class="ekfkec"><button aria-label="Dismiss" class="x">×</button><div class="body"></div>
+  <footer><button class="back" type="button" style="display:none">Back</button><button class="primary" type="button"></button></footer></dialog>
 <script>
-const today = new Date().toLocaleDateString('en-US');
+const today = new Date(); const fmt = (d) => `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+const dlg = document.querySelector('dialog');
 const steps = [
   `<h3>Contact info</h3>
-   <div class="jobs-easy-apply-form-element"><label for="fn">First name</label><input id="fn" value="Test"></div>
-   <div class="jobs-easy-apply-form-element"><label for="cc">Phone country code</label>
-     <select id="cc"><option>Select an option</option><option selected>India (+91)</option><option>United States (+1)</option></select></div>
-   <div class="jobs-easy-apply-form-element"><label for="ph">Mobile phone number</label><input id="ph"></div>`,
-  `<h3>Resume</h3>
+   <div><label for="em">Email address*</label><select id="em" required><option>test@example.com</option></select></div>
+   <div><label for="cc">Phone country code*</label><select id="cc"><option>Select an option</option><option selected>India (+91)</option><option>United States (+1)</option></select></div>
+   <div><label for="ph">Mobile phone number*</label><input id="ph" value="9000000000" required></div>`,
+  `<h3>Resume*</h3><p>Select or upload a resume in DOC, DOCX, or PDF format that is less than 2MB</p>
    <div class="cards">
-     <div class="jobs-document-upload-redesign-card__container jobs-document-upload-redesign-card__container--selected" id="old">
-       <input type="radio" name="doc" checked> Old_Resume.pdf Last used on 10/1/2026</div>
+     <div class="card"><span>PDF</span> Test_Person_Resume.pdf 11/9/2026 <input type="radio" name="doc" checked></div>
+     <div class="card"><span>PDF</span> Test_Person_Resume.pdf 10/24/2026 <input type="radio" name="doc"></div>
+     <div class="card"><span>PDF</span> resume new 6.pdf 7/4/2025 <input type="radio" name="doc"></div>
    </div>
-   <label class="jobs-document-upload__upload-button">Upload resume
-     <input type="file" id="up" accept=".pdf" style="position:absolute;width:1px;height:1px;opacity:0"></label>`,
+   <button type="button" class="upload">Upload resume</button>`,
   `<h3>Additional Questions</h3>
-   <div class="jobs-easy-apply-form-element"><label for="yx">How many years of work experience do you have with Python?</label><input id="yx" required></div>
-   <fieldset><legend>Will you now or in the future require sponsorship to work in India? *</legend>
+   <div><label for="az">How many years of work experience do you have with Microsoft Azure?*</label><input id="az" required></div>
+   <div><label for="py">How many years of work experience do you have with Python (Programming Language)?*</label><input id="py" value="5" required></div>
+   <fieldset><legend>Will you now or in the future require sponsorship to work in India?*</legend>
      <label><input type="radio" name="sp" value="Yes" required>Yes</label><label><input type="radio" name="sp" value="No">No</label></fieldset>`,
   `<h3>Review your application</h3><p>Check your details.</p>`,
 ];
 let at = 0;
-function render(modal) {
-  const body = modal.querySelector('.body');
+function render() {
+  const body = dlg.querySelector('.body');
   body.innerHTML = steps[at];
-  const btn = modal.querySelector('.primary');
-  btn.textContent = at === 0 || at === 1 || at === 2 ? 'Next' : 'Submit application';
-  btn.setAttribute('aria-label', at < 3 ? (at === 2 ? 'Review your application' : 'Continue to next step') : 'Submit application');
-  const up = body.querySelector('#up');
-  if (up) up.addEventListener('change', () => {
-    const cards = body.querySelector('.cards');
-    cards.querySelectorAll('[class*=card__container]').forEach((c) => { c.classList.remove('jobs-document-upload-redesign-card__container--selected'); c.querySelector('input').checked = false; });
-    const c = document.createElement('div');
-    c.className = 'jobs-document-upload-redesign-card__container jobs-document-upload-redesign-card__container--selected';
-    c.innerHTML = `<input type="radio" name="doc" checked> ${up.files[0].name} Uploaded on ${today}`;
-    cards.prepend(c);
+  dlg.querySelector('.primary').textContent = at < 2 ? 'Next' : at === 2 ? 'Review' : 'Submit application';
+  const up = body.querySelector('.upload');
+  if (up) up.addEventListener('click', () => {
+    const input = document.createElement('input'); input.type = 'file'; input.accept = '.pdf,.doc,.docx';
+    input.addEventListener('change', () => {
+      const cards = body.querySelector('.cards');
+      cards.querySelectorAll('input[type=radio]').forEach((r) => { r.checked = false; });
+      const c = document.createElement('div'); c.className = 'card';
+      c.innerHTML = `<span>PDF</span> ${input.files[0].name} ${fmt(today)} <input type="radio" name="doc" checked>`;
+      cards.prepend(c);
+    });
+    input.click();
   });
 }
-document.querySelector('.jobs-apply-button').addEventListener('click', () => {
-  const modal = document.createElement('div');
-  modal.className = 'jobs-easy-apply-modal'; modal.setAttribute('role', 'dialog');
-  modal.innerHTML = '<button aria-label="Dismiss" class="x">×</button><div class="body"></div><button class="primary"></button>';
-  document.body.appendChild(modal);
-  modal.querySelector('.x').addEventListener('click', () => {
-    const d = document.createElement('div'); d.setAttribute('role', 'alertdialog');
-    d.innerHTML = 'Discard application? <button data-control-name="discard_application_confirm_btn">Discard</button>';
-    document.body.appendChild(d);
-    d.querySelector('button').addEventListener('click', () => { modal.remove(); d.remove(); window.__discarded = true; });
-  });
-  modal.querySelector('.primary').addEventListener('click', () => {
-    const body = modal.querySelector('.body');
-    const missing = [...body.querySelectorAll('input[required]')].filter((i) => i.type === 'radio'
-      ? !body.querySelector(`input[name=${i.name}]:checked`) : !i.value);
-    if (missing.length) { body.insertAdjacentHTML('beforeend', '<div class="artdeco-inline-feedback--error">Please enter a valid answer</div>'); return; }
-    if (at === 3) { window.__submitted = { phone: window.__phone, years: window.__years, sponsor: window.__sponsor,
-                                           resume: document.querySelector('#chosen') ? 1 : 0 };
-                    modal.querySelector('.body').innerHTML = '<h3>Your application was sent to Acme!</h3>';
-                    modal.querySelector('.primary').textContent = 'Done'; modal.querySelector('.primary').setAttribute('aria-label', 'Done'); at = 4; return; }
-    if (at === 0) window.__phone = body.querySelector('#ph').value;
-    if (at === 1) { const sel = body.querySelector('[class*=card__container--selected]'); window.__resume = sel ? sel.innerText.trim() : ''; }
-    if (at === 2) { window.__years = body.querySelector('#yx').value; const s = body.querySelector('input[name=sp]:checked'); window.__sponsor = s ? s.value : ''; }
-    at += 1; render(modal);
-  });
-  render(modal);
+document.querySelector('button[aria-label="Easy Apply to this job"]').addEventListener('click', () => { at = 0; dlg.showModal(); render(); });
+dlg.querySelector('.x').addEventListener('click', () => {
+  const d = document.createElement('div'); d.setAttribute('role', 'alertdialog');
+  d.innerHTML = 'Discard application? <button type="button">Discard</button>';
+  dlg.appendChild(d);
+  d.querySelector('button').addEventListener('click', () => { dlg.close(); d.remove(); window.__discarded = true; });
+});
+dlg.querySelector('.primary').addEventListener('click', () => {
+  const body = dlg.querySelector('.body');
+  const missing = [...body.querySelectorAll('input[required]')].filter((i) => i.type === 'radio'
+    ? !body.querySelector(`input[name=${i.name}]:checked`) : !i.value);
+  if (missing.length) { body.insertAdjacentHTML('beforeend', '<div class="artdeco-inline-feedback--error">Please enter a valid answer</div>'); return; }
+  if (at === 0) window.__phone = body.querySelector('#ph').value;
+  if (at === 1) { const r = body.querySelector('input[name=doc]:checked'); window.__resume = r ? r.parentElement.innerText.trim() : ''; }
+  if (at === 2) { window.__azure = body.querySelector('#az').value; window.__python = body.querySelector('#py').value;
+                  const s = body.querySelector('input[name=sp]:checked'); window.__sponsor = s ? s.value : ''; }
+  if (at === 3) { window.__submitted = true; body.innerHTML = '<h3>Your application was sent to Acme!</h3>';
+                  dlg.querySelector('.primary').textContent = 'Done'; at = 4; return; }
+  if (at === 4) { dlg.close(); return; }
+  at += 1; render();
 });
 </script></body></html>
