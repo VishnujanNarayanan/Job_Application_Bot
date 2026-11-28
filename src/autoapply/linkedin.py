@@ -119,6 +119,24 @@ def _easy_button(page):
     return None
 
 
+def _through_interstitials(page) -> None:
+    """LinkedIn sometimes shows a "Job search safety reminder" before the form:
+    its "Continue applying" button opens the application."""
+    for _ in range(3):
+        cont = None
+        for b in page.query_selector_all("dialog[open] button, [role=dialog] button"):
+            try:
+                if b.is_visible() and re.fullmatch(r"\s*continue( applying)?\s*", b.inner_text() or "", re.I):
+                    cont = b
+                    break
+            except Exception:  # noqa: BLE001
+                continue
+        if cont is None:
+            return
+        cont.click()
+        _pause(1.0, 2.0)
+
+
 def _modal(page):
     for sel in MODAL.split(", "):
         el = page.query_selector(sel)
@@ -162,8 +180,13 @@ def _problems(modal) -> list[str]:
         const out = [];
         for (const e of m.querySelectorAll('.jab-missing')) out.push((e.title || '').replace(/^Job Bot:\\s*/, '') + ' | ' +
             ((e.closest('[data-test-form-element], .jobs-easy-apply-form-element, fieldset, div') || e).innerText || '').trim().slice(0, 140));
-        for (const e of m.querySelectorAll('.artdeco-inline-feedback--error, [role=alert]'))
-            if ((e.offsetWidth || e.offsetHeight) && e.innerText.trim()) out.push('LinkedIn: ' + e.innerText.trim().slice(0, 140));
+        // LinkedIn's errors -- not its confirmations ("Resume uploaded successfully" uses the same alert box).
+        for (const e of m.querySelectorAll('.artdeco-inline-feedback--error, [role=alert], [aria-live=assertive]')) {
+            const t = (e.innerText || '').trim();
+            if (!(e.offsetWidth || e.offsetHeight) || !t || /success|uploaded|saved|added/i.test(t)) continue;
+            if (/please|required|invalid|enter a|select a|must|error|can.?t be|cannot be|too (long|short)|larger than|smaller than|between/i.test(t))
+                out.push('LinkedIn: ' + t.slice(0, 140));
+        }
         return out; }""")
 
 
@@ -289,6 +312,8 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
         return Outcome("not_easy_apply", "no Easy Apply button")
     button.click()
     page.wait_for_selector(MODAL, timeout=15000)
+    _pause(0.8, 1.6)
+    _through_interstitials(page)
     _pause()
     _inject(page, job_id)
     filename = settings.resume_filename

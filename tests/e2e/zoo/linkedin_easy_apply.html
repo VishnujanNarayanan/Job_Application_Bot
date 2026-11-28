@@ -45,11 +45,25 @@ function render() {
       const c = document.createElement('div'); c.className = 'card';
       c.innerHTML = `<span>PDF</span> ${input.files[0].name} ${fmt(today)} <input type="radio" name="doc" checked>`;
       cards.prepend(c);
+      const toast = document.createElement('div'); toast.setAttribute('role', 'alert');
+      toast.textContent = 'Resume uploaded successfully'; dlg.querySelector('.body').appendChild(toast);
     });
     input.click();
   });
 }
-document.querySelector('button[aria-label="Easy Apply to this job"]').addEventListener('click', () => { at = 0; dlg.showModal(); render(); });
+const reminder = new URLSearchParams(location.search).get('reminder') === '1';
+document.querySelector('button[aria-label="Easy Apply to this job"]').addEventListener('click', () => {
+  at = 0;
+  dlg.showModal();
+  if (reminder) {
+    const body = dlg.querySelector('.body');
+    body.innerHTML = '<h3>Job search safety reminder</h3><p>Research the company.</p><button type="button" class="cont">Continue applying</button>';
+    dlg.querySelector('.primary').textContent = 'Review job post';
+    body.querySelector('.cont').addEventListener('click', () => render());
+    return;
+  }
+  render();
+});
 dlg.querySelector('.x').addEventListener('click', () => {
   const d = document.createElement('div'); d.setAttribute('role', 'alertdialog');
   d.innerHTML = 'Discard application? <button type="button">Discard</button>';
