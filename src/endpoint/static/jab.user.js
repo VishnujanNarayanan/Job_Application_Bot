@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.5.1
+// @version      1.6.0
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -266,8 +266,16 @@
   const promptBox = (el) => el.closest('[data-automation-id="multiselectInputContainer"]');
   const PLACEHOLDER = /^\s*(?:(?:select( one| an option)?|choose( one| an option)?|please (select|choose)|none selected|no selection|search)\b|-+\s*(select|choose)?\s*-*\s*$|--)/i;
 
+  // What a button-like widget shows, minus its own label ("Country Select an option" -> "Select an option").
+  function shownText(el) {
+    let t = clean(el.textContent);
+    const lb = el.getAttribute('aria-labelledby') ? byIds(el.getAttribute('aria-labelledby'), rootOf(el)) : '';
+    if (lb && t.startsWith(lb)) t = clean(t.slice(lb.length));
+    return t;
+  }
+
   function hasValue(el) {
-    if (el.tagName === 'BUTTON' || !NATIVE.test(el.tagName)) { const t = clean(el.textContent); return !!t && !PLACEHOLDER.test(t); }
+    if (el.tagName === 'BUTTON' || !NATIVE.test(el.tagName)) { const t = shownText(el); return !!t && !PLACEHOLDER.test(t); }
     const box = promptBox(el);
     if (box) return !!box.querySelector('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"] li');
     if (el.type === 'file') return el.files && el.files.length > 0;
@@ -331,14 +339,31 @@
 
   // "Work Experience 1", "Education 2": the repeated section a field sits in.
   const SECTION = /^(work experience|experience|employment|education)\s*\d+/i;
+  // A heading without a number ("Education", "Work experience"): its blocks are
+  // numbered in the order they appear (an "Add another" repeats the block).
+  const SECTION_BARE = /^(work experience|professional experience|experience|employment( history)?|work history|education|academic( details| qualifications?)?|qualifications?)\b/i;
   function groupOf(el) {
     let node = el.parentElement;
     for (let depth = 0; node && depth < 14; depth++, node = node.parentElement) {
       const lb = node.getAttribute && node.getAttribute('aria-labelledby');
       const t = (lb && byIds(lb)) || '';
       if (SECTION.test(t)) return t.match(SECTION)[0];
-      const h = node.querySelector && node.querySelector(':scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > div > h3, :scope > div > h4, :scope > [role="heading"]');
-      if (h && SECTION.test(clean(h.textContent))) return clean(h.textContent).match(SECTION)[0];
+      const h = node.querySelector && node.querySelector(':scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > div > h3, :scope > div > h4, :scope > [role="heading"], :scope > legend');
+      const ht = h ? clean(h.textContent) : '';
+      if (SECTION.test(ht)) return ht.match(SECTION)[0];
+      if (h && SECTION_BARE.test(ht) && ht.length < 60) {
+        const kind = /educat|academ|qualif/i.test(ht) ? 'Education' : 'Work Experience';
+        // The field's own block under the heading. Entries (blocks with several
+        // fields; "Add another" repeats them) are numbered in order; a lone
+        // question above them ("Do you have past experience?") belongs to entry 1.
+        let block = el;
+        while (block.parentElement && block.parentElement !== node) block = block.parentElement;
+        const isEntry = (b) => b.querySelectorAll
+          && b.querySelectorAll('input:not([type=hidden]), select, textarea, [role="combobox"]').length >= 2;
+        let index = 1;
+        if (isEntry(block)) for (let sib = block.previousElementSibling; sib; sib = sib.previousElementSibling) if (isEntry(sib)) index++;
+        return kind + ' ' + index;
+      }
     }
     return '';
   }
@@ -353,7 +378,8 @@
   }
 
   const inPopup = (el) => !!el.closest('[role="listbox"], [data-automation-id="activeListContainer"], '
-    + '[data-automation-widget="wd-popup"], [data-automation-id="promptOption"]');
+    + '[data-automation-widget="wd-popup"], [data-automation-id="promptOption"], .select2-dropdown, .select2-search, '
+    + '.chosen-drop, .choices__list--dropdown, [class*="dropdown-menu" i], [class*="menu-list" i]');
 
   function optionLabel(el) {
     return clean(labelOf(el) || (el.parentElement && textOf(el.parentElement)) || el.value);
@@ -374,6 +400,7 @@
       const isFile = type === 'file';
       const isTick = el.tagName === 'INPUT' && (type === 'radio' || type === 'checkbox');
       const widget = el.tagName === 'SELECT' && !visible(el) ? backingWidget(el) : null;
+      if (widget && (widget.matches('[role="combobox"]') || widget.querySelector('[role="combobox"]'))) { handled.add(el); continue; }
       // Styled file inputs and ticks hide the real element: judge by its label.
       const shown = visible(el) || widget || ((isFile || isTick) && (
         (el.labels && [...el.labels].some(visible)) || visible(el.parentElement)))
@@ -664,14 +691,28 @@
     const id = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
     const own = id && document.getElementById(id);
     const scope = own && visible(own) ? own : document;
-    return [...scope.querySelectorAll('[role="option"]')].filter(visible);
+    return [...scope.querySelectorAll('[role="option"], [role="treeitem"], .select2-results__option, .chosen-results li, .choices__item--choice')]
+      .filter((o) => visible(o) && !/loading|searching|no results/i.test(o.textContent));
+  }
+
+  // Lists that load from the server show "Loading…" first: wait for them (up to ~8 s).
+  const LOADING = /loading|searching|please wait|fetching/i;
+  function listLoading(el) {
+    const id = el.getAttribute && (el.getAttribute('aria-controls') || el.getAttribute('aria-owns'));
+    const own = id && document.getElementById(id);
+    if (own && own.getAttribute('aria-busy') === 'true') return true;
+    return deepAll('[role="listbox"], [role="tree"], .select2-results, .select2-results__option, [class*="loading" i], [aria-busy="true"]')
+      .some((x) => visible(x) && !x.closest('#' + PANEL_ID) && (x.getAttribute('aria-busy') === 'true'
+        || (LOADING.test(x.textContent || '') && (x.textContent || '').length < 60) || /loading|spinner/i.test(String(x.className))));
   }
 
   async function waitOption(el, wants, tries) {
-    for (let i = 0; i < tries; i++) {
+    let extra = 0;
+    for (let i = 0; i < tries + extra; i++) {
       await sleep(250);
       const hit = bestOption(comboOptions(el), wants);
       if (hit) return hit;
+      if (listLoading(el) && extra < 30) extra++;  // still loading: keep waiting
     }
     return null;
   }
@@ -683,6 +724,18 @@
     // 1. Open it: a click shows the whole list on most pick-lists (SuccessFactors, Workday).
     pressOn(input || el);
     let hit = await waitOption(input || el, wants, 4);
+    // 2a. A search box the widget opened (Select2, Chosen): search there.
+    if (!hit) {
+      const search = [document.activeElement, ...deepAll('.select2-search__field, .chosen-search input, .choices__input--cloned, input[type="search"]')]
+        .find((x) => x && x !== input && x.tagName === 'INPUT' && visible(x) && !x.closest('#' + PANEL_ID));
+      if (search) {
+        search.focus();
+        setNative(search, text);
+        search.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+        search.dispatchEvent(new KeyboardEvent('keyup', { key: text.slice(-1), bubbles: true }));
+        hit = await waitOption(input || el, wants, 14);  // results may come from the server
+      }
+    }
     // 2. Type to filter (long lists, react-select).
     if (!hit && input) {
       input.focus();
@@ -824,10 +877,12 @@
     for (const el of deepAll('button, [role="button"], a')) {
       if (!visible(el) || handled.has(el) || el.closest('#' + PANEL_ID) || el.closest(OUTSIDE_FORM)) continue;
       const own = clean(labelOf(el) + ' ' + textOf(el) + ' ' + (el.className || ''));
-      if (!/upload|attach|add|browse|choose|select|plus/i.test(own)) continue;
+      if (!/upload|attach|browse|choose file|select file|from (device|computer)|my (device|computer)|plus|addattach/i.test(own)) continue;
+      // Never: skip the resume, paste text, cloud pickers, or a section's own Add/Remove.
+      if (/without|later|skip|paste|linkedin|dropbox|google|drive|onedrive|indeed|add another|remove|delete|cancel/i.test(own)) continue;
       // The field around it must be about the resume, not a cover letter or photo.
       let box = el.parentElement;
-      for (let d = 0; box && d < 6 && !RESUME_WORDS.test(textOf(box).slice(0, 200)); d++) box = box.parentElement;
+      for (let d = 0; box && d < 4 && !RESUME_WORDS.test(textOf(box).slice(0, 200)); d++) box = box.parentElement;
       if (!box || seenBoxes.has(box)) continue;
       const about = textOf(box).slice(0, 200);
       if (/cover letter|photo|picture|transcript|certificate/i.test(about) && !RESUME_WORDS.test(own)) continue;
@@ -891,7 +946,7 @@
         return items.length > 1 ? items : (items[0] || '');
       }
       case 'combobox': {
-        if (el.tagName === 'BUTTON' || !NATIVE.test(el.tagName)) { const t = clean(el.textContent); return PLACEHOLDER.test(t) ? '' : t; }
+        if (el.tagName === 'BUTTON' || !NATIVE.test(el.tagName)) { const t = shownText(el); return PLACEHOLDER.test(t) ? '' : t; }
         const box = el.closest('[class*="control" i], [class*="container" i]');
         const one = box && box.querySelector('[class*="single-value" i], [class*="singleValue" i]');
         if (one) return clean(one.textContent);

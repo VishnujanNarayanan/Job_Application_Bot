@@ -226,3 +226,48 @@ def test_userscript_never_passes_window_to_event_constructors() -> None:
     page's: `new MouseEvent(t, {view: window})` throws there, and every click fails."""
     js = (Path(__file__).resolve().parents[1] / "src" / "endpoint" / "static" / "jab.user.js").read_text()
     assert "view: window" not in js and "view:window" not in js
+
+
+def test_date_pickers_get_whole_dates_and_experience_questions(facts) -> None:
+    d = _one(facts, "Start date", "date", group="Education 1")
+    assert d["value"] == "2021-09-01"
+    assert _one(facts, "End date", "date", group="Education 1")["value"] == "2025-05-31"
+    assert _one(facts, "Start date", "date", group="Work Experience 1")["value"] == "2025-06-01"
+    assert _one(facts, "Is current position?", "combobox", group="Work Experience 1")["value"] == "Yes"
+    assert _one(facts, "Do you have past working experience?", "combobox")["value"] == "Yes"
+    # Outside a section, "Start date" is still when you can start.
+    assert _one(facts, "Start date", "date")["key"] == "start_date"
+
+
+def test_ibm_style_questions(tmp_path) -> None:
+    (tmp_path / "p.json").write_text(json.dumps(PROFILE))
+    (tmp_path / "a.yaml").write_text(
+        "answers:\n  date_of_birth: 2000-03-04\n  gender:\n    asks: [gender]\n    answer: Female\nunanswered:\n")
+    facts = load_facts(tmp_path / "p.json", tmp_path / "a.yaml", tmp_path / "none.yaml")
+    ctx = "Please indicate your date of birth. This data is collected for verification."
+    months = ["--", "January", "February", "March", "April"]
+    assert _one(facts, "Month", "select", context=ctx, options=months)["value"] == "March"
+    assert _one(facts, "Day", "select", context=ctx, options=["--", "3", "4", "5"])["value"] == "4"
+    assert _one(facts, "Year of Birth", "text")["value"] == "2000"
+    d = _one(facts, "Please state your gender (this question is voluntary, you can choose not to declare)", "radio",
+             options=["Female", "Male", "Do not wish to declare"])
+    assert d["value"] == "Female"
+    assert _one(facts, "Attended university or higher education degree program?", "radio",
+                options=["Yes", "No"])["value"] == "Yes"
+    hybrid = "This job role requires the below working arrangement: Hybrid Can you meet this requirement?"
+    assert _one(facts, "Can you meet this requirement?", "select", context=hybrid, options=["Yes", "No"])["value"] == "Yes"
+    other = "This job requires 8 years of experience. Can you meet this requirement?"
+    assert _one(facts, "Can you meet this requirement?", "select", context=other, options=["Yes", "No"])["action"] == "unknown"
+
+
+@pytest.mark.parametrize("options,cand,expected", [
+    (["I will require sponsorship", "I do not require sponsorship"], "No", "I do not require sponsorship"),
+    (["I am authorized to work in India", "I am not authorized to work in India"], "Yes", "I am authorized to work in India"),
+    (["Immediate", "Less than 1 month", "1-2 months", "More than 2 months"], "15 days", "Less than 1 month"),
+    (["Immediate", "Within 2 weeks", "Within 1 month"], "10 days", "Within 2 weeks"),
+    (["0-15 days", "16-30 days", "30+ days"], "15 days", "0-15 days"),
+    (["Immediate", "15 days or less", "30 days"], "15 days", "15 days or less"),
+])
+def test_same_answer_in_other_shapes(options, cand, expected) -> None:
+    from src.autofill.matcher import pick_option
+    assert pick_option(options, [cand]) == expected

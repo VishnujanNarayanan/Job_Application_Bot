@@ -166,6 +166,69 @@ def _numeric_option(options: list[str], value: float) -> str | None:
     return None
 
 
+_NEGATIVE = re.compile(r"\b(no|not|don t|dont|do not|does not|won t|will not|cannot|can t|never|without|none|"
+                       r"decline|neither|unable)\b")
+
+
+def _polarity_option(real: list[str], cand: str) -> str | None:
+    """Yes / No against two sentences that say opposite things ("I will require
+    sponsorship" / "I do not require sponsorship"): the one with the same polarity."""
+    if cand not in ("yes", "no") or len(real) != 2:
+        return None
+    negative = [bool(_NEGATIVE.search(norm(o))) for o in real]
+    if negative[0] == negative[1]:
+        return None
+    # Only two wordings of one statement, one negated ("Maybe later" / "Never" are not).
+    words = [set(_NEGATIVE.sub(" ", norm(o)).split()) - _STOP for o in real]
+    if not words[0] or not words[1] or len(words[0] & words[1]) / len(words[0] | words[1]) < 0.5:
+        return None
+    return real[negative.index(cand == "no")]
+
+
+_UNIT_DAYS = {"day": 1, "week": 7, "month": 30, "year": 365}
+_QTY = re.compile(r"(\d+(?:\.\d+)?)\s*(day|week|month|year)s?\b")
+
+
+def _as_days(text: str) -> float | None:
+    """"15 days" -> 15, "2 weeks" -> 14, "Immediate" -> 0; None without a unit."""
+    t = str(text).lower()
+    if re.search(r"\bimmediate(ly)?\b|\bright away\b|\bnone\b|\bno notice\b|\bserving\b", t) and not _QTY.search(t):
+        return 0.0
+    m = _QTY.search(t)
+    return float(m.group(1)) * _UNIT_DAYS[m.group(2)] if m else None
+
+
+def _duration_option(real: list[str], days: float) -> str | None:
+    """A duration against options in any unit: "15 days" picks "Less than 1 month"."""
+    for opt in real:
+        low = opt.lower()
+        unit = (_QTY.search(low) or re.search(r"(day|week|month|year)", low))
+        unit_days = _UNIT_DAYS[unit.group(2) if unit and unit.re is _QTY else unit.group(1)] if unit else None
+        if unit_days is None:
+            if re.search(r"\bimmediate", low) and days == 0:
+                return opt
+            continue
+        if m := _RANGE.search(low):
+            if float(m.group(1)) * unit_days <= days <= float(m.group(2)) * unit_days:
+                return opt
+        elif m := re.search(r"\b(?:within|up to|at most|max(?:imum)?)\s*(\d+(?:\.\d+)?)", low):
+            if days <= float(m.group(1)) * unit_days:
+                return opt
+        elif m := _UNDER.search(low):
+            if days < float(m.group(1)) * unit_days or (days == 0 and "immediate" in low):
+                return opt
+        elif m := re.search(r"(\d+(?:\.\d+)?)\s*\w*\s*(or less|or fewer|max|maximum)", low):
+            if days <= float(m.group(1)) * unit_days:
+                return opt
+        elif m := _PLUS.search(low):
+            if days >= float(m.group(1) or m.group(2)) * unit_days:
+                return opt
+        elif m := re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(day|week|month|year)s?\s*", low):
+            if float(m.group(1)) * unit_days == days:
+                return opt
+    return None
+
+
 def pick_option(options: list[str], candidates: list[Any]) -> str | None:
     """The form's own option for an answer, or None. Never the nearest guess."""
     placeholders = _table()[2]
@@ -193,6 +256,10 @@ def pick_option(options: list[str], candidates: list[Any]) -> str | None:
         if isinstance(cand, (int, float)) or re.fullmatch(r"\d+(?:\.\d+)?", str(cand)):
             if hit := _numeric_option(real, float(cand)):
                 return hit
+        if (days := _as_days(str(cand))) is not None and (hit := _duration_option(real, days)):
+            return hit
+        if hit := _polarity_option(real, c):
+            return hit
     return None
 
 
@@ -301,6 +368,8 @@ def question_score(question: str, ask: str, options: Any = (), ask_options: Any 
     LIKELY when one question's content words contain the other's ("Gender" vs
     "Gender identity"); below that, a different question.
     """
+    # "Please state your gender (this question is voluntary...)" asks what "gender" asks.
+    question = re.sub(r"\([^)]*\)", " ", question or "") or question
     q, a = norm(question), norm(ask)
     if not q or not a:
         return 0.0
@@ -439,11 +508,18 @@ def _study_answer(study: str) -> Answer:
     return Answer(study, list(dict.fromkeys(x for x in (study, plain) if x)))
 
 
-def _ym_text(ym: tuple[int, int | None] | None, part: str | None, f: dict[str, Any]) -> str | None:
-    """A (year, month) as one date box wants it: "2025", "06", "06/2025", "2025-06"."""
+def _ym_text(ym: tuple[int, int | None] | None, part: str | None, f: dict[str, Any],
+             end: bool = False) -> str | None:
+    """A (year, month) as one date box wants it: "2025", "06", "06/2025", "2025-06",
+    or a whole date for a date picker (the 1st of a start month, the last day of an end month)."""
     if ym is None:
         return None
     year, month = ym
+    if (f.get("type") or "") == "date" and part is None:
+        import calendar
+        month = month or (12 if end else 1)
+        day = calendar.monthrange(year, month)[1] if end else 1
+        return date(year, month, day).isoformat()
     if part == "year":
         return str(year)
     if part == "month":
@@ -486,14 +562,14 @@ def _group_answer(f: dict[str, Any], v: dict[str, Any]) -> tuple[Any, str] | Non
             num = _number(e["score"])
             return (num, "fill") if num else None
         if is_from or is_to:
-            text = _ym_text(e["start"] if is_from else e["end"], part, f)
+            text = _ym_text(e["start"] if is_from else e["end"], part, f, end=not is_from)
             return (text, "fill") if text else None
         return None
     rows = v.get("_work") or []
     if idx >= len(rows):
         return None
     w = rows[idx]
-    if "currently" in words or ("current" in words and "work" in words):
+    if "currently" in words or ("current" in words and words & {"work", "position", "job", "role", "employer"}):
         return ("Yes" if w["current"] else "No"), "fill"
     if "description" in words or "responsibilities" in words:
         return None
@@ -509,7 +585,7 @@ def _group_answer(f: dict[str, Any], v: dict[str, Any]) -> tuple[Any, str] | Non
     if is_to:
         if w["current"]:
             return None, "skip"  # "I currently work here" is ticked instead
-        text = _ym_text(w["end"], part, f)
+        text = _ym_text(w["end"], part, f, end=True)
         return (text, "fill") if text else None
     return None
 
@@ -537,6 +613,13 @@ def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any
         if born is None:
             return None, "unknown"
         if key == "date_of_birth":
+            words = set(norm(f.get("label") or "").split())
+            if "month" in words:
+                return Answer(str(born.month), [born.strftime("%B"), born.strftime("%b"), f"{born.month:02d}", born.month]), "fill"
+            if "day" in words:
+                return Answer(str(born.day), [f"{born.day:02d}", born.day]), "fill"
+            if "year" in words:
+                return str(born.year), "fill"
             return date_text(born, f), "fill"
         age = age_on(born, today)
         if key == "adult":
@@ -568,6 +651,20 @@ def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any
         return Answer(code, [code] + alts), "fill"
     if key == "phone_device_type":
         return Answer("Mobile", _DEVICE), "fill"
+    if key == "has_work_experience":
+        return ("Yes" if v.get("_work") else "No"), "fill"
+    if key == "attended_university":
+        degrees = [e for e in v.get("_education") or [] if re.search(r"\b(b|m)\.? ?(tech|e|sc|a|com|ca|ba)\b|bachelor|master|phd|degree",
+                                                                       e.get("degree_full") or "", re.I)]
+        return ("Yes" if degrees else None), ("fill" if degrees else "unknown")
+    if key == "meet_requirement":
+        # Only requirements the operator answered in general: work mode, relocation, shifts, travel.
+        around = norm(f.get("context") or "")
+        if re.search(r"\b(hybrid|onsite|on site|remote|office|working arrangement|work arrangement|work mode)\b", around):
+            return "Yes", "fill"
+        if re.search(r"\b(relocat\w*|shifts?|travel\w*)\b", around) and v.get("willing_to_relocate"):
+            return "Yes", "review"
+        return None, "unknown"
     if key == "salary_currency":
         cur = str(v.get("salary_currency") or "INR")
         names = {"INR": ["INR", "Indian Rupee", "INR - Indian Rupee", "Indian Rupee (INR)", "Rupee", "Rupees", "₹"]}
