@@ -90,7 +90,10 @@ def run_pipeline() -> None:
         fh.write(f"\n===== {datetime.now():%Y-%m-%d %H:%M} =====\n")
         fh.flush()
         hours = max(1, -(-int(cfg().get("posted_within_minutes", 60)) // 60))
-        subprocess.run([sys.executable, "-m", "src.main", "--term", str(cfg().search_term), "--hours-old", str(hours)],
+        args = [sys.executable, "-m", "src.main", "--term", str(cfg().search_term), "--hours-old", str(hours)]
+        if bool(cfg().get("easy_apply_only", True)):
+            args.append("--easy-apply")  # LinkedIn's Easy Apply postings only: for this bot, never other runs
+        subprocess.run(args,
                        cwd=ROOT, stdout=fh, stderr=subprocess.STDOUT, timeout=40 * 60, check=False)
 
 

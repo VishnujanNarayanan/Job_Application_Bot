@@ -109,6 +109,11 @@ def main(argv: list[str] | None = None) -> int:
         "--hours-old", type=int, metavar="N",
         help="only postings from the last N hours (default: scraper.hours_old)",
     )
+    parser.add_argument(
+        "--easy-apply", action="store_true",
+        help="LinkedIn only, Easy Apply postings only (the Easy Apply bot's runs; "
+             "normal runs keep every site and posting)",
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
@@ -149,7 +154,8 @@ def main(argv: list[str] | None = None) -> int:
             except _Cancelled:
                 log.info("run_cancelled", reason="term_menu")
                 return 0
-        return _run(args.dry_run, log, manual_terms=manual_terms, hours_old=args.hours_old)
+        return _run(args.dry_run, log, manual_terms=manual_terms, hours_old=args.hours_old,
+                    easy_apply=args.easy_apply)
     finally:
         flusher.join()
         import fcntl as _fcntl
@@ -191,7 +197,8 @@ def _record_taps(log, when: str) -> None:
         log.info("telegram_taps_recorded", count=recorded, at=when)
 
 
-def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: int | None = None) -> int:
+def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: int | None = None,
+         easy_apply: bool = False) -> int:
     from src import analytics
     from src.config import settings, resolve_endpoint_base_url
     from src.endpoint.cache import for_notification
@@ -285,7 +292,8 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: i
             try:
                 term_jobs = jobspy_wrapper.scrape(
                     term,
-                    sites=list(cfg.scraper.sites),
+                    # The Easy Apply bot: LinkedIn only, Easy Apply postings only.
+                    sites=["linkedin"] if easy_apply else list(cfg.scraper.sites),
                     country=str(cfg.scraper.country),
                     location=cfg.scraper.get("location"),
                     results_wanted=int(cfg.scraper.results_wanted_per_term),
@@ -300,6 +308,7 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: i
                     remote_results_wanted=int(remote_cfg.get("results_wanted", 0)),
                     remote_hours_old=remote_cfg.get("hours_old"),
                     stats=term_stats,
+                    easy_apply=easy_apply,
                 )
             except Exception as exc:
                 # One term failing must not discard the other terms' results.

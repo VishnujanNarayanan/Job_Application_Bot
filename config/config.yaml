@@ -1031,6 +1031,7 @@ autoapply:
   posted_within_minutes: 60  # the search and the scrape both look back this far
   title_must_contain: []      # any title the search returns (it matched the profile)
   run_pipeline_first: true  # search + score + tailor before applying
+  easy_apply_only: true     # the bot's scrape asks LinkedIn for Easy Apply postings only (normal runs don't)
   per_run: 0               # 0: every Easy Apply match of the run, up to max_per_day
   never_skip: true          # a required question with no answer gets a default (reported), not a skip
   max_per_day: 20

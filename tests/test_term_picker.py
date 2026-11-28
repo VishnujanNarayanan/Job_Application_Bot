@@ -82,7 +82,7 @@ def main_mod(monkeypatch, tmp_path):
     monkeypatch.setattr(m, "_ROOT", tmp_path)
     monkeypatch.setattr(m, "_configure_logging", lambda: None)
     calls = []
-    monkeypatch.setattr(m, "_run", lambda dry, log, manual_terms=None, hours_old=None: calls.append(manual_terms) or 0)
+    monkeypatch.setattr(m, "_run", lambda dry, log, manual_terms=None, hours_old=None, easy_apply=False: calls.append(manual_terms) or 0)
     return m, calls
 
 

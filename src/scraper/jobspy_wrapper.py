@@ -440,6 +440,7 @@ def _scrape_with_retry(
     max_retries: int,
     backoff_base_seconds: float,
     is_remote: bool = False,
+    easy_apply: bool = False,
 ) -> Any | None:
     """Call JobSpy for one site group; retry with exponential backoff + jitter.
 
@@ -466,6 +467,9 @@ def _scrape_with_retry(
     # it means remote roles open to that country.
     if is_remote:
         kwargs["is_remote"] = True
+    # LinkedIn's "Easy Apply" filter (f_AL=true): only the Easy Apply bot asks for it.
+    if easy_apply and site_group == ["linkedin"]:
+        kwargs["easy_apply"] = True
 
     last_exc: Exception | None = None
     for attempt in range(1, max(1, max_retries) + 1):
@@ -507,6 +511,7 @@ def scrape(
     remote_results_wanted: int = 0,
     remote_hours_old: int | None = None,
     stats: dict | None = None,
+    easy_apply: bool = False,
 ) -> list[AllJobs]:
     """Scrape one search term across ``sites`` and return ``AllJobs`` rows.
 
@@ -573,6 +578,7 @@ def scrape(
             max_retries=max_retries,
             backoff_base_seconds=backoff_base_seconds,
             is_remote=remote,
+            easy_apply=easy_apply,
         )
         if df is None:
             continue
