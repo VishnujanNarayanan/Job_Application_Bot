@@ -69,6 +69,14 @@ def test_dry_run_fills_every_step_and_stops_before_submit(board) -> None:
     assert page.evaluate("() => window.__sponsor") == "No"
 
 
+def test_safety_reminder_then_the_form(board) -> None:
+    page = board.new_page()
+    out = linkedin.easy_apply(page, "linkedin-li-1234567890", JOB_URL + "?reminder=1", dry_run=True,
+                              log=structlog.get_logger())
+    assert out.status == "dry_run", out
+    assert linkedin._today_us() in page.evaluate("() => window.__resume")
+
+
 def test_live_run_submits(board) -> None:
     page = board.new_page()
     out = linkedin.easy_apply(page, "linkedin-li-1234567890", JOB_URL, dry_run=False, log=structlog.get_logger())
