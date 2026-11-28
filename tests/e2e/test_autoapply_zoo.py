@@ -70,6 +70,7 @@ def test_dry_run_fills_every_step_and_stops_before_submit(board) -> None:
     assert page.evaluate("() => window.__python") == "2"           # LinkedIn's remembered "5" replaced by the rule
     assert page.evaluate("() => window.__whole") == "2"            # "(Only Whole Numbers Allowed)": rounded up
     assert page.evaluate("() => window.__auth") == "Yes"           # radios labelled with the question itself
+    assert page.evaluate("() => window.__start") == "Yes"          # already answered by LinkedIn: not "missing"
     assert page.evaluate("() => window.__sponsor") == "No"
 
 

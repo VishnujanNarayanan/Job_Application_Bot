@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.8.2
+// @version      1.8.3
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -787,11 +787,19 @@
 
   function tick(els, texts) {
     const want = new Set(texts.map(n));
-    let done = 0;
+    let hit = 0;
     for (const el of els) {
-      if (want.has(n(optionLabel(el))) && !el.checked) { el.click(); done++; }
+      if (!want.has(n(optionLabel(el)))) continue;
+      hit++;
+      if (!el.checked) el.click();
     }
-    return done > 0;
+    if (!hit) return false;
+    // Already chosen counts (LinkedIn pre-selects remembered answers), and a page that redraws
+    // its radios after a click is read again by name rather than through the old elements.
+    const name = els[0] && els[0].name;
+    const root = els[0] && els[0].getRootNode ? els[0].getRootNode() : document;
+    const now = name && root.querySelectorAll ? [...root.querySelectorAll('input[name="' + CSS.escape(name) + '"]')] : els;
+    return (now.length ? now : els).some((el) => el.checked && want.has(n(optionLabel(el))));
   }
 
   // The option among ``opts`` for the first answer in ``wants`` that one matches.

@@ -189,7 +189,16 @@ def _problems(modal) -> list[str]:
     """Questions left unanswered (red) and LinkedIn's own error messages."""
     return modal.evaluate("""(m) => {
         const out = [];
-        for (const e of m.querySelectorAll('.jab-missing')) out.push((e.title || '').replace(/^Job Bot:\\s*/, '') + ' | ' +
+        // A box the Job Bot outlined but the page shows answered (LinkedIn's remembered answer, a
+        // radio redrawn after the click) is answered: the page, not the outline, decides.
+        const answered = (e) => {
+            const box = e.matches('input, select, textarea') ? e : null;
+            if (box && box.type !== 'radio' && box.type !== 'checkbox') return !!(box.value || '').trim()
+                && !/^(select|select an option|choose|--)/i.test(box.value.trim());
+            const scope = e.closest('fieldset, [role=radiogroup], [role=group]') || e;
+            return !!scope.querySelector('input:checked, [aria-checked=true], [aria-selected=true]');
+        };
+        for (const e of m.querySelectorAll('.jab-missing')) if (!answered(e)) out.push((e.title || '').replace(/^Job Bot:\\s*/, '') + ' | ' +
             ((e.closest('[data-test-form-element], .jobs-easy-apply-form-element, fieldset, div') || e).innerText || '').trim().slice(0, 140));
         // LinkedIn's errors -- not its confirmations ("Resume uploaded successfully" uses the same alert box).
         const errs = [...m.querySelectorAll('.artdeco-inline-feedback--error, [role=alert], [aria-live=assertive], [id^="error-message"]')];
