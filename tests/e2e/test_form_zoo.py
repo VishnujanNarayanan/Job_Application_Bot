@@ -79,7 +79,7 @@ def test_successfactors(zoo) -> None:
     assert v("#cover") == ""                     # the cover-letter tile is left alone
     assert (v("#cc"), v("#ph")) == ("India (+91)", "9000000000")
     assert (v("#c1"), v("#c2")) == ("India", "Maharashtra")
-    assert (v("#c3"), v("#c4")) == ("1", "6")    # 1.5 years as Years / Months
+    assert (v("#c3"), v("#c4")) == ("2", "0")    # whole years, rounded up: 2 years, 0 months
     assert (v("#c5"), v("#c6"), v("#c7")) == ("15 Days", "INR", "")
     no_errors(page)
 

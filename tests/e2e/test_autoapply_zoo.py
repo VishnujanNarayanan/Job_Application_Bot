@@ -50,6 +50,7 @@ def board(browser, tmp_path, monkeypatch):  # noqa: F811
     monkeypatch.setattr(linkedin, "_forward", forward)
     monkeypatch.setattr(linkedin, "_pause", lambda lo=0, hi=0: None)
     monkeypatch.setattr(linkedin, "SHOTS", tmp_path / "shots")
+    monkeypatch.setattr(linkedin, "FAILURES", tmp_path / "failures")
     yield context
     context.close()
 
