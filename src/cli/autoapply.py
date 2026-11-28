@@ -1,7 +1,7 @@
 """LinkedIn Easy Apply bot (src/autoapply).
 
     python -m src.cli.autoapply login            # open the Job Bot Edge on LinkedIn's login page (once)
-    python -m src.cli.autoapply run [--live] [--force]   # one run now
+    python -m src.cli.autoapply run [--live] [--force] [--no-pipeline]   # one run now
     python -m src.cli.autoapply loop             # every 30 min in working hours, while the laptop is on
     python -m src.cli.autoapply status           # today's count and the last outcomes
 
@@ -59,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("command", choices=("login", "run", "loop", "status"))
     ap.add_argument("--live", action="store_true", help="really submit (default: dry run, per config)")
     ap.add_argument("--force", action="store_true", help="ignore working hours and the enabled switch")
+    ap.add_argument("--no-pipeline", action="store_true", help="skip the search; use matches already built")
     args = ap.parse_args(argv)
     if args.command == "login":
         return _login()
@@ -66,7 +67,8 @@ def main(argv: list[str] | None = None) -> int:
         return _status()
     if args.command == "loop":
         return _loop()
-    result = runner.run_once(dry_run=False if args.live else None, force=args.force)
+    result = runner.run_once(dry_run=False if args.live else None, force=args.force,
+                             pipeline=False if args.no_pipeline else None)
     print(json.dumps(result, indent=1))
     return 0
 
