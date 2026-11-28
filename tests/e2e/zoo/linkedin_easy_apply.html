@@ -35,7 +35,13 @@ const steps = [
      <fieldset role="radiogroup" aria-describedby="error-message-auth">
        <div><div><div><input id="au1" type="radio" name="radio-group-auth" aria-label="Are you legally authorized to work in India?"><label for="au1"></label></div><div><p>Yes</p></div></div></div>
        <div><div><div><input id="au2" type="radio" name="radio-group-auth" aria-label="Are you legally authorized to work in India?"><label for="au2"></label></div><div><p>No</p></div></div></div>
-     </fieldset><p id="error-message-auth" class="ekferr"></p></div>`,
+     </fieldset><p id="error-message-auth" class="ekferr"></p></div>
+   <!-- Answered already: LinkedIn remembers "Yes" from an earlier application. -->
+   <div componentkey="start"><p>We must fill this position urgently. Can you start immediately?*</p>
+     <fieldset role="radiogroup">
+       <div><div><div><input id="st1" type="radio" name="radio-group-start" checked aria-label="We must fill this position urgently. Can you start immediately?"><label for="st1"></label></div><div><p>Yes</p></div></div></div>
+       <div><div><div><input id="st2" type="radio" name="radio-group-start" aria-label="We must fill this position urgently. Can you start immediately?"><label for="st2"></label></div><div><p>No</p></div></div></div>
+     </fieldset></div>`,
   `<h3>Review your application</h3><p>Check your details.</p>`,
 ];
 let at = 0;
@@ -93,6 +99,7 @@ dlg.querySelector('.primary').addEventListener('click', () => {
   if (at === 0) window.__phone = body.querySelector('#ph').value;
   if (at === 1) { const r = body.querySelector('input[name=doc]:checked'); window.__resume = r ? r.parentElement.innerText.trim() : ''; }
   if (at === 2) { window.__azure = body.querySelector('#az').value; window.__python = body.querySelector('#py').value; window.__whole = body.querySelector('#wy').value;
+                  const st = body.querySelector('input[name=radio-group-start]:checked'); window.__start = st ? st.parentElement.parentElement.innerText.trim() : '';
                   const au = body.querySelector('input[name=radio-group-auth]:checked'); window.__auth = au ? au.parentElement.parentElement.innerText.trim() : '';
                   const s = body.querySelector('input[name=sp]:checked'); window.__sponsor = s ? s.value : ''; }
   if (at === 3) { window.__submitted = true; body.innerHTML = '<h3>Your application was sent to Acme!</h3>';

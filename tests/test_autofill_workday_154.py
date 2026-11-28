@@ -293,3 +293,14 @@ def test_months_alone_are_all_of_it_beside_years_the_remainder(facts) -> None:
     assert [d["value"] for d in pair] == ["2", "0"]
     assert _one(facts, "How many months of experience do you have with Python?", "text")["value"] == "24"
     assert _one(facts, "Total experience in months", "number")["value"] == "24"
+
+
+def test_a_question_inside_a_work_section_is_not_an_entry_box(facts) -> None:
+    """'...authorized to work...' near 'work experience' questions: its 'to' is no end date."""
+    facts.values["citizenship"] = "India"
+    d = _one(facts, "Are you legally authorized to work in India?", "radio", options=["Yes", "No"],
+             group="Work Experience 1")
+    assert (d["action"], d["value"]) == ("fill", "Yes")
+    d = _one(facts, "Will you now or in the future require sponsorship to work in India?", "radio",
+             options=["Yes", "No"], group="Work Experience 1")
+    assert (d["action"], d["value"]) == ("fill", "No")

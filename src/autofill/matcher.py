@@ -544,8 +544,14 @@ def _group_answer(f: dict[str, Any], v: dict[str, Any]) -> tuple[Any, str] | Non
     if not m:
         return None
     idx = int(m.group(2)) - 1
+    # An entry's boxes are short ("Job Title", "From", "To"). A sentence is a question of its own
+    # ("Are you legally authorized to work in India?"), whatever section the page seems to be:
+    # its "to" is no end date.
+    label = f.get("label") or f.get("context") or ""
+    if len(norm(label).split()) > 5:
+        return None
     # The label itself: in a section, "From" / "To" are the question, not filler.
-    words = set(norm(f.get("label") or f.get("context") or "").split())
+    words = set(norm(label).split())
     part = "month" if "month" in words else "year" if "year" in words else None
     is_from, is_to = bool(words & {"from", "start"}), bool(words & {"to", "end"})
     if m.group(1) == "education":
