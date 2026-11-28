@@ -83,15 +83,15 @@ def run_pipeline() -> None:
                        cwd=ROOT, stdout=fh, stderr=subprocess.STDOUT, timeout=40 * 60, check=False)
 
 
-def candidates(tried: dict, only_ids: list[str] | None = None) -> list[dict]:
-    """New LinkedIn matches for the title. With ``only_ids`` (this run's Easy Apply
-    search results), only those jobs, in the search's order."""
+def candidates(tried: dict, since: datetime | None = None) -> list[dict]:
+    """LinkedIn matches built since ``since`` (this run's scrape of the search term),
+    not tried before, best first. Easy Apply is checked on each job's page."""
     from sqlalchemy import select
 
     from src.state.db import session_scope
     from src.state.models import AllJobs, Applied
 
-    since = datetime.now(timezone.utc) - timedelta(hours=float(cfg().max_match_age_hours))
+    since = since or datetime.now(timezone.utc) - timedelta(hours=float(cfg().max_match_age_hours))
     musts = [str(m).lower() for m in cfg().title_must_contain]
     with session_scope() as s:
         rows = s.execute(
@@ -109,10 +109,6 @@ def candidates(tried: dict, only_ids: list[str] | None = None) -> list[dict]:
             continue
         out.append({"job_id": r.job_id, "role": r.role, "company": r.company, "url": r.job_url,
                     "score": r.final_score})
-    if only_ids is not None:
-        order = {lid: i for i, lid in enumerate(only_ids)}
-        out = [j for j in out if linkedin_id(j["job_id"], j["url"]) in order]
-        out.sort(key=lambda j: order[linkedin_id(j["job_id"], j["url"])])
     return out
 
 
@@ -155,9 +151,11 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
     if not dry and applied_today(state, day) >= int(c.max_per_day):
         return {"ran": False, "why": "daily cap reached"}
 
+    since = None
     if bool(c.run_pipeline_first) if pipeline is None else pipeline:
         log.info("autoapply_pipeline_start", term=str(c.search_term))
-        run_pipeline()
+        since = datetime.now(timezone.utc) - timedelta(minutes=1)
+        run_pipeline()  # the search term, last hour only: its matches are this run's jobs
 
     # Dry runs keep their own list: each one moves to a new job, and none blocks a real apply later.
     tried = {**state.get("tried", {}), **(state.get("dry_tried", {}) if dry else {})}
@@ -165,18 +163,17 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
     with edge.attached() as context:
         page = context.new_page()
         try:
-            # Only the search's own results: "data engineer", Easy Apply, posted in the last hour.
-            from src.autoapply.linkedin import search_job_ids
-
-            found = search_job_ids(page, str(c.search_term), int(c.get("posted_within_minutes", 60)),
-                                   str(c.get("location", "India")))
-            jobs = candidates(tried, only_ids=found)
-            log.info("autoapply_candidates", search_results=len(found), matched=len(jobs))
+            # This run's scrape of the search term (last hour), matched and tailored by the
+            # pipeline: every one with an Easy Apply button is applied to, up to the daily cap.
+            jobs = candidates(tried, since=since)
+            log.info("autoapply_candidates", matched=len(jobs))
             if not jobs:
-                return {"ran": True, "applied": 0, "search_results": len(found),
-                        "why": "no Easy Apply result from the last hour that the pipeline matched"}
+                return {"ran": True, "applied": 0, "why": "no LinkedIn match in this run's scrape"}
             for job in jobs:
-                if len([d for d in done if d["status"] in ("applied", "dry_run")]) >= int(c.per_run):
+                filled = len([d for d in done if d["status"] in ("applied", "dry_run")])
+                if int(c.per_run) and filled >= int(c.per_run):
+                    break
+                if not dry and applied_today(state, day) >= int(c.max_per_day):
                     break
                 try:
                     outcome = easy_apply(page, job["job_id"], job["url"], dry_run=dry, log=log)
