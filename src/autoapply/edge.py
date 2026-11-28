@@ -119,6 +119,38 @@ def ensure_edge(start_url: str = "about:blank", wait_s: float = 25.0) -> None:
         "Job Bot profile without the port? Close the Job Bot Edge window and run again.")
 
 
+def restart() -> None:
+    """Stop the Job Bot Edge (only that profile's processes) and start it again.
+
+    A long session can leave it accepting commands while no new tab navigates;
+    a restart clears that, and the LinkedIn login survives in the profile.
+    """
+    ps = ("Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | Where-Object { $_.CommandLine -like '*"
+          + PureWindowsPath(str(_cfg().edge_profile)).name + "*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force "
+          "-ErrorAction SilentlyContinue }")
+    subprocess.run([POWERSHELL, "-NoProfile", "-Command", ps], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=60, check=False)
+    deadline = time.monotonic() + 15
+    while is_running() and time.monotonic() < deadline:
+        time.sleep(0.5)
+    ensure_edge()
+
+
+def healthy(context, timeout_ms: int = 20000) -> bool:
+    """Can a new tab navigate at all?"""
+    page = context.new_page()
+    try:
+        page.goto("https://www.linkedin.com/robots.txt", wait_until="commit", timeout=timeout_ms)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        try:
+            page.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 @contextmanager
 def attached() -> Iterator[object]:
     """Playwright attached to the running Job Bot Edge: yields its browser context.

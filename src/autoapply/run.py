@@ -62,13 +62,24 @@ def applied_today(state: dict, day: str) -> int:
 
 
 def notify(text: str) -> None:
-    """A Telegram message, whatever the progress-message setting. Never raises."""
-    try:
-        from src.notifications import _send
+    """A Telegram message, whatever the progress-message setting. Never raises.
 
-        asyncio.run(_send(text))
-    except Exception as exc:  # noqa: BLE001
-        log.warning("autoapply_notify_failed", error=str(exc)[:200])
+    Sent from its own thread: Playwright's sync API keeps an event loop running
+    in this one, where asyncio.run() refuses to start another.
+    """
+    import threading
+
+    def send() -> None:
+        try:
+            from src.notifications import _send
+
+            asyncio.run(_send(text))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("autoapply_notify_failed", error=str(exc)[:200])
+
+    t = threading.Thread(target=send, daemon=True)
+    t.start()
+    t.join(timeout=30)
 
 
 def run_pipeline() -> None:
@@ -160,6 +171,12 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
     # Dry runs keep their own list: each one moves to a new job, and none blocks a real apply later.
     tried = {**state.get("tried", {}), **(state.get("dry_tried", {}) if dry else {})}
     done = []
+    # A Job Bot Edge that stopped navigating (it happens after long sessions) is restarted first.
+    with edge.attached() as context:
+        stuck = not edge.healthy(context)
+    if stuck:
+        log.warning("autoapply_edge_restart", why="a new tab did not navigate")
+        edge.restart()
     with edge.attached() as context:
         page = context.new_page()
         try:
