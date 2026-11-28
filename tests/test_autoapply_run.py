@@ -90,3 +90,14 @@ def test_only_the_bot_asks_linkedin_for_easy_apply(monkeypatch) -> None:
     monkeypatch.setattr(run.subprocess, "run", lambda args, **kw: seen.setdefault("args", args))
     run.run_pipeline()
     assert "--easy-apply" in seen["args"] and "--hours-old" in seen["args"]
+
+
+def test_whole_number_years_round_up() -> None:
+    """The operator's call: 1.5 years where only whole numbers are allowed is 2."""
+    from src.autofill.matcher import _computed
+
+    f = {"label": "How many years of work experience do you have? (Only Whole Numbers Allowed)", "type": "text"}
+    from datetime import date
+
+    ans, action = _computed("years_experience", f, {"years_experience": 1.5}, {}, date(2026, 11, 28))
+    assert (ans.text, action) == ("2", "fill")

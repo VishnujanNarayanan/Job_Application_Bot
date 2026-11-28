@@ -161,7 +161,7 @@ def _inject(page, job_id: str) -> None:
     page.evaluate(script)
 
 
-def _wait_filled(page, before: int, limit_s: float = 60.0) -> None:
+def _wait_filled(page, before: int, limit_s: float = 8.0) -> None:
     """Until the userscript has filled this step: as soon as it is done, not a fixed wait.
 
     It reports ``__jabBusy`` while filling. A step with nothing to fill (the
@@ -179,9 +179,9 @@ def _wait_filled(page, before: int, limit_s: float = 60.0) -> None:
             if not page.evaluate("() => !!window.__jabBusy") and page.evaluate("() => window.__jabPasses || 0") == passes:
                 return
             continue
-        if time.monotonic() - start > 3.0:
+        if time.monotonic() - start > 2.0:
             return
-        time.sleep(0.2)
+        time.sleep(0.15)
 
 
 def _problems(modal) -> list[str]:
@@ -191,7 +191,10 @@ def _problems(modal) -> list[str]:
         for (const e of m.querySelectorAll('.jab-missing')) out.push((e.title || '').replace(/^Job Bot:\\s*/, '') + ' | ' +
             ((e.closest('[data-test-form-element], .jobs-easy-apply-form-element, fieldset, div') || e).innerText || '').trim().slice(0, 140));
         // LinkedIn's errors -- not its confirmations ("Resume uploaded successfully" uses the same alert box).
-        for (const e of m.querySelectorAll('.artdeco-inline-feedback--error, [role=alert], [aria-live=assertive]')) {
+        const errs = [...m.querySelectorAll('.artdeco-inline-feedback--error, [role=alert], [aria-live=assertive], [id^="error-message"]')];
+        for (const f of m.querySelectorAll('[aria-describedby]'))
+            for (const id of f.getAttribute('aria-describedby').split(/\s+/)) { const e = id && m.querySelector('#' + CSS.escape(id)); if (e) errs.push(e); }
+        for (const e of errs) {
             const t = (e.innerText || '').trim();
             if (!(e.offsetWidth || e.offsetHeight) || !t || /success|uploaded|saved|added/i.test(t)) continue;
             if (/please|required|invalid|enter a|select a|must|error|can.?t be|cannot be|too (long|short)|larger than|smaller than|between/i.test(t))
@@ -298,12 +301,102 @@ def _discard(page) -> None:
         time.sleep(0.3)
 
 
+def submitted(page) -> bool:
+    """LinkedIn shows the application as sent: the confirmation, or the job page's
+    "Application submitted" status."""
+    try:
+        return bool(page.evaluate(
+            "() => /application (was )?sent|application submitted|you applied|applied \\d/i"
+            ".test(document.body.innerText.slice(0, 30000))"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _shot(page, job_id: str, tag: str) -> str:
     SHOTS.mkdir(parents=True, exist_ok=True)
     path = SHOTS / f"{datetime.now():%Y%m%d-%H%M%S}-{re.sub(r'[^a-z0-9-]+', '-', job_id.lower())}-{tag}.png"
     try:
         page.screenshot(path=str(path), full_page=False)
         return str(path)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+FAILURES = ROOT / "data" / "autoapply" / "failures"
+
+
+def record_failure(page, job_id: str, tag: str, detail: str, questions: list[str] | None = None,
+                   job_url: str = "") -> str:
+    """Keep everything needed to fix a failure later (``docs/autoapply.md``, "Failures").
+
+    data/autoapply/failures/<time>-<job>-<tag>/ gets the screenshot, the Easy Apply
+    dialog's HTML (or the page's, when no dialog is open) with the Job Bot's marks
+    on what it could not answer or recognise, the questions LinkedIn flagged, the
+    answers the Job Bot defaulted, and its own report. One line per failure goes to
+    failures/index.jsonl, which a Claude session works through. Gitignored: it
+    holds the operator's own form data.
+    """
+    import json
+
+    when = datetime.now()
+    name = f"{when:%Y%m%d-%H%M%S}-{re.sub(r'[^a-z0-9-]+', '-', job_id.lower())}-{tag}"
+    folder = FAILURES / name
+    folder.mkdir(parents=True, exist_ok=True)
+    info: dict = {"at": when.isoformat(timespec="seconds"), "job_id": job_id, "url": job_url or page.url,
+                  "tag": tag, "detail": detail, "questions": list(questions or []), "status": "open"}
+    try:
+        page.screenshot(path=str(folder / "screen.png"), full_page=False)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        modal = _modal(page)
+        html = modal.evaluate("(m) => m.outerHTML") if modal is not None else page.content()
+        (folder / ("dialog.html" if modal is not None else "page.html")).write_text(html)
+        info["marked"] = page.evaluate("""() => [...document.querySelectorAll('.jab-missing, .jab-optional, .jab-unknown, [title^="Job Bot"]')]
+            .map((e) => ({title: e.title || '', text: (e.closest('fieldset, div') || e).innerText.trim().slice(0, 200),
+                          html: e.outerHTML.slice(0, 600)})).slice(0, 30)""")
+        info["defaults"] = page.evaluate("() => window.__jabFallbacks || []")
+        info["report"] = page.evaluate("() => window.__jabReport || null")
+    except Exception as exc:  # noqa: BLE001 - keep what we have
+        info["capture_error"] = str(exc)[:200]
+    (folder / "failure.json").write_text(json.dumps(info, indent=1, ensure_ascii=False, default=str))
+    with (FAILURES / "index.jsonl").open("a") as fh:
+        fh.write(json.dumps({k: info[k] for k in ("at", "job_id", "tag", "detail", "questions")}
+                            | {"folder": name, "status": "open"}, ensure_ascii=False) + "\n")
+    return str(folder / "screen.png")
+
+
+def _fail(page, job_id: str, tag: str, status: str, detail: str, questions: list[str] | None = None,
+          job_url: str = "") -> Outcome:
+    shot = record_failure(page, job_id, tag, detail, questions, job_url)
+    _discard(page)
+    return Outcome(status, detail, shot, list(questions or []))
+
+
+def _whole_years(modal) -> int:
+    """LinkedIn's number boxes take whole numbers only ("Invalid input" for 1.5): a
+    decimal answer to a "how many years" question is rounded UP (the operator's call)."""
+    return modal.evaluate("""(m) => {
+        let n = 0;
+        const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        for (const i of m.querySelectorAll('input[type=text], input[type=number], input:not([type])')) {
+            const v = (i.value || '').trim();
+            if (!/^\\d+\\.\\d+$/.test(v)) continue;
+            const box = i.closest('[componentkey], [data-test-form-element], fieldset, div');
+            const q = (i.getAttribute('aria-label') || '') + ' ' + (box ? box.innerText : '');
+            if (!/years?|yrs/i.test(q)) continue;
+            set.call(i, String(Math.ceil(parseFloat(v))));
+            i.dispatchEvent(new Event('input', {bubbles: true}));
+            i.dispatchEvent(new Event('change', {bubbles: true}));
+            n += 1;
+        }
+        return n; }""")
+
+
+def _signature(modal) -> str:
+    """What the step shows: if pressing Next leaves it unchanged, LinkedIn refused it."""
+    try:
+        return modal.evaluate("(m) => (m.innerText || '').replace(/\\s+/g, ' ').slice(0, 2000)")
     except Exception:  # noqa: BLE001
         return ""
 
@@ -341,24 +434,23 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
     for step in range(15):
         modal = _modal(page)
         if modal is None:
-            return Outcome("error", "the Easy Apply dialog closed unexpectedly", _shot(page, job_id, "closed"))
-        before = page.evaluate("() => window.__jabPasses || 0")
-        _wait_filled(page, before if step else -1)
-        _pause(0.5, 1.2)
-        if _resume_step(modal) and not upload_tailored(page, modal, job_id, filename):
-            shot = _shot(page, job_id, "resume")
-            _discard(page)
-            return Outcome("skipped", "could not upload and select the tailored resume", shot)
+            shot = record_failure(page, job_id, "closed", "the Easy Apply dialog closed unexpectedly", job_url=job_url)
+            return Outcome("error", "the Easy Apply dialog closed unexpectedly", shot)
+        if _resume_step(modal):
+            # Nothing to answer here: upload the tailored resume straight away.
+            if not upload_tailored(page, modal, job_id, filename):
+                return _fail(page, job_id, "resume", "skipped", "could not upload and select the tailored resume", job_url=job_url)
+        else:
+            before = page.evaluate("() => window.__jabPasses || 0")
+            _wait_filled(page, before if step else -1)  # moves on as soon as the step is filled; 8 s at most
+        _pause(0.2, 0.5)
+        _whole_years(modal)
         problems = _problems(modal)
         if problems:
-            shot = _shot(page, job_id, "unanswered")
-            _discard(page)
-            return Outcome("skipped", "a question has no stored answer", shot, problems)
+            return _fail(page, job_id, "unanswered", "skipped", "a question has no stored answer", problems, job_url)
         btn, label = _primary(modal)
         if btn is None:
-            shot = _shot(page, job_id, "stuck")
-            _discard(page)
-            return Outcome("error", "no Next / Review / Submit button found", shot)
+            return _fail(page, job_id, "stuck", "error", "no Next / Review / Submit button found", job_url=job_url)
         if re.match(r"submit application", label, re.I):
             defaults = [f"{d['question'][:90]} → {d['answer']}" for d in page.evaluate("() => window.__jabFallbacks || []")]
             if dry_run:
@@ -368,19 +460,37 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
             btn.click()
             for _ in range(30):
                 time.sleep(0.5)
-                done = page.evaluate("() => /application (was )?sent|application submitted|you applied|applied \\d/i.test(document.body.innerText.slice(0, 30000))")
-                if done:
+                if submitted(page):
                     shot = _shot(page, job_id, "sent")
+                    # Close LinkedIn's "application sent" box. It may vanish on its own while
+                    # we click: the application is already sent, so nothing here may fail it.
                     for sel in ("button[aria-label='Dismiss']", "button:has-text('Done')"):
-                        b = page.query_selector(sel)
-                        if b and b.is_visible():
-                            b.click()
-                            break
+                        try:
+                            b = page.query_selector(sel)
+                            if b and b.is_visible():
+                                b.click(timeout=3000)
+                                break
+                        except Exception:  # noqa: BLE001
+                            pass
                     return Outcome("applied", "Easy Apply submitted", shot, defaults=defaults)
-            return Outcome("error", "pressed Submit but saw no confirmation", _shot(page, job_id, "no-confirm"))
+            shot = record_failure(page, job_id, "no-confirm", "pressed Submit but saw no confirmation", job_url=job_url)
+            return Outcome("error", "pressed Submit but saw no confirmation", shot)
         log.info("autoapply_step", job_id=job_id, step=step, button=label)
+        seen = _signature(modal)
         btn.click()
-        _pause(1.2, 2.4)
-    shot = _shot(page, job_id, "too-many-steps")
-    _discard(page)
-    return Outcome("error", "more than 15 steps", shot)
+        # On to the next step as soon as it shows (3 s at most), not after a fixed pause.
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            time.sleep(0.15)
+            m = _modal(page)
+            if m is None or _signature(m) != seen:
+                break
+        _pause(0.2, 0.5)
+        # Next refused (an error LinkedIn shows in a way we don't read yet): the step is unchanged.
+        if step and _modal(page) is not None and _signature(_modal(page)) == seen:
+            time.sleep(1.0)
+            m = _modal(page)
+            if m is not None and _signature(m) == seen:
+                return _fail(page, job_id, "next-refused", "error",
+                             f"LinkedIn did not move past this step after {label}", _problems(m), job_url)
+    return _fail(page, job_id, "too-many-steps", "error", "more than 15 steps", job_url=job_url)

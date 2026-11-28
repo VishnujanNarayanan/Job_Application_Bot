@@ -69,11 +69,13 @@ def bullet_texts(profile) -> tuple[str, ...]:
 
 
 def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None,
-              now: datetime | None = None):
+              now: datetime | None = None, ignore_applicants: bool = False):
     """Layer 4: embed the parsed advert and score it against the profile.
 
     ``now`` pins the clock (the #179 benchmark replays at its snapshot time);
-    None is the current time."""
+    None is the current time. ``ignore_applicants`` (the Easy Apply bot, whose
+    jobs are all under an hour old and cost the operator nothing to apply to)
+    scores every job as a fresh posting, so a crowded one is not marked down."""
     from src.scorer.apply_decision import evaluate, threshold_for
     from src.scorer.keywords import jd_keywords
     from src.scorer.selector import build_jd_context
@@ -87,7 +89,8 @@ def score_job(profile, job, parsed, *, scrape_window_hours: float | None = None,
         posted_at=job.posted_at,
         scraped_at=job.scraped_at,
         scrape_window_hours=scrape_window_hours,
-        applicants_count=job.applicants_count,
+        # 0 = "among the first applicants": the full early-posting multiplier.
+        applicants_count=0 if ignore_applicants else job.applicants_count,
         jd_text=job.jd_text,
         title=job.role,
         site=job.site,
