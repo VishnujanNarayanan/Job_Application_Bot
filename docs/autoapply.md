@@ -125,3 +125,24 @@ Every application the bot can't finish leaves a folder in `data/autoapply/failur
 2. **Unknown question:** add the answer to `data/ats_answers.yaml`, or a rule to `src/autofill/matcher.py`. Ask the operator for anything personal.
 3. **Element not found or not clickable:** build the smallest made-up page that has the same structure in `tests/e2e/zoo/`. Never copy LinkedIn's or a company's HTML. Add a test that fails, then fix `jab.user.js` or `src/autoapply/linkedin.py`.
 4. Set the line's `status` to `fixed` with the PR number, or `wontfix` with a reason.
+
+## Questions bot: unknown questions are asked, never guessed
+
+When a form asks something with no saved answer, the bot does not send its guess (`autoapply.ask_unknown: true`):
+
+1. It fills every page anyway, so it collects all of the job's unknown questions at once.
+2. It closes the form unsent, and the job waits, **unapplied**.
+3. Each question goes to the **questions bot**: the options appear as buttons; anything else you answer by replying to the message. Its guess is shown, but it is never sent. A question already waiting is not sent twice; the new job just waits on it too.
+4. Your answer is saved with the learned answers (`data/ats_learned.yaml`), so every later form that asks it gets it: LinkedIn or a company site, worded the same or a little differently.
+5. When all of a job's questions are answered, the next run applies to it. A job whose questions are never answered is never applied to.
+
+The endpoint picks up answers every few seconds (`notifications.tap_poll_seconds`), and each run checks too. State is kept in `data/autoapply/questions.json` (gitignored).
+
+**Setup (once):**
+
+1. In Telegram, message **@BotFather**, send `/newbot`, and pick any name. It replies with a token.
+2. Add the token to `.env`: `TELEGRAM_QUESTIONS_BOT_TOKEN=<the token>`. The chat is `TELEGRAM_CHAT_ID`, your private chat, the same one the main bot uses.
+3. Open the new bot in Telegram and press **Start**: a bot can't message you first.
+4. Restart the endpoint.
+
+Until the token is set, the questions go to the main bot, so none is lost.

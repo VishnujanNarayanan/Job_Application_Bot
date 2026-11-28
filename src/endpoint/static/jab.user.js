@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.8.3
+// @version      1.8.4
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -1392,7 +1392,8 @@
       const fb = fallbackValue(decision.question || '', r.kind === 'checkbox' ? 'checkbox' : (r.ftype || r.kind),
         r.options || (r.radios ? r.radios.map((x) => clean(x.textContent)) : []), (AUTO && AUTO.years) || 1);
       if (fb !== null && fb !== undefined) {
-        window.__jabFallbacks.push({ question: decision.question || '', answer: String(fb) });
+        window.__jabFallbacks.push({ question: decision.question || '', answer: String(fb),
+          type: r.ftype || r.kind || '', options: (r.options || (r.radios ? r.radios.map((x) => clean(x.textContent)) : [])).slice(0, 20) });
         return apply(Object.assign({}, decision, { action: 'review', value: fb, fallback: true }), resume);
       }
     }
