@@ -672,6 +672,10 @@ def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any
     if key == "years_experience" and v.get("years_experience") is not None:
         # "Total experience (Years)" / "(Months)" pairs: 1.5 -> 1 and 6.
         years = float(v["years_experience"])
+        # "(Only Whole Numbers Allowed)": no decimals -- the whole years worked, never rounded up.
+        if re.search(r"whole number|integer|no decimal|without decimal|digits only", question, re.I) \
+                or (f.get("type") or "") == "number" and re.search(r"\bwhole\b", f.get("placeholder") or "", re.I):
+            return Answer(str(int(years)), [int(years)]), "fill"
         unit = re.search(r"\(\s*(years?|months?)\s*\)|\bin (years|months)\b", question, re.I)
         unit = (unit.group(1) or unit.group(2)).lower() if unit else ""
         if unit.startswith("month"):

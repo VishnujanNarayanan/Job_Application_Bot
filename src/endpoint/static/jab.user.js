@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.8.0
+// @version      1.8.1
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -1452,6 +1452,7 @@
   async function pass() {
     if (busy) return;
     busy = true;
+    window.__jabBusy = true;
     try {
       await loadRecipe();
       const fields = scan();
@@ -1489,6 +1490,7 @@
       say(summary());
     } finally {
       busy = false;
+      window.__jabBusy = false;
       window.__jabPasses = (window.__jabPasses || 0) + 1;
     }
   }
