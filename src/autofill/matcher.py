@@ -594,6 +594,20 @@ def _group_answer(f: dict[str, Any], v: dict[str, Any]) -> tuple[Any, str] | Non
 _DEVICE = ["Mobile", "Mobile Phone", "Cell", "Cell Phone", "Cellular", "Personal Mobile", "Mobile (Personal)"]
 
 
+def _experience_unit(question: str) -> str:
+    """"month" when the question wants the figure in months, "year" in years, "" unsaid."""
+    if re.search(r"\(\s*months?\s*\)|\bin months\b|\bhow many months\b|\bmonths of\b|\bno\.? of months\b|\bnumber of months\b",
+                 question, re.I):
+        return "month"
+    if re.search(r"\(\s*years?\s*\)|\bin years\b", question, re.I):
+        return "year"
+    return ""
+
+
+_NUMERIC_ASK = re.compile(r"^\s*(in )?how (many|much|long)\b|\b(expected|current|desired)\s+(annual\s+)?(ctc|salary|compensation|package)\b"
+                         r"|\bscale of\b|\bout of \d+|\brate (yourself|your)\b|\bnotice period\b.*\bdays\b", re.I)
+
+
 def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any],
               today: date) -> tuple[Any, str] | None:
     """(value, action) for answers worked out per form, or None when ``key`` isn't one."""
@@ -607,6 +621,8 @@ def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any
         days = int(days)
         if key == "notice_period":
             choose = [days, f"{days} days"] + (["Immediate", "Immediately"] if days == 0 else [])
+            if (f.get("type") or "") == "number":
+                return Answer(str(days), choose), "fill"
             return Answer(f"{days} days", choose), "fill"
         return date_text(today + timedelta(days=days), f), "fill"
     if key in ("date_of_birth", "age", "adult"):
@@ -670,22 +686,32 @@ def _computed(key: str, f: dict[str, Any], v: dict[str, Any], job: dict[str, Any
         cur = str(v.get("salary_currency") or "INR")
         names = {"INR": ["INR", "Indian Rupee", "INR - Indian Rupee", "Indian Rupee (INR)", "Rupee", "Rupees", "₹"]}
         return Answer(cur, names.get(cur.upper(), [cur])), "fill"
+    if key == "self_rating":
+        # "Rate your DSA skills on a scale of 1-10": the operator's rating, out of the scale's top.
+        m = re.search(r"(\d+)\s*(?:-|–|—|to)\s*(\d+)", question) or re.search(r"out of\s*(\d+)", question)
+        top = int(m.group(m.lastindex)) if m else 10
+        low = int(m.group(1)) if m and m.lastindex == 2 else 1
+        mark = v.get("self_rating")
+        if mark is None:
+            return None, "unknown"
+        n = max(low, min(top, round(float(mark) / 10 * top)))
+        return Answer(str(n), [n]), "fill"
     if key == "years_experience" and v.get("years_experience") is not None:
-        # "Total experience (Years)" / "(Months)" pairs: 1.5 -> 1 and 6.
-        years = float(v["years_experience"])
+        # Whole years, rounded up, from whatever source (the operator's call: 2, never 1.5).
+        years = float(math.ceil(float(v["years_experience"])))
         # "(Only Whole Numbers Allowed)": no decimals -- rounded UP (1.5 -> 2; the operator's call).
         if re.search(r"whole number|integer|no decimal|without decimal|digits only", question, re.I) \
                 or (f.get("type") or "") == "number" and re.search(r"\bwhole\b", f.get("placeholder") or "", re.I):
             whole = math.ceil(years)
             return Answer(str(whole), [whole]), "fill"
-        unit = re.search(r"\(\s*(years?|months?)\s*\)|\bin (years|months)\b", question, re.I)
-        unit = (unit.group(1) or unit.group(2)).lower() if unit else ""
-        if unit.startswith("month"):
-            months = round((years - int(years)) * 12)
+        unit = _experience_unit(question)
+        if unit == "month":
+            # Beside a Years box ("Total experience (Years)" / "(Months)") it is the remainder:
+            # 0 with whole years. Asked alone ("how many months of experience ..."), all of it: 24.
+            months = round((years - int(years)) * 12) if f.get("_years_box") else int(years) * 12
             return Answer(str(months), [months, f"{months} months"]), "fill"
-        if unit.startswith("year") and years != int(years):
-            whole = int(years)
-            return Answer(str(whole), [whole, f"{whole} years", f"{whole} year", years]), "fill"
+        whole = int(years)
+        return Answer(str(whole), [whole, f"{whole} years", f"{whole} year"]), "fill"
     if key == "prefix":
         if not v.get("prefix"):
             return None, "unknown"
@@ -829,7 +855,15 @@ def match_form(fields: list[dict[str, Any]], facts: Facts, job: dict[str, Any] |
                 facts.values[entry["key"]] = entry["answer"]
                 key_entry[entry["key"]] = entry
 
+    # LinkedIn's one-line boxes for "how many ...", salaries and ratings take digits only
+    # ("Invalid input" otherwise) though they are type=text: answer them as numbers.
+    if "linkedin" in (site or "").lower():
+        fields = [{**f, "type": "number"} if (f.get("type") or "text") == "text"
+                  and _NUMERIC_ASK.search(question_text(f)) else f for f in fields]
     matched = [(f, _key_for(f, extra)) for f in fields]
+    # A form with an experience box in years: its months box is the remainder, not the total.
+    if any(k == "years_experience" and _experience_unit(question_text(f)) == "year" for f, k in matched):
+        matched = [({**f, "_years_box": True} if k == "years_experience" else f, k) for f, k in matched]
     # A country-code field, even one the page filled itself: the phone number goes without the code.
     form_has_code = any(k == "phone_country_code" for _, k in matched) or any(
         _key_for({"label": label}, extra) == "phone_country_code" for label in prefilled or [])

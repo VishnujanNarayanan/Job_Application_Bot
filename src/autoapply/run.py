@@ -121,8 +121,37 @@ def run_pipeline(jobs_file: Path | None = None) -> None:
             args += ["--jobs-file", str(jobs_file)]
         elif bool(cfg().get("easy_apply_only", True)):
             args.append("--easy-apply")  # LinkedIn's Easy Apply postings only: for this bot, never other runs
-        subprocess.run(args,
+        import os
+
+        # Its matches' PDFs go into the endpoint's cache: the upload reuses them, no re-render.
+        env = {**os.environ, "JOBBOT_CACHE_RENDERS": "1"}
+        subprocess.run(args, env=env,
                        cwd=ROOT, stdout=fh, stderr=subprocess.STDOUT, timeout=40 * 60, check=False)
+
+
+def prefetch_resumes(job_ids: list[str]) -> dict:
+    """Render each job's tailored PDF in the background, in order; an Event per job is set
+    when its PDF is in the endpoint's cache (or the attempt failed: the upload retries)."""
+    import threading
+
+    from src.autoapply.linkedin import ENDPOINT, _forward
+
+    ready = {j: threading.Event() for j in job_ids}
+
+    def work() -> None:
+        for j in job_ids:
+            try:
+                started = datetime.now()
+                r = _forward({"url": f"{ENDPOINT}/resume/{j}.pdf", "blob": True})
+                log.info("autoapply_resume_ready", job_id=j, status=r.get("status"),
+                         seconds=round((datetime.now() - started).total_seconds(), 1))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("autoapply_resume_prefetch_failed", job_id=j, error=str(exc)[:200])
+            finally:
+                ready[j].set()
+
+    threading.Thread(target=work, daemon=True).start()
+    return ready
 
 
 def candidates(tried: dict, since: datetime | None = None) -> list[dict]:
@@ -222,7 +251,11 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
             log.info("autoapply_candidates", matched=len(jobs))
             if not jobs:
                 return {"ran": True, "applied": 0, "why": "no LinkedIn match in this run's scrape"}
+            ready = prefetch_resumes([j["job_id"] for j in jobs])
             for job in jobs:
+                # Its tailored PDF is rendered before LinkedIn is opened, never while the
+                # resume step waits (a render takes ~30 s); the next job's renders meanwhile.
+                ready[job["job_id"]].wait(timeout=180)
                 filled = len([d for d in done if d["status"] in ("applied", "dry_run")])
                 if int(c.per_run) and filled >= int(c.per_run):
                     break

@@ -138,7 +138,10 @@ def profile_facts(profile: dict[str, Any]) -> dict[str, Any]:
         out["portfolio"] = portfolio
     years = settings.operator.get("years_experience")
     if years is not None:
-        out["years_experience"] = years
+        # Whole years, rounded up, on every form (the operator's call: 2, never 1.5).
+        import math
+
+        out["years_experience"] = math.ceil(float(years))
 
     current = [w for w in profile.get("work_experience") or []
                if w.get("employment_type", "employment") == "employment"

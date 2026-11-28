@@ -234,3 +234,54 @@ def test_the_docx_button_fits_telegrams_callback_limit():
     assert ta.docx_button("linkedin-li-4474023752").callback_data == "rd:linkedin-li-4474023752"
     assert ta.docx_button("x" * 70) is None
     assert ta.parse_docx_callback("st:a:job1") is None
+
+
+def test_one_render_per_resume_at_a_time(monkeypatch) -> None:
+    """The bot's upload and the Downloads copy ask together: the second waits and reuses."""
+    import threading
+    import time
+
+    from src.endpoint import cache
+
+    built = []
+    stored = {}
+
+    monkeypatch.setattr(cache, "_load_selection", lambda js, jid: object())
+    monkeypatch.setattr(cache, "header_for", lambda jid, s: None)
+    monkeypatch.setattr(cache, "cache_key_of", lambda jid, sel, h: "k1")
+    monkeypatch.setattr(cache, "_check_render_cache", lambda s, k, e: "s3://x" if k in stored else None)
+    monkeypatch.setattr(cache, "cache_get_bytes", lambda k, e: stored.get(k))
+
+    def assemble(sel, key, ext, s, cache=True, header=None):
+        time.sleep(0.2)
+        built.append(key)
+        stored[key] = b"PDF"
+        return b"PDF", "s3://x"
+
+    monkeypatch.setattr(cache, "_assemble_and_cache", assemble)
+
+    class Session:
+        def get(self, model, jid):
+            return type("A", (), {"selection_json": {}})()
+
+    out = []
+    threads = [threading.Thread(target=lambda: out.append(cache.get_or_build("j1", "pdf", Session())))
+               for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert built == ["k1"] and [o[0] for o in out] == [b"PDF", b"PDF"]
+
+
+def test_the_bots_pipeline_keeps_its_telegram_render(monkeypatch) -> None:
+    from src.endpoint import cache
+
+    seen = []
+    monkeypatch.setattr(cache, "delivery", lambda: "telegram")
+    monkeypatch.setattr(cache, "get_or_build", lambda j, e, s, use_cache=True: seen.append(use_cache) or (b"P", "x"))
+    monkeypatch.delenv("JOBBOT_CACHE_RENDERS", raising=False)
+    cache.for_notification("j1", None)
+    monkeypatch.setenv("JOBBOT_CACHE_RENDERS", "1")
+    cache.for_notification("j1", None)
+    assert seen == [False, True]

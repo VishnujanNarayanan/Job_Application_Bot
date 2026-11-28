@@ -210,10 +210,11 @@ def test_a_lone_checkbox_ticks_on_a_yes_choice(facts) -> None:
 
 def test_years_and_months_split_and_currency(facts) -> None:
     facts.values["years_experience"] = 1.5
-    assert _one(facts, "Total Work Experience (Years)", "combobox")["value"] == "1"
-    assert _one(facts, "Total Work Experience (Months)", "combobox")["value"] == "6"
-    assert _one(facts, "Total Relevant Experience(Years)", "combobox")["value"] == "1"
-    assert _one(facts, "Years of experience", "number")["value"] == "1.5"
+    # The operator's rule: whole years, rounded up -- 2, never 1.5 (a Years+Months pair: 2 / 0).
+    assert _one(facts, "Total Work Experience (Years)", "combobox")["value"] == "2"
+    assert _one(facts, "Total Work Experience (Months)", "combobox")["value"] == "24"  # asked alone: all of it
+    assert _one(facts, "Total Relevant Experience(Years)", "combobox")["value"] == "2"
+    assert _one(facts, "Years of experience", "number")["value"] == "2"
     d = _one(facts, "Paid in (Currency)", "combobox")
     assert d["value"] == "INR" and "Indian Rupee" in d["alts"]
     assert _one(facts, "Expected Gross Pay", "text")["key"] == "expected_ctc"
@@ -279,3 +280,16 @@ def test_no_field_waits_longer_than_eight_seconds() -> None:
     assert "const FIELD_BUDGET_MS = 8000;" in js
     assert "const POLL_MS = 100;" in js
     assert js.count("Date.now() + FIELD_BUDGET_MS") == 2  # dropdowns and search boxes
+
+
+def test_months_alone_are_all_of_it_beside_years_the_remainder(facts) -> None:
+    """Whole years, rounded up: 2. A months box beside a years box is the remainder (0);
+    a question asked in months alone wants the whole figure (24)."""
+    from src.autofill.matcher import match_form
+
+    facts.values["years_experience"] = 1.5
+    pair = match_form([{"ref": "y", "label": "Total Work Experience (Years)", "type": "text"},
+                       {"ref": "m", "label": "Total Work Experience (Months)", "type": "text"}], facts)
+    assert [d["value"] for d in pair] == ["2", "0"]
+    assert _one(facts, "How many months of experience do you have with Python?", "text")["value"] == "24"
+    assert _one(facts, "Total experience in months", "number")["value"] == "24"

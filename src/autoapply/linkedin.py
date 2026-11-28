@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import random
 import re
 import time
@@ -156,7 +157,7 @@ def _inject(page, job_id: str) -> None:
     page.evaluate("(a) => { window.__jabAutoApply = a; window.__jabPasses = 0; }",
                   {"jobId": job_id, "scope": SCOPE, "overwrite": True, "noFiles": True,
                    "neverSkip": never_skip(),
-                   "years": float(settings.operator.get("years_experience") or 1)})
+                   "years": math.ceil(float(settings.operator.get("years_experience") or 1))})
     page.evaluate(GM_SHIM)
     page.evaluate(script)
 
@@ -373,26 +374,6 @@ def _fail(page, job_id: str, tag: str, status: str, detail: str, questions: list
     return Outcome(status, detail, shot, list(questions or []))
 
 
-def _whole_years(modal) -> int:
-    """LinkedIn's number boxes take whole numbers only ("Invalid input" for 1.5): a
-    decimal answer to a "how many years" question is rounded UP (the operator's call)."""
-    return modal.evaluate("""(m) => {
-        let n = 0;
-        const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        for (const i of m.querySelectorAll('input[type=text], input[type=number], input:not([type])')) {
-            const v = (i.value || '').trim();
-            if (!/^\\d+\\.\\d+$/.test(v)) continue;
-            const box = i.closest('[componentkey], [data-test-form-element], fieldset, div');
-            const q = (i.getAttribute('aria-label') || '') + ' ' + (box ? box.innerText : '');
-            if (!/years?|yrs/i.test(q)) continue;
-            set.call(i, String(Math.ceil(parseFloat(v))));
-            i.dispatchEvent(new Event('input', {bubbles: true}));
-            i.dispatchEvent(new Event('change', {bubbles: true}));
-            n += 1;
-        }
-        return n; }""")
-
-
 def _signature(modal) -> str:
     """What the step shows: if pressing Next leaves it unchanged, LinkedIn refused it."""
     try:
@@ -444,7 +425,6 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
             before = page.evaluate("() => window.__jabPasses || 0")
             _wait_filled(page, before if step else -1)  # moves on as soon as the step is filled; 8 s at most
         _pause(0.2, 0.5)
-        _whole_years(modal)
         problems = _problems(modal)
         if problems:
             return _fail(page, job_id, "unanswered", "skipped", "a question has no stored answer", problems, job_url)

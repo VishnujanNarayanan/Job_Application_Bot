@@ -170,7 +170,10 @@ fields:
            "how many years of experience", "work experience years", "overall experience", "relevant experience",
            "experience in years", "years of relevant experience", "total work experience",
            "years of work experience", "how many years of work experience", "years of professional experience",
-           "years of hands on experience", "years of industry experience", "years of experience do you have"]
+           "years of hands on experience", "years of industry experience", "years of experience do you have",
+           "years of hands on professional experience", "how many years of hands on", "years of professional",
+           "months of experience", "how many months of experience", "months of work experience",
+           "months of professional experience", "months of hands on experience", "experience in months"]
     not: ["describe", "tell us", "explain", "managing", "management", "leading", "people"]
   degree:
     asks: ["degree", "highest degree", "highest qualification", "qualification", "highest level of education",
@@ -189,7 +192,9 @@ fields:
   # --- availability ---------------------------------------------------------
   notice_period:
     asks: ["notice period", "notice", "how soon can you join", "joining time", "time to join", "availability to join",
-           "days notice", "official notice period", "how soon can you start", "how early can you join"]
+           "days notice", "official notice period", "how soon can you start", "how early can you join",
+           "how many days can you join", "in how many days can you join", "how many days to join",
+           "days to join", "join us in how many days", "how many days will you take to join"]
     not: ["are you serving", "currently serving", "buyout", "buy out", "negotiable", "last working", "privacy notice", "notice of",
           "notice at collection", "read the", "acknowledge", "agree"]
   start_date:
@@ -214,6 +219,9 @@ fields:
            "current annual ctc", "current fixed ctc", "current annual salary", "current pay", "existing ctc",
            "current cost to company", "last drawn salary", "last drawn ctc", "ctc current"]
     not: ["negotiable", "variable"]
+  self_rating:
+    asks: ["on a scale of", "rate your", "rate yourself", "how would you rate", "scale of 1", "rating out of"]
+    not: ["rate of pay", "hourly rate", "daily rate", "pay rate", "interest rate"]
   expected_ctc:
     asks: ["expected ctc", "expected salary", "expected compensation", "desired salary", "salary expectation",
            "salary expectations", "expected package", "compensation expectation", "compensation expectations",

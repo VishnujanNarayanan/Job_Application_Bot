@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import tempfile
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -148,10 +150,30 @@ def get_or_build(
             return data, _CONTENT_TYPES[ext]
         # Cache table entry exists but S3 object was deleted — fall through
 
-    # Cache miss: assemble the DOCX
-    data, s3_uri = _assemble_and_cache(selection, cache_key, ext, db_session, cache=use_cache,
-                                       header=header)
+    if not use_cache:
+        data, _ = _assemble_and_cache(selection, cache_key, ext, db_session, cache=False, header=header)
+        return data, _CONTENT_TYPES[ext]
+    # Cache miss. One render per resume at a time (a LibreOffice run takes ~30 s): a second
+    # request for the same file -- the Easy Apply bot's upload and the Downloads copy arrive
+    # together -- waits for the first and is served from the cache it filled.
+    with _render_lock(cache_key, ext):
+        s3_uri = _check_render_cache(db_session, cache_key, ext)
+        if s3_uri:
+            data = cache_get_bytes(cache_key, ext)
+            if data is not None:
+                return data, _CONTENT_TYPES[ext]
+        data, s3_uri = _assemble_and_cache(selection, cache_key, ext, db_session, cache=True,
+                                           header=header)
     return data, _CONTENT_TYPES[ext]
+
+
+_RENDER_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+_RENDER_LOCKS_GUARD = threading.Lock()
+
+
+def _render_lock(cache_key: str, ext: str) -> threading.Lock:
+    with _RENDER_LOCKS_GUARD:
+        return _RENDER_LOCKS.setdefault((cache_key, ext), threading.Lock())
 
 
 def delivery() -> str:
@@ -177,8 +199,11 @@ def for_notification(job_id: str, db_session: Session) -> dict:
             return {}
         return {"resume_urls": prerender(
             job_id, db_session, expires_seconds=int(settings.prerender.link_expiry_days) * 86400)}
+    # The Easy Apply bot's runs (JOBBOT_CACHE_RENDERS=1) keep this render: the bot uploads the
+    # same PDF minutes later, and the Downloads copy wants it too -- one render, not three.
+    keep = os.environ.get("JOBBOT_CACHE_RENDERS") == "1"
     try:
-        data, _ = get_or_build(job_id, "pdf", db_session, use_cache=False)
+        data, _ = get_or_build(job_id, "pdf", db_session, use_cache=keep)
     except Exception as exc:
         log.error("resume_attach_failed", job_id=job_id, error=str(exc), exc_info=True)
         return {}
