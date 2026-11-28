@@ -65,6 +65,7 @@ class Outcome:
     screenshot: str = ""
     questions: list[str] = field(default_factory=list)
     defaults: list[str] = field(default_factory=list)   # questions answered by the never-skip defaults
+    asks: list[dict] = field(default_factory=list)      # those questions in full (options, guess): asked on Telegram
 
 
 def _pause(lo: float = 0.7, hi: float = 1.8) -> None:
@@ -145,6 +146,11 @@ def _modal(page):
         if el and el.is_visible():
             return el
     return None
+
+
+def ask_unknown() -> bool:
+    """A question with no saved answer holds the job and is asked on Telegram (``autoapply.ask_unknown``)."""
+    return bool(settings.autoapply.get("ask_unknown", True))
 
 
 def never_skip() -> bool:
@@ -441,7 +447,15 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
         if btn is None:
             return _fail(page, job_id, "stuck", "error", "no Next / Review / Submit button found", job_url=job_url)
         if re.match(r"submit application", label, re.I):
-            defaults = [f"{d['question'][:90]} → {d['answer']}" for d in page.evaluate("() => window.__jabFallbacks || []")]
+            fallbacks = page.evaluate("() => window.__jabFallbacks || []")
+            defaults = [f"{d['question'][:90]} → {d['answer']}" for d in fallbacks]
+            if fallbacks and ask_unknown():
+                # Questions with no saved answer: not sent with guesses. The job waits, unapplied,
+                # and the questions go to the operator on Telegram (src/autoapply/questions.py).
+                shot = _shot(page, job_id, "waiting")
+                _discard(page)
+                return Outcome("waiting", f"{len(fallbacks)} question(s) need your answer on Telegram",
+                               shot, [d["question"] for d in fallbacks], defaults, asks=fallbacks)
             if dry_run:
                 shot = _shot(page, job_id, "ready-to-submit")
                 _discard(page)

@@ -101,8 +101,22 @@ def _without_citizenship(monkeypatch) -> None:
     monkeypatch.setattr("tests.e2e.harness.load_facts", without)
 
 
+def test_an_unknown_question_holds_the_job_and_is_asked(board, monkeypatch) -> None:
+    """The operator's rule: no guesses. The form is filled through every page (so all its
+    unknown questions are collected at once), then closed unsent; the job waits."""
+    _without_citizenship(monkeypatch)  # the sponsorship question now has no stored answer
+    page = board.new_page()
+    out = linkedin.easy_apply(page, "linkedin-li-1234567890", JOB_URL, dry_run=False, log=structlog.get_logger())
+    assert out.status == "waiting", out
+    ask = next(a for a in out.asks if "sponsorship" in a["question"].lower())
+    assert ask["options"] == ["Yes", "No"] and ask["answer"] == "No"   # the guess, shown, never sent
+    assert page.evaluate("() => window.__submitted") is None
+    assert page.evaluate("() => window.__discarded") is True
+
+
 def test_never_skip_answers_by_default_and_reports_it(board, monkeypatch) -> None:
     _without_citizenship(monkeypatch)  # the sponsorship question now has no stored answer
+    monkeypatch.setattr(linkedin, "ask_unknown", lambda: False)  # the old way: apply with the guess
     page = board.new_page()
     out = linkedin.easy_apply(page, "linkedin-li-1234567890", JOB_URL, dry_run=False, log=structlog.get_logger())
     assert out.status == "applied", out

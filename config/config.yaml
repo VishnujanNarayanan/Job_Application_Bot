@@ -1034,6 +1034,7 @@ autoapply:
   find_jobs_in: edge        # edge: search LinkedIn in the Job Bot Edge (no 429s); pipeline: JobSpy scrape
   max_found_per_run: 40     # job pages read per run at most
   ignore_applicants: true   # the bot's runs: applicant count neither skips nor marks down a job
+  ask_unknown: true         # a question with no saved answer: job waits; asked on the questions bot (TELEGRAM_QUESTIONS_BOT_TOKEN)
   easy_apply_only: true     # the bot's scrape asks LinkedIn for Easy Apply postings only (normal runs don't)
   per_run: 0               # 0: every Easy Apply match of the run, up to max_per_day
   never_skip: true          # a required question with no answer gets a default (reported), not a skip

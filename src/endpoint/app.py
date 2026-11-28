@@ -47,8 +47,14 @@ def _poll_taps(stop: threading.Event, every: float) -> None:
     """
     from src.telegram_actions import process_pending_taps
 
+    from src.autoapply import questions
+
     while not stop.wait(every):
         process_pending_taps()
+        try:
+            questions.poll()  # the Easy Apply bot's questions bot: the operator's answers
+        except Exception as exc:  # noqa: BLE001 - the taps keep going
+            log.warning("questions_poll_failed", error=str(exc)[:200])
 
 
 @asynccontextmanager

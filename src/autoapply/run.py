@@ -239,6 +239,10 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
                 found = find_jobs(context)
         run_pipeline(found)  # the search term, last hour only: its matches are this run's jobs
 
+    # Answers given on the questions bot since the last run (the endpoint polls too).
+    from src.autoapply import questions
+
+    questions.poll()
     # Dry runs keep their own list: each one moves to a new job, and none blocks a real apply later.
     tried = {**state.get("tried", {}), **(state.get("dry_tried", {}) if dry else {})}
     done = []
@@ -248,7 +252,13 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
             # This run's scrape of the search term (last hour), matched and tailored by the
             # pipeline: every one with an Easy Apply button is applied to, up to the daily cap.
             jobs = candidates(tried, since=since)
-            log.info("autoapply_candidates", matched=len(jobs))
+            # Jobs that waited for answers come first once every question of theirs is answered.
+            waiting = state.setdefault("waiting", {})
+            ready_again = [w["job"] for j, w in waiting.items()
+                           if not questions.unanswered(w["questions"]) and j not in tried]
+            jobs = ready_again + [j for j in jobs if j["job_id"] not in {r["job_id"] for r in ready_again}
+                                  and j["job_id"] not in waiting]
+            log.info("autoapply_candidates", matched=len(jobs), answered_waiting=len(ready_again))
             if not jobs:
                 return {"ran": True, "applied": 0, "why": "no LinkedIn match in this run's scrape"}
             ready = prefetch_resumes([j["job_id"] for j in jobs])
@@ -277,6 +287,15 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
                         except Exception:  # noqa: BLE001
                             pass
                 log.info("autoapply_outcome", job_id=job["job_id"], status=outcome.status, detail=outcome.detail)
+                if outcome.status == "waiting":
+                    # Unapplied until answered: not "tried", so a later run applies it.
+                    qids = questions.ask(outcome.asks, job)
+                    state.setdefault("waiting", {})[job["job_id"]] = {"job": job, "questions": qids,
+                                                                     "since": local.isoformat()}
+                    done.append({**job, "status": "waiting", "detail": outcome.detail})
+                    save_state(state)
+                    continue
+                state.get("waiting", {}).pop(job["job_id"], None)
                 record = {"status": outcome.status, "detail": outcome.detail, "at": local.isoformat(),
                           "role": job["role"], "company": job["company"], "screenshot": outcome.screenshot,
                           "questions": outcome.questions}
