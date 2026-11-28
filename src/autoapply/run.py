@@ -82,8 +82,32 @@ def notify(text: str) -> None:
     t.join(timeout=30)
 
 
-def run_pipeline() -> None:
-    """Search, score and tailor for the search term, as a normal pipeline run would."""
+def find_jobs(context) -> Path | None:
+    """The search term's Easy Apply postings from the last hour, read in the Job Bot Edge.
+
+    LinkedIn throttles the pipeline's plain-Python scrape (429) but not a real
+    browser, so the bot finds its jobs here and hands them to the pipeline.
+    """
+    from src.autoapply.discover import discover, write
+
+    c = cfg()
+    page = context.new_page()
+    try:
+        rows = discover(page, str(c.search_term), c.get("location"),
+                        int(c.get("posted_within_minutes", 60)) * 60,
+                        max_jobs=int(c.get("max_found_per_run", 40)), log=log.info)
+    finally:
+        page.close()
+    log.info("autoapply_found", jobs=len(rows))
+    return write(rows, ROOT / "data" / "autoapply" / "found.json")
+
+
+def run_pipeline(jobs_file: Path | None = None) -> None:
+    """Score and tailor this run's jobs, as a normal pipeline run would.
+
+    With ``jobs_file`` (found in Edge) nothing is scraped; without it the pipeline
+    scrapes the term itself (LinkedIn, Easy Apply, last hour).
+    """
     out = ROOT / "data" / "logs" / "autoapply-pipeline.log"
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("a") as fh:
@@ -91,7 +115,9 @@ def run_pipeline() -> None:
         fh.flush()
         hours = max(1, -(-int(cfg().get("posted_within_minutes", 60)) // 60))
         args = [sys.executable, "-m", "src.main", "--term", str(cfg().search_term), "--hours-old", str(hours)]
-        if bool(cfg().get("easy_apply_only", True)):
+        if jobs_file is not None:
+            args += ["--jobs-file", str(jobs_file)]
+        elif bool(cfg().get("easy_apply_only", True)):
             args.append("--easy-apply")  # LinkedIn's Easy Apply postings only: for this bot, never other runs
         subprocess.run(args,
                        cwd=ROOT, stdout=fh, stderr=subprocess.STDOUT, timeout=40 * 60, check=False)
@@ -165,21 +191,26 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
     if not dry and applied_today(state, day) >= int(c.max_per_day):
         return {"ran": False, "why": "daily cap reached"}
 
-    since = None
-    if bool(c.run_pipeline_first) if pipeline is None else pipeline:
-        log.info("autoapply_pipeline_start", term=str(c.search_term))
-        since = datetime.now(timezone.utc) - timedelta(minutes=1)
-        run_pipeline()  # the search term, last hour only: its matches are this run's jobs
-
-    # Dry runs keep their own list: each one moves to a new job, and none blocks a real apply later.
-    tried = {**state.get("tried", {}), **(state.get("dry_tried", {}) if dry else {})}
-    done = []
     # A Job Bot Edge that stopped navigating (it happens after long sessions) is restarted first.
     with edge.attached() as context:
         stuck = not edge.healthy(context)
     if stuck:
         log.warning("autoapply_edge_restart", why="a new tab did not navigate")
         edge.restart()
+
+    since = None
+    if bool(c.run_pipeline_first) if pipeline is None else pipeline:
+        log.info("autoapply_pipeline_start", term=str(c.search_term))
+        since = datetime.now(timezone.utc) - timedelta(minutes=1)
+        found = None
+        if str(c.get("find_jobs_in", "edge")) == "edge":
+            with edge.attached() as context:
+                found = find_jobs(context)
+        run_pipeline(found)  # the search term, last hour only: its matches are this run's jobs
+
+    # Dry runs keep their own list: each one moves to a new job, and none blocks a real apply later.
+    tried = {**state.get("tried", {}), **(state.get("dry_tried", {}) if dry else {})}
+    done = []
     with edge.attached() as context:
         page = context.new_page()
         try:

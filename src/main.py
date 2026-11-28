@@ -110,6 +110,11 @@ def main(argv: list[str] | None = None) -> int:
         help="only postings from the last N hours (default: scraper.hours_old)",
     )
     parser.add_argument(
+        "--jobs-file", metavar="PATH",
+        help="score and tailor these jobs (JobSpy-shaped JSON rows) instead of scraping; "
+             "the Easy Apply bot finds its jobs in the Job Bot Edge and hands them over this way",
+    )
+    parser.add_argument(
         "--easy-apply", action="store_true",
         help="LinkedIn only, Easy Apply postings only (the Easy Apply bot's runs; "
              "normal runs keep every site and posting)",
@@ -155,7 +160,7 @@ def main(argv: list[str] | None = None) -> int:
                 log.info("run_cancelled", reason="term_menu")
                 return 0
         return _run(args.dry_run, log, manual_terms=manual_terms, hours_old=args.hours_old,
-                    easy_apply=args.easy_apply)
+                    easy_apply=args.easy_apply, jobs_file=args.jobs_file)
     finally:
         flusher.join()
         import fcntl as _fcntl
@@ -198,7 +203,7 @@ def _record_taps(log, when: str) -> None:
 
 
 def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: int | None = None,
-         easy_apply: bool = False) -> int:
+         easy_apply: bool = False, jobs_file: str | None = None) -> int:
     from src import analytics
     from src.config import settings, resolve_endpoint_base_url
     from src.endpoint.cache import for_notification
@@ -290,26 +295,29 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: i
         for term in run_terms:
             term_stats: dict = {}
             try:
-                term_jobs = jobspy_wrapper.scrape(
-                    term,
-                    # The Easy Apply bot: LinkedIn only, Easy Apply postings only.
-                    sites=["linkedin"] if easy_apply else list(cfg.scraper.sites),
-                    country=str(cfg.scraper.country),
-                    location=cfg.scraper.get("location"),
-                    results_wanted=int(cfg.scraper.results_wanted_per_term),
-                    hours_old=hours_old,
-                    fetch_description=bool(cfg.scraper.fetch_description),
-                    linkedin_results_wanted=int(rl.linkedin_results_wanted),
-                    per_site=bool(rl.per_site),
-                    max_retries=int(rl.max_retries),
-                    backoff_base_seconds=float(rl.backoff_base_seconds),
-                    inter_site_delay_seconds=float(rl.inter_site_delay_seconds),
-                    proxies=list(rl.proxies),
-                    remote_results_wanted=int(remote_cfg.get("results_wanted", 0)),
-                    remote_hours_old=remote_cfg.get("hours_old"),
-                    stats=term_stats,
-                    easy_apply=easy_apply,
-                )
+                if jobs_file:  # found elsewhere (the Easy Apply bot, in Edge): no scrape
+                    term_jobs = jobspy_wrapper.jobs_from_file(jobs_file)
+                else:
+                    term_jobs = jobspy_wrapper.scrape(
+                        term,
+                        # The Easy Apply bot: LinkedIn only, Easy Apply postings only.
+                        sites=["linkedin"] if easy_apply else list(cfg.scraper.sites),
+                        country=str(cfg.scraper.country),
+                        location=cfg.scraper.get("location"),
+                        results_wanted=int(cfg.scraper.results_wanted_per_term),
+                        hours_old=hours_old,
+                        fetch_description=bool(cfg.scraper.fetch_description),
+                        linkedin_results_wanted=int(rl.linkedin_results_wanted),
+                        per_site=bool(rl.per_site),
+                        max_retries=int(rl.max_retries),
+                        backoff_base_seconds=float(rl.backoff_base_seconds),
+                        inter_site_delay_seconds=float(rl.inter_site_delay_seconds),
+                        proxies=list(rl.proxies),
+                        remote_results_wanted=int(remote_cfg.get("results_wanted", 0)),
+                        remote_hours_old=remote_cfg.get("hours_old"),
+                        stats=term_stats,
+                        easy_apply=easy_apply,
+                    )
             except Exception as exc:
                 # One term failing must not discard the other terms' results.
                 log.error("scraper_error", term=term, error=str(exc))
@@ -356,7 +364,8 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: i
             log.warning("ats_coverage_failed", error=str(exc))
 
         # --- Backlog: earlier jobs that never got a verdict, processed FIRST ---
-        backlog = _load_backlog(
+        # A handed-over list (the Easy Apply bot) is exactly this run's jobs: no backlog.
+        backlog = [] if jobs_file else _load_backlog(
             session, now, int(cfg.scraper.get("backlog_days", 0) or 0), seen_job_ids
         )
         refreshed_changed = 0

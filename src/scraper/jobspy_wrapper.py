@@ -20,6 +20,7 @@ import re
 import time
 from collections.abc import Sequence
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -355,9 +356,7 @@ def fetch_linkedin_job(job_id: str) -> dict[str, Any]:
     applicants_text, applicants_count, closed and url.
     """
     import requests
-    from bs4 import BeautifulSoup
     from jobspy.linkedin.constant import headers
-    from jobspy.util import markdown_converter, remove_attributes
 
     url = f"https://www.linkedin.com/jobs/view/{job_id}"
     try:
@@ -368,7 +367,17 @@ def fetch_linkedin_job(job_id: str) -> dict[str, Any]:
     if "linkedin.com/signup" in resp.url or "authwall" in resp.url:
         raise LinkedInFetchError("LinkedIn asked for a login; paste the advert text instead")
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    return parse_linkedin_job_html(resp.text, url)
+
+
+def parse_linkedin_job_html(html: str, url: str) -> dict[str, Any]:
+    """Title, company, location, description, applicants and closed state from a
+    LinkedIn public job page (or its ``jobs-guest/jobs/api/jobPosting`` fragment),
+    converted exactly as JobSpy converts descriptions."""
+    from bs4 import BeautifulSoup
+    from jobspy.util import markdown_converter, remove_attributes
+
+    soup = BeautifulSoup(html, "html.parser")
 
     def text_of(*selectors: str) -> str | None:
         for sel in selectors:
@@ -383,15 +392,15 @@ def fetch_linkedin_job(job_id: str) -> dict[str, Any]:
             "the page has no job description (LinkedIn may have changed it);"
             " paste the advert text instead")
     description = markdown_converter(remove_attributes(body).prettify(formatter="html"))
-    caption = applicant_caption(resp.text)
+    caption = applicant_caption(html)
     return {
-        "title": text_of("h1.top-card-layout__title", "h1.topcard__title"),
+        "title": text_of("h1.top-card-layout__title", "h1.topcard__title", "h2.top-card-layout__title"),
         "company": text_of("a.topcard__org-name-link", "span.topcard__flavor"),
         "location": text_of("span.topcard__flavor--bullet"),
         "description": (description or "").strip(),
         "applicants_text": caption,
         "applicants_count": parse_applicants(caption),
-        "closed": bool(_CLOSED.search(resp.text)),
+        "closed": bool(_CLOSED.search(html)),
         "url": url,
     }
 
@@ -424,6 +433,19 @@ def _row_to_job(row: dict[str, Any]) -> AllJobs | None:
         job_level=_as_str(row.get("job_level")),
         experience_range=_as_str(row.get("experience_range")),
     )
+
+
+def jobs_from_file(path: str | Path) -> list[AllJobs]:
+    """``AllJobs`` from a JSON list of JobSpy-shaped rows (``src.main --jobs-file``)."""
+    import json
+
+    jobs, seen = [], set()
+    for record in json.loads(Path(path).read_text()):
+        job = _row_to_job(record)
+        if job is not None and job.job_id not in seen:
+            seen.add(job.job_id)
+            jobs.append(job)
+    return jobs
 
 
 def _scrape_with_retry(
