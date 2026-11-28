@@ -1,0 +1,43 @@
+<!doctype html><html><head><title>Apply - Careers</title></head><body>
+<!-- Awkward designs: a web component, a label placed above with no link, ARIA radios and switch,
+     a rich-text editor, a read-only picker, a select hidden behind a styled widget, a phone box that
+     reformats, a box that only takes real typing, and a control with no standard markup at all. -->
+<h1>Job application</h1><p>Upload your resume and apply.</p>
+<form id="f" onsubmit="event.preventDefault()">
+<job-field></job-field>
+<div class="row"><div class="q">Current company</div><input id="co" type="text"></div>
+<div><span id="rl">Are you willing to relocate?</span>
+  <div role="radiogroup" aria-labelledby="rl" id="rg">
+    <div role="radio" aria-checked="false" tabindex="0">Yes</div><div role="radio" aria-checked="false" tabindex="0">No</div></div></div>
+<div><span id="sw">Willing to relocate</span><div role="switch" aria-checked="false" aria-labelledby="sw" tabindex="0" id="swi"></div></div>
+<div><label id="ll">Languages known</label><div contenteditable="true" aria-labelledby="ll" id="ed" style="min-height:40px;border:1px solid #999"></div></div>
+<div><label for="np">Notice period</label><input id="np" readonly aria-haspopup="listbox" aria-controls="npl">
+  <ul id="npl" role="listbox" style="display:none"><li role="option">Immediate</li><li role="option">15 days</li><li role="option">30 days</li></ul></div>
+<div><label for="cty">Country</label><select id="cty" style="display:none"><option value="">Select</option><option>India</option><option>USA</option></select>
+  <span class="select2-container" id="cw" style="display:inline-block;width:150px;border:1px solid #999">Select</span></div>
+<div><label for="ph">Phone</label><input id="ph" type="tel"></div>
+<div><label for="em">Email</label><input id="em" type="email" class="keys-only"></div>
+<div id="fs-box"><div class="q">Highest qualification *</div><div class="fancy-select" tabindex="0" style="width:200px;height:28px;border:1px solid #999"></div>
+  <span class="err" id="fs-err"></span></div>
+<button type="submit">Submit application</button>
+</form>
+<script>
+customElements.define('job-field', class extends HTMLElement {
+  connectedCallback() { const r = this.attachShadow({mode: 'open'});
+    r.innerHTML = '<label for="fn">First name</label><input id="fn" type="text">'; } });
+document.querySelectorAll('[role=radio]').forEach((r) => r.addEventListener('click', () => {
+  r.parentElement.querySelectorAll('[role=radio]').forEach((x) => x.setAttribute('aria-checked', 'false'));
+  r.setAttribute('aria-checked', 'true'); }));
+document.getElementById('swi').addEventListener('click', (e) => e.target.setAttribute('aria-checked', e.target.getAttribute('aria-checked') === 'true' ? 'false' : 'true'));
+const np = document.getElementById('np'), npl = document.getElementById('npl');
+np.addEventListener('click', () => { npl.style.display = 'block'; });
+npl.querySelectorAll('li').forEach((li) => li.addEventListener('click', () => { np.value = li.textContent; npl.style.display = 'none'; }));
+const cty = document.getElementById('cty');
+cty.addEventListener('change', () => { document.getElementById('cw').textContent = cty.options[cty.selectedIndex].text; });
+document.getElementById('ph').addEventListener('input', (e) => { const d = e.target.value.replace(/\D/g, ''); e.target.value = d.replace(/(\d{5})(\d+)/, '$1 $2'); });
+document.querySelector('.keys-only').addEventListener('input', (e) => { if (!e.data) e.target.value = ''; });
+document.getElementById('f').addEventListener('submit', () => {
+  const fs = document.querySelector('.fancy-select');
+  document.getElementById('fs-err').textContent = fs.textContent ? '' : 'This field is required';
+});
+</script></body></html>

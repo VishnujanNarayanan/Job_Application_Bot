@@ -1,0 +1,7 @@
+<!doctype html><html><head><title>Apply</title></head><body><form>
+<!-- An ordinary file input, with a "Choose file" caption beside it that must not count as a second upload. -->
+<label for="a">First name</label><input id="a"><label for="b">Email</label><input id="b" type="email">
+<label for="c">Phone</label><input id="c"><div><label for="cv">Resume</label><input type="file" id="cv"></div><span>Choose file (PDF)</span>
+<p id="out"></p></form><script>
+document.getElementById('cv').addEventListener('change', (e) => { document.getElementById('out').textContent = 'picked ' + e.target.files[0].name; });
+</script></body></html>

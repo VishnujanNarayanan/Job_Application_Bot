@@ -1,0 +1,39 @@
+<!doctype html><html><head><title>Career Opportunities</title></head><body>
+<!-- SuccessFactors-shaped: labels in a separate column, "No Selection" comboboxes whose list
+     opens on click, a CV "+" that opens a dialog holding the only file input, a cover-letter tile. -->
+<table>
+<tr><td><label>* Resume/CV</label></td><td><div class="attachmentField"><div class="attachmentComponentInput"><span>Upload a Resume</span>
+<span role="button" tabindex="0" class="glyphicon glyphicon-plus-sign addAttachments" id="plus"></span><span id="fname"></span></div></div></td></tr>
+<tr><td><label>Cover Letter</label></td><td><div class="attachmentField"><span>Attach a Cover Letter</span>
+<span role="button" tabindex="0" class="addAttachments" id="plus2"></span><span id="cover"></span></div></td></tr>
+<tr><td><label>Country/Region Code:*</label></td><td><select id="cc"><option>- Select -</option><option>United States (+1)</option><option>India (+91)</option></select></td></tr>
+<tr><td><label>Phone Number:*</label></td><td><input id="ph" type="text"></td></tr>
+<tbody id="combos"></tbody>
+</table>
+<script>
+const combos = [["c1", "Country", ["Germany", "India", "United States"], true], ["c2", "State", ["Karnataka", "Maharashtra", "Kerala"], false],
+  ["c3", "Total Work Experience (Years)", ["0", "1", "2", "3"], true], ["c4", "Total Work Experience (Months)", ["0", "3", "6", "9"], false],
+  ["c5", "Notice Period", ["Immediate", "15 Days", "30 Days", "60 Days"], true], ["c6", "Paid in (Currency)", ["EUR", "INR", "USD"], true],
+  ["c7", "Willingness to Travel within India or overseas for the projects?", ["Yes", "No"], true]];
+for (const [id, label, opts, req] of combos) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><label>${label}${req ? '<span>*</span>' : ''}</label></td><td><span class="sfCascadingPicklist">
+    <input role="combobox" placeholder="No Selection" aria-controls="${id}l" id="${id}" aria-expanded="false" type="text" autocomplete="off">
+    <button type="button" tabindex="-1">v</button><ul id="${id}l" role="listbox" style="display:none">${opts.map((o) => `<li role="option"><a>${o}</a></li>`).join('')}</ul></span></td>`;
+  document.getElementById('combos').appendChild(tr);
+}
+document.querySelectorAll('.sfCascadingPicklist').forEach((w) => {
+  const i = w.querySelector('input'), l = w.querySelector('ul');
+  const open = () => { l.style.display = 'block'; };
+  i.addEventListener('click', open); w.querySelector('button').addEventListener('click', open);
+  l.querySelectorAll('li').forEach((li) => li.addEventListener('click', () => { i.value = li.textContent; l.style.display = 'none'; }));
+});
+const dialog = (out) => () => {
+  const d = document.createElement('div'); d.setAttribute('role', 'dialog');
+  d.innerHTML = 'Select a source for your file upload <label>Upload from Device <input type=file></label>';
+  document.body.appendChild(d);
+  d.querySelector('input').addEventListener('change', (e) => { document.getElementById(out).textContent = e.target.files[0].name; d.remove(); });
+};
+document.getElementById('plus').addEventListener('click', dialog('fname'));
+document.getElementById('plus2').addEventListener('click', dialog('cover'));
+</script></body></html>

@@ -1,0 +1,8 @@
+<!doctype html><html><head><title>Upload your Resume</title></head><body><h1>Upload your Resume</h1>
+<!-- A hidden input the page ignores: only a drop works. -->
+<div id="z" style="border:1px dashed #999;padding:30px">Drop your CV here<input type="file" id="fi" style="display:none"></div>
+<p id="out"></p><script>
+const z = document.getElementById('z');
+['dragenter', 'dragover'].forEach((t) => z.addEventListener(t, (e) => e.preventDefault()));
+z.addEventListener('drop', (e) => { e.preventDefault(); document.getElementById('out').textContent = 'Uploaded ' + e.dataTransfer.files[0].name; });
+</script></body></html>

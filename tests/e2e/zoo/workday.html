@@ -1,0 +1,88 @@
+<!doctype html><html><head><title>Careers at Acme</title></head><body>
+<!-- Workday-shaped: listbox buttons, search-and-pick boxes, a pre-selected phone code,
+     numbered Work Experience / Education sections with Month/Year date boxes, a drop zone. -->
+<h2>My Information</h2>
+<div data-automation-id="formField-source"><label for="src">How Did You Hear About Us?<abbr>*</abbr></label>
+  <div data-automation-id="multiselectInputContainer" data-leaves='{"Job Posting Sites":["LinkedIn","Naukri"],"Website":["Company Website","Acme Careers"]}'>
+    <input id="src" data-automation-id="searchBox" placeholder="Search"></div></div>
+<div data-automation-id="formField-legalNameSection_title"><label for="pre">Prefix<abbr>*</abbr></label>
+  <button id="pre" type="button" aria-haspopup="listbox" data-opts="Dr.|Miss|Mr.|Mrs.|Ms.">Select One</button></div>
+<div data-automation-id="formField-legalNameSection_firstName"><label for="fn">First Name</label><input id="fn" type="text"></div>
+<div data-automation-id="formField-addressSection_countryRegion"><label for="reg">Region</label>
+  <button id="reg" type="button" aria-haspopup="listbox" data-opts="Andhra Pradesh|Karnataka|Maharashtra|Kerala">Select One</button></div>
+<div data-automation-id="formField-phoneType"><label for="pt">Phone Device Type<abbr>*</abbr></label>
+  <button id="pt" type="button" aria-haspopup="listbox" data-opts="Landline|Mobile">Select One</button></div>
+<div data-automation-id="formField-countryPhoneCode"><label for="pc">Country / Territory Phone Code</label>
+  <div data-automation-id="multiselectInputContainer"><ul data-automation-id="selectedItemList">
+    <li data-automation-id="selectedItem">India (+91)</li></ul><input id="pc" data-automation-id="searchBox"></div></div>
+<div data-automation-id="formField-phoneNumber"><label for="ph">Phone Number</label><input id="ph" type="text"></div>
+<div role="group" aria-labelledby="we1"><h3 id="we1">Work Experience 1</h3>
+  <div data-automation-id="formField-jobTitle"><label for="jt">Job Title</label><input id="jt" type="text"></div>
+  <div data-automation-id="formField-companyName"><label for="co">Company</label><input id="co" type="text"></div>
+  <div data-automation-id="formField-currentlyWorkHere"><label for="cw">I currently work here</label><input id="cw" type="checkbox"></div>
+  <div data-automation-id="formField-startDate"><label>From</label>
+    <input id="sm" data-automation-id="dateSectionMonth-input" aria-label="Month" placeholder="MM">
+    <input id="sy" data-automation-id="dateSectionYear-input" aria-label="Year" placeholder="YYYY"></div>
+  <div data-automation-id="formField-endDate"><label>To</label>
+    <input id="em" data-automation-id="dateSectionMonth-input" aria-label="Month" placeholder="MM">
+    <input id="ey" data-automation-id="dateSectionYear-input" aria-label="Year" placeholder="YYYY"></div>
+  <div data-automation-id="formField-roleDescription"><label for="rd">Role Description</label><textarea id="rd"></textarea></div>
+</div>
+<div role="group" aria-labelledby="ed1"><h3 id="ed1">Education 1</h3>
+  <div data-automation-id="formField-schoolItem"><label for="sc">School or University</label>
+    <div data-automation-id="multiselectInputContainer" data-leaves='{"":["Example Institute of Technology","Other School"]}'>
+      <input id="sc" data-automation-id="searchBox"></div></div>
+  <div data-automation-id="formField-degree"><label for="dg">Degree</label>
+    <button id="dg" type="button" aria-haspopup="listbox" data-opts="High School|Bachelor of Technology|Master's Degree">Select One</button></div>
+  <div data-automation-id="formField-fieldOfStudy"><label for="fs">Field of Study</label>
+    <div data-automation-id="multiselectInputContainer" data-leaves='{"":["Computer Science","Data Science"]}'>
+      <input id="fs" data-automation-id="searchBox"></div></div>
+  <div data-automation-id="formField-gradeAverage"><label for="gpa">Overall Result (GPA)</label><input id="gpa" type="text"></div>
+  <div data-automation-id="formField-firstYearAttended"><label>From</label><input id="efy" data-automation-id="dateSectionYear-input" aria-label="Year"></div>
+  <div data-automation-id="formField-lastYearAttended"><label>To (Actual or Expected)</label><input id="ely" data-automation-id="dateSectionYear-input" aria-label="Year"></div>
+</div>
+<h3>Resume/CV</h3><div>Upload a file (5MB max)<abbr>*</abbr>
+  <div data-automation-id="formField-resume"><label for="rf">Drop files here or Select files</label>
+  <input id="rf" type="file" data-automation-id="file-upload-input-ref"></div><span id="rfname"></span></div>
+<button type="button">Save and Continue</button>
+<script>
+document.getElementById('rf').addEventListener('change', (e) => { document.getElementById('rfname').textContent = e.target.files[0].name; });
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('button[aria-haspopup="listbox"]');
+  if (!b) return;
+  document.querySelectorAll('[role=listbox]').forEach((l) => l.remove());
+  const ul = document.createElement('ul'); ul.setAttribute('role', 'listbox');
+  for (const t of b.dataset.opts.split('|')) {
+    const li = document.createElement('li'); li.setAttribute('role', 'option'); li.textContent = t;
+    li.addEventListener('click', () => { b.textContent = t; ul.remove(); });
+    ul.appendChild(li);
+  }
+  document.body.appendChild(ul);
+});
+document.querySelectorAll('[data-automation-id="multiselectInputContainer"][data-leaves]').forEach((box) => {
+  const input = box.querySelector('input');
+  const tree = JSON.parse(box.dataset.leaves);
+  const show = (items) => {
+    document.querySelectorAll('[data-automation-id="activeListContainer"]').forEach((l) => l.remove());
+    const list = document.createElement('div'); list.setAttribute('data-automation-id', 'activeListContainer');
+    for (const [text, kids] of items) {
+      const o = document.createElement('div'); o.setAttribute('data-automation-id', 'promptOption');
+      o.textContent = text + (kids ? ' >' : '');
+      o.addEventListener('click', () => {
+        if (kids) return show(kids.map((k) => [k, null]));
+        const ul = box.querySelector('ul') || box.insertBefore(document.createElement('ul'), input);
+        const li = document.createElement('li'); li.setAttribute('data-automation-id', 'selectedItem'); li.textContent = text;
+        ul.appendChild(li); list.remove(); input.value = '';
+      });
+      list.appendChild(o);
+    }
+    document.body.appendChild(list);
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const q = input.value.toLowerCase();
+    const leaves = Object.values(tree).flat().filter((l) => l.toLowerCase().includes(q));
+    show(leaves.length ? leaves.map((l) => [l, null]) : Object.entries(tree).filter(([c]) => c).map(([c, k]) => [c, k]));
+  });
+});
+</script></body></html>

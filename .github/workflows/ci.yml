@@ -47,3 +47,45 @@ jobs:
         env:
           DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
         run: pytest -v
+
+  # The form zoo (#215): every application-form design met on live sites, rebuilt
+  # with made-up data in tests/e2e/zoo, filled by the real userscript in a
+  # headless Chromium. A change that breaks a design that used to fill fails here,
+  # before it is merged. The main job skips these (no Playwright there).
+  form-zoo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up runtime
+        uses: ./.github/actions/setup-runtime
+
+      - name: Install Playwright
+        run: |
+          source .venv/bin/activate
+          pip install -r requirements-e2e.txt
+
+      # The browser build, cached per Playwright version.
+      - name: Cache Playwright browser
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements-e2e.txt') }}
+
+      - name: Install Chromium (headless shell) and its system libraries
+        run: |
+          source .venv/bin/activate
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+            python -m playwright install-deps chromium
+          else
+            python -m playwright install chromium --only-shell --with-deps
+          fi
+
+      - name: Run the form zoo
+        env:
+          DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci"
+        run: |
+          source .venv/bin/activate
+          pytest tests/e2e -v

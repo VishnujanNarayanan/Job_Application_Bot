@@ -241,6 +241,26 @@ Violentmonkey menu → **Send this form to Job Bot (debugging)** saves what each
 field looked like to the script under `data/logs/autofill_debug/` (local,
 gitignored: it can hold what you typed), for a fix to start from.
 
+## The form zoo (tests)
+
+`tests/e2e/zoo/` holds a made-up copy of every form design met on live sites:
+Workday, SuccessFactors, IBM, résumé pickers (drop-only, hidden input,
+drop-listener, plain), chips and toggles, a job board handing over to a
+company site, a slow-loading list, and a gallery of awkward designs. Each one
+is filled by the real userscript in a headless Chromium, against the real
+matcher and fake facts (`tests/e2e/test_form_zoo.py`). CI runs them in its
+own `form-zoo` job on every PR, so a fix for one site can't quietly break
+another. To run them locally:
+
+```
+pip install -r requirements-e2e.txt
+python -m playwright install chromium --only-shell --with-deps
+pytest tests/e2e -v
+```
+
+When a new site shows a new design, add a page for it here, built from the
+debug snapshot, never from the company's real HTML.
+
 ## Limits
 
 - The tailored resume comes from `/resume/<job_id>.pdf`, which needs the

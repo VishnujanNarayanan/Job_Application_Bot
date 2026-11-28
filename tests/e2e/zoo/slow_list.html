@@ -1,0 +1,20 @@
+<!doctype html><html><head><title>Apply</title></head><body><h2>Apply</h2>
+<!-- One Select2-style list whose options load after DELAY ms (set by the test through ?delay=). -->
+<label id="cl">Country</label><span class="select2-container" style="display:inline-block;width:240px;border:1px solid #999">
+<span class="select2-selection" role="combobox" aria-labelledby="cl" tabindex="0"><span class="ph">Select an option</span></span></span>
+<label for="a">First name</label><input id="a"><label for="b">Email</label><input id="b" type="email">
+<script>
+const DELAY = Number(new URLSearchParams(location.search).get('delay') || 0);
+document.querySelector('.select2-selection').addEventListener('mousedown', () => {
+  if (document.querySelector('.select2-dropdown')) return;
+  const dd = document.createElement('span'); dd.className = 'select2-dropdown';
+  dd.innerHTML = '<span class="select2-search"><input class="select2-search__field" type="search"></span><ul role="tree"></ul>';
+  document.body.appendChild(dd); const inp = dd.querySelector('input'); inp.focus();
+  const load = () => { const ul = dd.querySelector('ul'); ul.innerHTML = '<li class="select2-results__option loading-results">Searching…</li>';
+    setTimeout(() => { ul.innerHTML = '';
+      for (const c of ['Germany', 'India', 'Indonesia']) { const li = document.createElement('li'); li.className = 'select2-results__option';
+        li.setAttribute('role', 'treeitem'); li.textContent = c;
+        li.addEventListener('mouseup', () => { document.querySelector('.ph').textContent = c; window.__picked = performance.now(); dd.remove(); }); ul.appendChild(li); } }, DELAY); };
+  inp.addEventListener('input', load); load();
+});
+</script></body></html>

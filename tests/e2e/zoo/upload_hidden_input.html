@@ -1,0 +1,6 @@
+<!doctype html><html><head><title>Upload your Resume</title></head><body><h1>Upload your Resume and we do the rest</h1>
+<!-- Filestack-shaped: a hidden file input inside the drop area. -->
+<div id="z" style="border:1px dashed #999;padding:30px">Drag and drop your resume here or browse files
+<input type="file" id="fi" style="display:none"></div><p id="out"></p><script>
+document.getElementById('fi').addEventListener('change', (e) => { document.getElementById('out').textContent = 'Uploaded ' + e.target.files[0].name; });
+</script></body></html>
