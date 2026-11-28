@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.6.3
+// @version      1.7.0
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -41,6 +41,11 @@
   'use strict';
 
   const ENDPOINT = '__JAB_ENDPOINT__';
+  // Set by the auto-apply bot (src/autoapply) before it injects this script into
+  // LinkedIn's Easy Apply dialog: { jobId, scope }. Only the dialog is read and
+  // filled; the bot itself presses Next / Review / Submit.
+  const AUTO = window.__jabAutoApply || null;
+  const scopeRoot = () => (AUTO && AUTO.scope && document.querySelector(AUTO.scope)) || document;
   const SESSION_KEY = 'jab-session';
   const SESSION_MS = 3 * 3600 * 1000;
   const TAG = /([#&])jab=([^&]*)/;
@@ -168,7 +173,7 @@
       out.push(...r.querySelectorAll(selector));
       for (const host of r.querySelectorAll('*')) if (host.shadowRoot) visit(host.shadowRoot);
     };
-    visit(root || document);
+    visit(root || scopeRoot());
     return out;
   }
 
@@ -1428,6 +1433,7 @@
       say(summary());
     } finally {
       busy = false;
+      window.__jabPasses = (window.__jabPasses || 0) + 1;
     }
   }
 
@@ -1553,6 +1559,14 @@
   }
 
   function start() {
+    if (AUTO) {
+      // Driven by the auto-apply bot: fill the dialog for this job, nothing else.
+      current = { jobId: AUTO.jobId, at: Date.now(), opened: false };
+      document.addEventListener('submit', onSubmitish, true);
+      document.addEventListener('click', onSubmitish, true);
+      run();
+      return;
+    }
     if (BOARD_HOSTS.test(location.hostname)) { onBoard(tagged); return; }
     // Any tagged page: the job is also remembered, for a form embedded in a frame
     // (iCIMS, an embedded Greenhouse) or the next page / tab of the application.

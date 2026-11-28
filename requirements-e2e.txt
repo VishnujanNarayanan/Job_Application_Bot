@@ -1,4 +1,5 @@
-# Browser tests of the autofill userscript (#154, #215): the form zoo in tests/e2e.
+# Playwright: the form zoo's browser tests (tests/e2e) and the Easy Apply bot
+# (src/autoapply, which drives the installed Microsoft Edge; no browser download needed for it).
 # Installed only by CI's form-zoo job and by anyone running those tests:
 #   pip install -r requirements-e2e.txt && python -m playwright install chromium --only-shell --with-deps
 playwright==1.65.2
