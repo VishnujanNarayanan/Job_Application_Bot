@@ -66,6 +66,7 @@ def test_dry_run_fills_every_step_and_stops_before_submit(board) -> None:
     assert linkedin._today_us() in resume, resume                  # the fresh upload, not the pre-selected 11/9 one
     assert page.evaluate("() => window.__azure") == "1.5"
     assert page.evaluate("() => window.__python") == "1.5"         # LinkedIn's remembered "5" replaced by the rule
+    assert page.evaluate("() => window.__whole") == "1"            # "(Only Whole Numbers Allowed)": no 1.5
     assert page.evaluate("() => window.__sponsor") == "No"
 
 

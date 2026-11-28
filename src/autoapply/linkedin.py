@@ -122,9 +122,10 @@ def _easy_button(page):
 def _through_interstitials(page) -> None:
     """LinkedIn sometimes shows a "Job search safety reminder" before the form:
     its "Continue applying" button opens the application."""
-    for _ in range(3):
+    for _ in range(2):
         cont = None
-        for b in page.query_selector_all("dialog[open] button, [role=dialog] button"):
+        # Not always inside the apply dialog: any visible button on the page.
+        for b in page.query_selector_all("button"):
             try:
                 if b.is_visible() and re.fullmatch(r"\s*continue( applying)?\s*", b.inner_text() or "", re.I):
                     cont = b
@@ -134,7 +135,7 @@ def _through_interstitials(page) -> None:
         if cont is None:
             return
         cont.click()
-        _pause(1.0, 2.0)
+        time.sleep(1.0)
 
 
 def _modal(page):
@@ -160,18 +161,27 @@ def _inject(page, job_id: str) -> None:
     page.evaluate(script)
 
 
-def _wait_filled(page, before: int, limit_s: float = 30.0) -> None:
-    """Until the userscript has finished at least one more pass and gone quiet."""
-    deadline = time.monotonic() + limit_s
-    seen = before
-    quiet_since = None
-    while time.monotonic() < deadline:
-        passes = page.evaluate("() => window.__jabPasses || 0")
-        if passes > seen:
-            seen, quiet_since = passes, time.monotonic()
-        elif quiet_since and time.monotonic() - quiet_since > 1.5:
+def _wait_filled(page, before: int, limit_s: float = 60.0) -> None:
+    """Until the userscript has filled this step: as soon as it is done, not a fixed wait.
+
+    It reports ``__jabBusy`` while filling. A step with nothing to fill (the
+    resume list, the review) gets no pass at all, so after ~3 s without one the
+    step counts as filled.
+    """
+    start = time.monotonic()
+    while time.monotonic() - start < limit_s:
+        busy, passes = page.evaluate("() => [!!window.__jabBusy, window.__jabPasses || 0]")
+        if busy:
+            time.sleep(0.2)
+            continue
+        if passes > before:
+            time.sleep(0.6)  # one more look: a filled field can reveal another
+            if not page.evaluate("() => !!window.__jabBusy") and page.evaluate("() => window.__jabPasses || 0") == passes:
+                return
+            continue
+        if time.monotonic() - start > 3.0:
             return
-        time.sleep(0.25)
+        time.sleep(0.2)
 
 
 def _problems(modal) -> list[str]:
@@ -239,8 +249,8 @@ def upload_tailored(page, modal, job_id: str, filename: str) -> bool:
         el.files = dt.files; el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true}));
     }""", {"b64": pdf["b64"], "name": filename})
     stem, today = filename.rsplit(".", 1)[0], _today_us()
-    for _ in range(40):  # the upload takes a moment
-        time.sleep(0.5)
+    for _ in range(60):  # the upload takes a moment
+        time.sleep(0.3)
         chosen = _selected_resume(modal)
         if stem in chosen and today in chosen:
             return True
@@ -267,20 +277,25 @@ def _primary(modal):
 
 
 def _discard(page) -> None:
+    """Close the application without sending it: X, then LinkedIn's "Discard"."""
     modal = _modal(page)
     if not modal:
         return
     close = modal.query_selector("button[aria-label='Dismiss'], button[aria-label*='Close'], button[data-test-modal-close-btn]")
     if close:
         close.click()
-        _pause(0.6, 1.2)
-    for b in page.query_selector_all("button"):
-        try:
-            if b.is_visible() and (b.inner_text() or "").strip().lower() == "discard":
-                b.click()
-                return
-        except Exception:  # noqa: BLE001
-            continue
+    # LinkedIn then asks "Save this application?": wait for it and answer Discard.
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        for b in page.query_selector_all("button"):
+            try:
+                if b.is_visible() and (b.inner_text() or "").strip().lower() == "discard":
+                    b.click()
+                    time.sleep(0.5)
+                    return
+            except Exception:  # noqa: BLE001
+                continue
+        time.sleep(0.3)
 
 
 def _shot(page, job_id: str, tag: str) -> str:
@@ -311,9 +326,15 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
     if button is None:
         return Outcome("not_easy_apply", "no Easy Apply button")
     button.click()
-    page.wait_for_selector(MODAL, timeout=15000)
-    _pause(0.8, 1.6)
-    _through_interstitials(page)
+    # Either the application opens, or a "Job search safety reminder" comes first.
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        _through_interstitials(page)
+        m = _modal(page)
+        if m is not None and m.query_selector("button") and _primary(m)[0] is not None:
+            break
+        time.sleep(0.4)
+    _pause(0.6, 1.2)
     _pause()
     _inject(page, job_id)
     filename = settings.resume_filename

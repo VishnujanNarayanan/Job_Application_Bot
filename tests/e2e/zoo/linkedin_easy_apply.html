@@ -27,6 +27,7 @@ const steps = [
   `<h3>Additional Questions</h3>
    <div><label for="az">How many years of work experience do you have with Microsoft Azure?*</label><input id="az" required></div>
    <div><label for="py">How many years of work experience do you have with Python (Programming Language)?*</label><input id="py" value="5" required></div>
+   <div><label for="wy">How many years of work experience do you have? (Only Whole Numbers Allowed)*</label><input id="wy" required></div>
    <fieldset><legend>Will you now or in the future require sponsorship to work in India?*</legend>
      <label><input type="radio" name="sp" value="Yes" required>Yes</label><label><input type="radio" name="sp" value="No">No</label></fieldset>`,
   `<h3>Review your application</h3><p>Check your details.</p>`,
@@ -56,10 +57,12 @@ document.querySelector('button[aria-label="Easy Apply to this job"]').addEventLi
   at = 0;
   dlg.showModal();
   if (reminder) {
-    const body = dlg.querySelector('.body');
-    body.innerHTML = '<h3>Job search safety reminder</h3><p>Research the company.</p><button type="button" class="cont">Continue applying</button>';
-    dlg.querySelector('.primary').textContent = 'Review job post';
-    body.querySelector('.cont').addEventListener('click', () => render());
+    // As on the real page: a separate box outside the apply <dialog>.
+    dlg.close();
+    const box = document.createElement('div'); box.className = 'ekfsafety';
+    box.innerHTML = '<h2>Job search safety reminder</h2><p>Research the company.</p><button type="button">Review job post</button> <button type="button" class="cont">Continue applying</button>';
+    document.body.appendChild(box);
+    box.querySelector('.cont').addEventListener('click', () => { box.remove(); dlg.showModal(); render(); });
     return;
   }
   render();
@@ -77,7 +80,7 @@ dlg.querySelector('.primary').addEventListener('click', () => {
   if (missing.length) { body.insertAdjacentHTML('beforeend', '<div class="artdeco-inline-feedback--error">Please enter a valid answer</div>'); return; }
   if (at === 0) window.__phone = body.querySelector('#ph').value;
   if (at === 1) { const r = body.querySelector('input[name=doc]:checked'); window.__resume = r ? r.parentElement.innerText.trim() : ''; }
-  if (at === 2) { window.__azure = body.querySelector('#az').value; window.__python = body.querySelector('#py').value;
+  if (at === 2) { window.__azure = body.querySelector('#az').value; window.__python = body.querySelector('#py').value; window.__whole = body.querySelector('#wy').value;
                   const s = body.querySelector('input[name=sp]:checked'); window.__sponsor = s ? s.value : ''; }
   if (at === 3) { window.__submitted = true; body.innerHTML = '<h3>Your application was sent to Acme!</h3>';
                   dlg.querySelector('.primary').textContent = 'Done'; at = 4; return; }
