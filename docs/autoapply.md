@@ -95,3 +95,33 @@ the form zoo, which pre-selects an old resume:
 
 `tests/test_autoapply_run.py` covers the working hours, the daily cap and the
 off switch.
+
+## Failures: kept so they can be fixed
+
+Every application the bot can't finish leaves a folder in `data/autoapply/failures/<time>-<job>-<tag>/` (gitignored: it holds your own form data). It contains:
+
+- `screen.png`: what the dialog looked like;
+- `dialog.html` (or `page.html` when no dialog was open): the Easy Apply dialog's HTML, with the Job Bot's marks on what it couldn't answer or recognise (`jab-missing`, `jab-optional`, `title="Job Bot: …"`);
+- `failure.json`: the tag and detail, the questions LinkedIn flagged, the marked elements, and the answers that were defaulted.
+
+`data/autoapply/failures/index.jsonl` has one line per failure, with `"status": "open"`.
+
+**Tags:**
+
+| Tag | Meaning |
+|---|---|
+| `unanswered` | a question has no answer |
+| `next-refused` | LinkedIn didn't move past a step |
+| `resume` | the tailored PDF wasn't uploaded or selected |
+| `stuck` | no Next/Review/Submit button |
+| `closed` | the dialog closed |
+| `no-confirm` | Submit pressed, no confirmation seen |
+| `too-many-steps` | more than 15 steps |
+| `exception` | the bot crashed; the error text is in `detail` |
+
+**Working through them (a Claude session):**
+
+1. Read `index.jsonl` for `open` lines, oldest first, and group them by cause.
+2. **Unknown question:** add the answer to `data/ats_answers.yaml`, or a rule to `src/autofill/matcher.py`. Ask the operator for anything personal.
+3. **Element not found or not clickable:** build the smallest made-up page that has the same structure in `tests/e2e/zoo/`. Never copy LinkedIn's or a company's HTML. Add a test that fails, then fix `jab.user.js` or `src/autoapply/linkedin.py`.
+4. Set the line's `status` to `fixed` with the PR number, or `wontfix` with a reason.

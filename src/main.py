@@ -115,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
              "the Easy Apply bot finds its jobs in the Job Bot Edge and hands them over this way",
     )
     parser.add_argument(
+        "--ignore-applicants", action="store_true",
+        help="the applicant count neither skips nor marks down a job (the Easy Apply bot)",
+    )
+    parser.add_argument(
         "--easy-apply", action="store_true",
         help="LinkedIn only, Easy Apply postings only (the Easy Apply bot's runs; "
              "normal runs keep every site and posting)",
@@ -160,7 +164,8 @@ def main(argv: list[str] | None = None) -> int:
                 log.info("run_cancelled", reason="term_menu")
                 return 0
         return _run(args.dry_run, log, manual_terms=manual_terms, hours_old=args.hours_old,
-                    easy_apply=args.easy_apply, jobs_file=args.jobs_file)
+                    easy_apply=args.easy_apply, jobs_file=args.jobs_file,
+                    ignore_applicants=args.ignore_applicants)
     finally:
         flusher.join()
         import fcntl as _fcntl
@@ -203,7 +208,8 @@ def _record_taps(log, when: str) -> None:
 
 
 def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: int | None = None,
-         easy_apply: bool = False, jobs_file: str | None = None) -> int:
+         easy_apply: bool = False, jobs_file: str | None = None,
+         ignore_applicants: bool = False) -> int:
     from src import analytics
     from src.config import settings, resolve_endpoint_base_url
     from src.endpoint.cache import for_notification
@@ -442,7 +448,8 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: i
             if filters.experience_exceeds_ceiling(job.experience_range, years_ceiling):
                 not_applied_queue.append((job, EXPERIENCE_TOO_HIGH, job.experience_range, None))
                 continue
-            if filters.cannot_reach_threshold(job.applicants_count, best_fit, threshold):
+            if not ignore_applicants and filters.cannot_reach_threshold(
+                    job.applicants_count, best_fit, threshold):
                 not_applied_queue.append(
                     (job, TOO_MANY_APPLICANTS, str(job.applicants_count), None))
                 continue
@@ -519,7 +526,7 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: i
             try:
                 routed = parse_job(job, profile=profile, llm_calls_today=llm_calls_today,
                                    rules=routing_rules, scrape_window_hours=hours_old,
-                                   llm_available=llm_available)
+                                   llm_available=llm_available, ignore_applicants=ignore_applicants)
             except LLMBudgetError as exc:
                 # Every provider is out of budget or daily quota, so every
                 # remaining job would fail the same way. Rather than stop the
@@ -538,7 +545,7 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: i
                 llm_exhausted = True
                 routed = parse_job(job, profile=profile, llm_calls_today=llm_calls_today,
                                    rules=routing_rules, scrape_window_hours=hours_old,
-                                   llm_available=False)
+                                   llm_available=False, ignore_applicants=ignore_applicants)
             except LLMError as exc:
                 # No verdict: a job whose parse failed has not been judged, so
                 # it stays in the backlog and the next run tries again. Writing
@@ -594,7 +601,8 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: i
                 continue
 
             # --- Layer 4: scoring (shared with pasted adverts, src.tailor) ---
-            result = score_job(profile, job, parsed, scrape_window_hours=hours_old)
+            result = score_job(profile, job, parsed, scrape_window_hours=hours_old,
+                               ignore_applicants=ignore_applicants)
 
             # Log every score, matched or not, with the components that made
             # it. Without this a run is opaque: a batch of near-misses at 0.48

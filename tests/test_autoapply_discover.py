@@ -59,3 +59,36 @@ def test_found_jobs_go_to_the_pipeline_without_a_scrape(monkeypatch, tmp_path) -
     path.write_text(json.dumps([]))
     run.run_pipeline(path)
     assert seen["args"][-2:] == ["--jobs-file", str(path)] and "--easy-apply" not in seen["args"]
+
+
+def test_the_bot_ignores_the_applicant_count(monkeypatch, tmp_path) -> None:
+    """Applying costs the operator nothing, so a crowded posting is neither
+    pre-skipped nor marked down in the bot's runs; normal runs are unchanged."""
+    import types
+
+    import src.scorer.selector as selector
+    import src.tailor as tailor
+
+    seen = []
+
+    def fake_context(parsed, **kw):
+        seen.append(kw["applicants_count"])
+        raise StopIteration  # nothing after the context matters here
+
+    monkeypatch.setattr(selector, "build_jd_context", fake_context)
+    job = types.SimpleNamespace(posted_at=None, scraped_at=None, applicants_count=180, jd_text="x",
+                                role="Data Engineer", site="linkedin")
+    for ignore in (False, True):
+        try:
+            tailor.score_job(None, job, None, ignore_applicants=ignore)
+        except StopIteration:
+            pass
+    assert seen == [180, 0]
+
+    from src.scorer.apply_decision import applicant_multiplier
+    assert applicant_multiplier(0) == applicant_multiplier(1)  # 0 = the full early-posting boost
+
+    args = {}
+    monkeypatch.setattr(run.subprocess, "run", lambda a, **kw: args.setdefault("a", a))
+    run.run_pipeline(tmp_path / "found.json")
+    assert "--ignore-applicants" in args["a"]

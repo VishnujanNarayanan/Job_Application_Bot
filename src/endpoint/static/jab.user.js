@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.8.1
+// @version      1.8.2
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -478,7 +478,22 @@
     + '.chosen-drop, .choices__list--dropdown, [class*="dropdown-menu" i], [class*="menu-list" i]');
 
   function optionLabel(el) {
-    return clean(labelOf(el) || (el.parentElement && textOf(el.parentElement)) || el.value);
+    const own = clean(labelOf(el) || '');
+    // LinkedIn (2026) labels every radio of a group with the QUESTION (aria-label) and puts
+    // "Yes" / "No" in a block beside it. A label all the group's options share names none of
+    // them: take the text of the option's own block, the largest one holding no other option.
+    const root = el.getRootNode ? el.getRootNode() : document;
+    const group = el.name && root.querySelectorAll
+      ? [...root.querySelectorAll('input[name="' + CSS.escape(el.name) + '"]')] : [];
+    const shared = own && group.length > 1 && group.every((o) => o === el || clean(labelOf(o) || '') === own);
+    if (!shared) return clean(own || (el.parentElement && textOf(el.parentElement)) || el.value);
+    let box = el.parentElement, best = '';
+    while (box && !group.some((o) => o !== el && box.contains(o))) {
+      const t = clean(textOf(box));
+      if (t) best = t;
+      box = box.parentElement;
+    }
+    return best || clean(el.value) || own;
   }
 
   function scan() {

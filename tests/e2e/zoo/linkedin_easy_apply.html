@@ -26,10 +26,16 @@ const steps = [
    <button type="button" class="upload">Upload resume</button>`,
   `<h3>Additional Questions</h3>
    <div><label for="az">How many years of work experience do you have with Microsoft Azure?*</label><input id="az" required></div>
-   <div><label for="py">How many years of work experience do you have with Python (Programming Language)?*</label><input id="py" value="5" required></div>
+   <div><label for="py">How many years of work experience do you have with Python (Programming Language)?*</label><input id="py" value="5" required aria-describedby="error-message-py"><p id="error-message-py" class="ekferr"></p></div>
    <div><label for="wy">How many years of work experience do you have? (Only Whole Numbers Allowed)*</label><input id="wy" required></div>
    <fieldset><legend>Will you now or in the future require sponsorship to work in India?*</legend>
-     <label><input type="radio" name="sp" value="Yes" required>Yes</label><label><input type="radio" name="sp" value="No">No</label></fieldset>`,
+     <label><input type="radio" name="sp" value="Yes" required>Yes</label><label><input type="radio" name="sp" value="No">No</label></fieldset>
+   <!-- 2026: each radio is labelled with the QUESTION; "Yes"/"No" sit in a block beside it; no value, no required. -->
+   <div componentkey="auth"><p>Are you legally authorized to work in India?*</p>
+     <fieldset role="radiogroup" aria-describedby="error-message-auth">
+       <div><div><div><input id="au1" type="radio" name="radio-group-auth" aria-label="Are you legally authorized to work in India?"><label for="au1"></label></div><div><p>Yes</p></div></div></div>
+       <div><div><div><input id="au2" type="radio" name="radio-group-auth" aria-label="Are you legally authorized to work in India?"><label for="au2"></label></div><div><p>No</p></div></div></div>
+     </fieldset><p id="error-message-auth" class="ekferr"></p></div>`,
   `<h3>Review your application</h3><p>Check your details.</p>`,
 ];
 let at = 0;
@@ -78,9 +84,16 @@ dlg.querySelector('.primary').addEventListener('click', () => {
   const missing = [...body.querySelectorAll('input[required]')].filter((i) => i.type === 'radio'
     ? !body.querySelector(`input[name=${i.name}]:checked`) : !i.value);
   if (missing.length) { body.insertAdjacentHTML('beforeend', '<div class="artdeco-inline-feedback--error">Please enter a valid answer</div>'); return; }
+  // 2026-style errors: plain text in the element aria-describedby names; Next does nothing.
+  if (at === 2) {
+    const py = body.querySelector('#py');
+    if (!/^\d+$/.test(py.value)) { body.querySelector('#error-message-py').textContent = 'Invalid input'; return; }
+    if (!body.querySelector('input[name=radio-group-auth]:checked')) { body.querySelector('#error-message-auth').textContent = 'This field is required'; return; }
+  }
   if (at === 0) window.__phone = body.querySelector('#ph').value;
   if (at === 1) { const r = body.querySelector('input[name=doc]:checked'); window.__resume = r ? r.parentElement.innerText.trim() : ''; }
   if (at === 2) { window.__azure = body.querySelector('#az').value; window.__python = body.querySelector('#py').value; window.__whole = body.querySelector('#wy').value;
+                  const au = body.querySelector('input[name=radio-group-auth]:checked'); window.__auth = au ? au.parentElement.parentElement.innerText.trim() : '';
                   const s = body.querySelector('input[name=sp]:checked'); window.__sponsor = s ? s.value : ''; }
   if (at === 3) { window.__submitted = true; body.innerHTML = '<h3>Your application was sent to Acme!</h3>';
                   dlg.querySelector('.primary').textContent = 'Done'; at = 4; return; }

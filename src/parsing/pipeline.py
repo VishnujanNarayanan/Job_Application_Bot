@@ -27,6 +27,7 @@ def parse_job(
     fallback: bool = True,
     llm_available: bool = True,
     now=None,
+    ignore_applicants: bool = False,
 ) -> ParseResult:
     """Parse ``job`` and return the result with the route that decided it.
 
@@ -57,7 +58,7 @@ def parse_job(
     rules = rules or rules_from_config()
     dict_parsed = get_strategy(ParseMode.DICTIONARY).parse(job)
     dict_result = score_job(profile, job, dict_parsed, scrape_window_hours=scrape_window_hours,
-                            now=now)
+                            now=now, ignore_applicants=ignore_applicants)
 
     if mode is not None:
         decision = RouteDecision(Route.LLM if mode is ParseMode.LLM else Route.DICTIONARY,

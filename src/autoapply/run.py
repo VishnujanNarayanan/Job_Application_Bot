@@ -115,6 +115,8 @@ def run_pipeline(jobs_file: Path | None = None) -> None:
         fh.flush()
         hours = max(1, -(-int(cfg().get("posted_within_minutes", 60)) // 60))
         args = [sys.executable, "-m", "src.main", "--term", str(cfg().search_term), "--hours-old", str(hours)]
+        if bool(cfg().get("ignore_applicants", True)):
+            args.append("--ignore-applicants")  # applying costs nothing: a crowded posting still counts
         if jobs_file is not None:
             args += ["--jobs-file", str(jobs_file)]
         elif bool(cfg().get("easy_apply_only", True)):
@@ -229,8 +231,18 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
                 try:
                     outcome = easy_apply(page, job["job_id"], job["url"], dry_run=dry, log=log)
                 except Exception as exc:  # noqa: BLE001 - one job must not stop the run
-                    from src.autoapply.linkedin import Outcome
+                    from src.autoapply.linkedin import Outcome, submitted
                     outcome = Outcome("error", str(exc)[:200])
+                    # An error after Submit (LinkedIn redrawing the page) is still a sent application.
+                    if not dry and submitted(page):
+                        outcome = Outcome("applied", "Easy Apply submitted (confirmed on the job page)")
+                    else:
+                        from src.autoapply.linkedin import record_failure
+                        try:
+                            outcome.screenshot = record_failure(page, job["job_id"], "exception", str(exc)[:500],
+                                                                job_url=job["url"])
+                        except Exception:  # noqa: BLE001
+                            pass
                 log.info("autoapply_outcome", job_id=job["job_id"], status=outcome.status, detail=outcome.detail)
                 record = {"status": outcome.status, "detail": outcome.detail, "at": local.isoformat(),
                           "role": job["role"], "company": job["company"], "screenshot": outcome.screenshot,
