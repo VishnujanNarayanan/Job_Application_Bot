@@ -1027,6 +1027,8 @@ autoapply:
   enabled: false            # true once a few dry runs look right
   dry_run: true             # fill everything, stop before Submit, screenshot it
   search_term: "data engineer"
+  location: "India"
+  posted_within_minutes: 60  # the search and the scrape both look back this far
   title_must_contain: ["data engineer"]
   run_pipeline_first: true  # search + score + tailor before applying
   per_run: 1
@@ -1035,7 +1037,7 @@ autoapply:
   days: [mon, tue, wed, thu, fri]
   hours: [9, 18]            # from 09:00 to before 18:00
   timezone: Asia/Kolkata
-  max_match_age_hours: 48   # only matches built this recently
+  max_match_age_hours: 2    # matches built this recently (this run's scrape)
   edge_exe: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
   edge_profile: "C:\\Users\\ASUS\\AppData\\Local\\JobBot\\EdgeProfile"
   cdp_port: 9223

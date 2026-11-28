@@ -31,7 +31,10 @@ SCRIPT = ROOT / "src" / "endpoint" / "static" / "jab.user.js"
 ENDPOINT = "http://localhost:8000"
 SHOTS = ROOT / "data" / "autoapply" / "screens"
 
-MODAL = "div.jobs-easy-apply-modal, div[data-test-modal].jobs-easy-apply-modal, div[role='dialog'][aria-labelledby*='easy-apply'], div[role='dialog']"
+# LinkedIn's 2026 pages: obfuscated classes; the apply flow is a native <dialog>.
+MODAL = "dialog[open], div.jobs-easy-apply-modal, div[role='dialog']"
+SCOPE = "dialog[open], .jobs-easy-apply-modal, [role='dialog']"
+EASY_BUTTON = re.compile(r"^\s*easy apply(\s+to\b.*)?\s*$", re.I)
 PRIMARY = re.compile(r"^(submit application|review( your application)?|continue to next step|next)$", re.I)
 
 GM_SHIM = r"""(() => {
@@ -90,15 +93,48 @@ def page_state(page) -> str:
     text = page.evaluate("() => (document.querySelector('main') || document.body).innerText.slice(0, 6000)")
     if re.search(r"no longer accepting applications", text, re.I):
         return "closed"
+    if _easy_button(page) is not None:
+        return "easy"
     buttons = page.evaluate("""() => [...document.querySelectorAll('button, a')].filter(b => b.offsetWidth || b.offsetHeight)
         .map(b => ((b.getAttribute('aria-label') || '') + ' ' + (b.innerText || '')).trim()).slice(0, 400)""")
-    if any(re.search(r"\beasy apply\b", b, re.I) for b in buttons):
-        return "easy"
     if re.search(r"\bapplied\b.{0,40}\bago\b|application submitted|you applied", text, re.I):
         return "applied"
     if any(re.search(r"^apply\b|apply on company", b.strip(), re.I) for b in buttons):
         return "external"
     return "unknown"
+
+
+def _easy_button(page):
+    """The job's own Easy Apply button: a <button> reading exactly "Easy Apply"
+    (aria-label "Easy Apply to this job"). Similar-job cards are links."""
+    for b in page.query_selector_all("button"):
+        try:
+            if not b.is_visible():
+                continue
+            if EASY_BUTTON.match(b.get_attribute("aria-label") or "") or EASY_BUTTON.match((b.inner_text() or "").strip()):
+                return b
+        except Exception:  # noqa: BLE001 - detached while looking
+            continue
+    return None
+
+
+def search_job_ids(page, term: str, minutes: int, location: str) -> list[str]:
+    """LinkedIn's own search, Easy Apply only, posted in the last ``minutes``: job ids in order."""
+    from urllib.parse import quote
+
+    url = (f"https://www.linkedin.com/jobs/search/?keywords={quote(term)}&location={quote(location)}"
+           f"&f_AL=true&f_TPR=r{int(minutes) * 60}&sortBy=DD")
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    _pause(3.0, 5.0)
+    for _ in range(4):  # results load as the list scrolls
+        page.mouse.wheel(0, 1600)
+        _pause(0.8, 1.6)
+    html = page.content()
+    ids: list[str] = []
+    for m in re.finditer(r"(?:jobs/view/|currentJobId=|jobPosting[:%3A]+|fsd_jobPosting[:%3A]+|\"jobPostingId\":\s*\"?)(\d{8,12})", html):
+        if m.group(1) not in ids:
+            ids.append(m.group(1))
+    return ids
 
 
 def _modal(page):
@@ -113,7 +149,7 @@ def _inject(page, job_id: str) -> None:
     script = (SCRIPT.read_text(encoding="utf-8").replace("__JAB_ENDPOINT__", ENDPOINT)
               .replace("__JAB_HOST__", "localhost"))
     page.evaluate("(a) => { window.__jabAutoApply = a; window.__jabPasses = 0; }",
-                  {"jobId": job_id, "scope": ".jobs-easy-apply-modal, [role='dialog']"})
+                  {"jobId": job_id, "scope": SCOPE, "overwrite": True, "noFiles": True})
     page.evaluate(GM_SHIM)
     page.evaluate(script)
 
@@ -143,30 +179,79 @@ def _problems(modal) -> list[str]:
         return out; }""")
 
 
-def _resume_ok(modal, filename: str) -> bool | None:
-    """On a step with a resume section: is a freshly uploaded tailored PDF the selected one?
-    None when this step has no resume section."""
-    return modal.evaluate("""(m, name) => {
-        const section = [...m.querySelectorAll('h3, h2, span, label')].find(e => /^\\s*resume\\s*$/i.test(e.innerText || ''));
-        const cards = [...m.querySelectorAll('[class*="document-upload"][class*="card"], [class*="jobs-resume-picker__resume"], [data-test-document-upload-card]')];
-        if (!section && !cards.length) return null;
-        const selected = cards.filter(c => /selected|is-checked|--active/.test(c.className)
-            || c.querySelector('input[type=radio]:checked, [aria-checked=true], [aria-selected=true]'));
-        if (!selected.length) return false;
-        const text = selected.map(c => c.innerText).join(' | ');
-        const stem = name.replace(/\\.pdf$/i, '');
-        // The tailored PDF, uploaded just now (not an older one with the same name).
-        return text.includes(stem) && /(uploaded on|last used).{0,20}(\\d|today|just now)/i.test(text)
-            && (/just now|today/i.test(text) || text.includes(new Date().toLocaleDateString('en-US')));
-    }""", filename)
+def _today_us() -> str:
+    """LinkedIn's card date, M/D/YYYY without leading zeros."""
+    d = datetime.now()
+    return f"{d.month}/{d.day}/{d.year}"
+
+
+def _resume_step(modal) -> bool:
+    """This step asks for the resume: it has an "Upload resume" control."""
+    return bool(modal.evaluate("""(m) => [...m.querySelectorAll('button, label, [role=button]')]
+        .some(b => (b.offsetWidth || b.offsetHeight) && /^\\s*upload resume\\s*$/i.test(b.innerText || ''))"""))
+
+
+def _selected_resume(modal) -> str:
+    """Text of the resume card whose radio is selected."""
+    return modal.evaluate("""(m) => {
+        const picked = [...m.querySelectorAll('input[type=radio]:checked, [role=radio][aria-checked=true], [aria-checked=true]')];
+        for (const r of picked) {
+            let card = r; for (let i = 0; card && i < 6 && !/\\.(pdf|docx?)/i.test(card.innerText || ''); i++) card = card.parentElement;
+            if (card) return (card.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 200);
+        }
+        return ''; }""")
+
+
+def upload_tailored(page, modal, job_id: str, filename: str) -> bool:
+    """Upload this job's tailored PDF and make sure it is the selected resume.
+
+    LinkedIn pre-selects the resume used last time. The "Upload resume" button
+    opens the system file picker; Playwright intercepts it (no window opens) and
+    the PDF is handed to its file input directly.
+    """
+    pdf = _forward({"url": f"{ENDPOINT}/resume/{job_id}.pdf", "blob": True})
+    if pdf["status"] != 200:
+        return False
+    button = None
+    for b in modal.query_selector_all("button, label, [role=button]"):
+        if b.is_visible() and re.fullmatch(r"\s*upload resume\s*", b.inner_text() or "", re.I):
+            button = b
+            break
+    if button is None:
+        return False
+    with page.expect_file_chooser(timeout=10000) as chooser:
+        button.click()
+    chooser.value.element.evaluate("""(el, a) => {
+        const bin = atob(a.b64); const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const dt = new DataTransfer(); dt.items.add(new File([bytes], a.name, {type: 'application/pdf'}));
+        el.files = dt.files; el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true}));
+    }""", {"b64": pdf["b64"], "name": filename})
+    stem, today = filename.rsplit(".", 1)[0], _today_us()
+    for _ in range(40):  # the upload takes a moment
+        time.sleep(0.5)
+        chosen = _selected_resume(modal)
+        if stem in chosen and today in chosen:
+            return True
+        # Uploaded but not selected: pick the card dated today.
+        card = modal.evaluate_handle("""(m, a) => [...m.querySelectorAll('input[type=radio], [role=radio]')].find(r => {
+            let c = r; for (let i = 0; c && i < 6 && !(c.innerText || '').includes(a.stem); i++) c = c.parentElement;
+            return c && (c.innerText || '').includes(a.today); }) || null""", {"stem": stem, "today": today})
+        el = card.as_element() if card else None
+        if el is not None:
+            try:
+                el.click(force=True)
+            except Exception:  # noqa: BLE001
+                pass
+    return False
 
 
 def _primary(modal):
     for b in modal.query_selector_all("button"):
-        label = ((b.get_attribute("aria-label") or "") or (b.inner_text() or "")).strip()
         text = (b.inner_text() or "").strip()
-        if b.is_visible() and b.is_enabled() and (PRIMARY.match(label) or PRIMARY.match(text)):
-            return b, (label or text)
+        label = (b.get_attribute("aria-label") or "").strip()
+        if b.is_visible() and b.is_enabled() and (PRIMARY.match(text) or PRIMARY.match(label)):
+            return b, (text if PRIMARY.match(text) else label)
     return None, ""
 
 
@@ -174,16 +259,17 @@ def _discard(page) -> None:
     modal = _modal(page)
     if not modal:
         return
-    close = modal.query_selector("button[aria-label='Dismiss'], button[data-test-modal-close-btn]")
+    close = modal.query_selector("button[aria-label='Dismiss'], button[aria-label*='Close'], button[data-test-modal-close-btn]")
     if close:
         close.click()
         _pause(0.6, 1.2)
-    for sel in ("button[data-control-name='discard_application_confirm_btn']",
-                "button[data-test-dialog-secondary-btn]", "button:has-text('Discard')"):
-        b = page.query_selector(sel)
-        if b and b.is_visible():
-            b.click()
-            break
+    for b in page.query_selector_all("button"):
+        try:
+            if b.is_visible() and (b.inner_text() or "").strip().lower() == "discard":
+                b.click()
+                return
+        except Exception:  # noqa: BLE001
+            continue
 
 
 def _shot(page, job_id: str, tag: str) -> str:
@@ -210,9 +296,11 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
         page.expose_function("__jabRequest", _forward)
     except Exception:  # noqa: BLE001 - already exposed on this page
         pass
-    button = page.locator("button:has-text('Easy Apply'), button[aria-label*='Easy Apply']").first
+    button = _easy_button(page)
+    if button is None:
+        return Outcome("not_easy_apply", "no Easy Apply button")
     button.click()
-    page.wait_for_selector(".jobs-easy-apply-modal, [role='dialog']", timeout=15000)
+    page.wait_for_selector(MODAL, timeout=15000)
     _pause()
     _inject(page, job_id)
     filename = settings.resume_filename
@@ -223,16 +311,15 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
         before = page.evaluate("() => window.__jabPasses || 0")
         _wait_filled(page, before if step else -1)
         _pause(0.5, 1.2)
+        if _resume_step(modal) and not upload_tailored(page, modal, job_id, filename):
+            shot = _shot(page, job_id, "resume")
+            _discard(page)
+            return Outcome("skipped", "could not upload and select the tailored resume", shot)
         problems = _problems(modal)
         if problems:
             shot = _shot(page, job_id, "unanswered")
             _discard(page)
             return Outcome("skipped", "a question has no stored answer", shot, problems)
-        resume = _resume_ok(modal, filename)
-        if resume is False:
-            shot = _shot(page, job_id, "resume")
-            _discard(page)
-            return Outcome("skipped", "could not confirm the tailored resume is the selected one", shot)
         btn, label = _primary(modal)
         if btn is None:
             shot = _shot(page, job_id, "stuck")
@@ -246,7 +333,7 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
             btn.click()
             for _ in range(30):
                 time.sleep(0.5)
-                done = page.evaluate("() => /application (was )?sent|applied/i.test(document.body.innerText.slice(0, 20000))")
+                done = page.evaluate("() => /application (was )?sent|application submitted|you applied|applied \\d/i.test(document.body.innerText.slice(0, 30000))")
                 if done:
                     shot = _shot(page, job_id, "sent")
                     for sel in ("button[aria-label='Dismiss']", "button:has-text('Done')"):

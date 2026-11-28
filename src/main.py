@@ -5,6 +5,7 @@ Usage:
     python -m src.main --dry-run   # scrape/score/build, notify to test chat
     python -m src.main --term "junior data engineer"   # one term, no menu
     python -m src.main --auto      # no menu: the rotation's next term
+    python -m src.main --term "data engineer" --hours-old 1   # only the last hour (the Easy Apply bot)
 
 Pipeline (architecture doc §4):
 
@@ -104,6 +105,10 @@ def main(argv: list[str] | None = None) -> int:
         "--auto", action="store_true",
         help="skip the term menu and take the rotation's next term",
     )
+    parser.add_argument(
+        "--hours-old", type=int, metavar="N",
+        help="only postings from the last N hours (default: scraper.hours_old)",
+    )
     args = parser.parse_args(argv)
 
     _configure_logging()
@@ -144,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
             except _Cancelled:
                 log.info("run_cancelled", reason="term_menu")
                 return 0
-        return _run(args.dry_run, log, manual_terms=manual_terms)
+        return _run(args.dry_run, log, manual_terms=manual_terms, hours_old=args.hours_old)
     finally:
         flusher.join()
         import fcntl as _fcntl
@@ -186,7 +191,7 @@ def _record_taps(log, when: str) -> None:
         log.info("telegram_taps_recorded", count=recorded, at=when)
 
 
-def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
+def _run(dry_run: bool, log, manual_terms: list[str] | None = None, hours_old: int | None = None) -> int:
     from src import analytics
     from src.config import settings, resolve_endpoint_base_url
     from src.endpoint.cache import for_notification
@@ -261,7 +266,8 @@ def _run(dry_run: bool, log, manual_terms: list[str] | None = None) -> int:
         log.info("terms_chosen", terms=run_terms,
                  source="manual" if manual_terms else "rotation")
         is_peak = True  # TODO: detect from time-of-day in Layer 1
-        hours_old = int(cfg.scraper.hours_old.peak if is_peak else cfg.scraper.hours_old.off_peak)
+        if hours_old is None:
+            hours_old = int(cfg.scraper.hours_old.peak if is_peak else cfg.scraper.hours_old.off_peak)
 
         log.info(
             "scrape_start", terms=run_terms, hours_old=hours_old, dry_run=dry_run

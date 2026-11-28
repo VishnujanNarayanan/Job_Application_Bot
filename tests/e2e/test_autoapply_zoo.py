@@ -63,8 +63,9 @@ def test_dry_run_fills_every_step_and_stops_before_submit(board) -> None:
     assert page.evaluate("() => window.__submitted") is None
     assert page.evaluate("() => window.__phone") == "9000000000"
     resume = page.evaluate("() => window.__resume")
-    assert linkedin.settings.resume_filename in resume and "Old_Resume" not in resume   # the tailored PDF, selected
-    assert page.evaluate("() => window.__years") == "1.5"
+    assert linkedin._today_us() in resume, resume                  # the fresh upload, not the pre-selected 11/9 one
+    assert page.evaluate("() => window.__azure") == "1.5"
+    assert page.evaluate("() => window.__python") == "1.5"         # LinkedIn's remembered "5" replaced by the rule
     assert page.evaluate("() => window.__sponsor") == "No"
 
 

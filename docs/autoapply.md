@@ -12,39 +12,50 @@ at most 20 a day (`autoapply:` in `config/config.yaml`).
 
 ## How a run works
 
-1. **Pipeline.** `python -m src.main --term "data engineer"`, as usual. This
-   searches, scores and tailors, and you get the usual Telegram match
-   messages. Its output goes to `data/logs/autoapply-pipeline.log`.
-2. **Pick a job.** The best LinkedIn match from the last 48 hours that is
-   still pending, has "data engineer" in its title, and hasn't been tried.
-3. **Open it in the Job Bot Edge.**
+1. **Scrape the last hour.** `python -m src.main --term "data engineer" --hours-old 1`
+   searches, scores and tailors that hour's postings, and you get the usual
+   Telegram match messages. Its output goes to `data/logs/autoapply-pipeline.log`.
+2. **LinkedIn's own search.** In the Job Bot Edge: "data engineer", India,
+   **Easy Apply** only, **posted in the past hour**, newest first.
+3. **Only jobs in both.** A job is applied to only if it is in that search and
+   the pipeline matched it (and tailored its resume). Nothing older, nothing
+   from elsewhere. One per run, at most 20 a day.
+4. **Open it in the Job Bot Edge.**
    - This is the real Microsoft Edge on Windows, with its own profile, logged
      into LinkedIn once by hand.
-   - To LinkedIn it's an ordinary Edge on this laptop: its own network
-     handshake and fingerprint, no automation flags.
-   - The bot attaches over Edge's DevTools port and only clicks and types.
-4. **Easy Apply.**
-   - No Easy Apply button (an external apply link): skipped.
-   - Otherwise the dialog is filled by the same userscript you use by hand,
-     from your profile, answers file and learned answers.
-   - The tailored PDF is uploaded. LinkedIn pre-selects the resume you used
-     last time, so the bot checks the fresh upload is the selected one, and
-     gives up on the job if it can't.
-   - Then Next, Review, Submit.
-5. **Never guessed.**
-   - A question with no stored answer, or an error from LinkedIn, discards the
-     application and messages Telegram with the question. Answer it (or apply
-     by hand once, so it's learned) and the next job asking it goes through.
-6. **Recorded.**
-   - An applied job is marked `applied` in the database (like the Telegram
-     "Mark applied" button), counted for the day, and reported on Telegram.
+   - The bot attaches over Edge's DevTools port, through a small relay it
+     starts on Windows, and only clicks and types.
+   - The job's own Easy Apply button is pressed (the "Easy Apply" tags on
+     similar-job cards are ignored).
+5. **Easy Apply** (LinkedIn's apply flow is a native `<dialog>`).
+   - **Contact info:** LinkedIn's pre-fill is kept.
+   - **Resume:** LinkedIn pre-selects the one used last time. The bot presses
+     "Upload resume", catches the file picker before it opens, hands it this
+     job's tailored PDF, and checks the new card **dated today** is the
+     selected one. Otherwise it gives up on the job.
+   - **Questions** are filled by the same userscript you use by hand.
+     - LinkedIn pre-fills answers you gave before. Where you have a stored
+       answer, yours replaces LinkedIn's (e.g. experience with a tool = your
+       total years).
+     - Where you don't, LinkedIn's remembered answer stays.
+   - Then Next, Review, Submit. A dry run stops before Submit, with a
+     screenshot.
+6. **New questions are never guessed.** A required, empty question with no
+   stored answer discards the application and messages Telegram with the
+   question. Answer it once (in the answers file, or by applying to that job
+   by hand, so it's learned) and later jobs asking it go through.
+7. **Recorded.**
+   - An applied job is marked `applied` in the database, counted for the day,
+     and reported on Telegram.
    - Screenshots are in `data/autoapply/screens/` (local, gitignored).
 
 ## Setup (once)
 
-1. **Mirrored networking**, so WSL can reach Edge's port on Windows.
+1. **Mirrored networking**, so WSL can reach Windows' localhost.
    `%USERPROFILE%\.wslconfig` holds `networkingMode=mirrored`. Run
-   `wsl --shutdown` from Windows and reopen the terminal.
+   `wsl --shutdown` from Windows and reopen the terminal. Edge's own port
+   still refuses WSL, so the bot reaches it through a small PowerShell relay
+   it starts by itself (port 9224, user-level, hidden).
 2. **Playwright** (only the Python library; the bot uses your installed Edge):
    `pip install -r requirements-e2e.txt`.
 3. **Log in:** `python -m src.cli.autoapply login`. This opens the Job Bot

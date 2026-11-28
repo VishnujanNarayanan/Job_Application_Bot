@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.7.0
+// @version      1.7.1
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -45,6 +45,11 @@
   // LinkedIn's Easy Apply dialog: { jobId, scope }. Only the dialog is read and
   // filled; the bot itself presses Next / Review / Submit.
   const AUTO = window.__jabAutoApply || null;
+  // Auto-apply: LinkedIn pre-fills answers the operator gave before. Where an answer
+  // is stored, it replaces LinkedIn's; where none is, LinkedIn's stays. The resume
+  // is the bot's job (it uploads the tailored PDF through the file picker).
+  const OVERWRITE = !!(AUTO && AUTO.overwrite);
+  const NO_FILES = !!(AUTO && AUTO.noFiles);
   const scopeRoot = () => (AUTO && AUTO.scope && document.querySelector(AUTO.scope)) || document;
   const SESSION_KEY = 'jab-session';
   const SESSION_MS = 3 * 3600 * 1000;
@@ -456,6 +461,7 @@
       if (NATIVE.test(el.tagName) && el.tagName !== 'BUTTON' && SKIP_TYPES.includes(type)) continue;
       if (/captcha/i.test((el.name || '') + (el.id || '') + (el.className || ''))) continue;
       const isFile = type === 'file';
+      if (isFile && NO_FILES) continue;
       const isTick = el.tagName === 'INPUT' && (type === 'radio' || type === 'checkbox');
       const widget = el.tagName === 'SELECT' && !visible(el) ? backingWidget(el) : null;
       if (widget && (widget.matches('[role="combobox"]') || widget.querySelector('[role="combobox"]'))) { handled.add(el); continue; }
@@ -559,7 +565,8 @@
         groups.get(key).els.push(el);
         continue;
       }
-      if (hasValue(el) && !isFile) { handled.add(el); prefilled.add(labelOf(el)); continue; }
+      const had = hasValue(el) && !isFile;
+      if (had && !OVERWRITE) { handled.add(el); prefilled.add(labelOf(el)); continue; }
       if (isFile && hasValue(el)) { handled.add(el); continue; }
 
       let label = labelOf(el);
@@ -579,7 +586,7 @@
       if (label.split(' ').length <= 2 && (!context || context === label)) context = textBefore(el, label) || context;
       const fieldBox = el.closest('[data-automation-id^="formField-"]');
       const f = {
-        ref: remember(ftype, [el], widget ? { markEl: widget } : null), label, context,
+        ref: remember(ftype, [el], Object.assign(widget ? { markEl: widget } : {}, had ? { had: true } : {})), label, context,
         name: el.name || '', id: el.id || '', automation_id: el.getAttribute('data-automation-id') || '',
         autocomplete: el.getAttribute('autocomplete') || '', type: ftype, options,
         placeholder: el.getAttribute('placeholder') || '', group: groupOf(el),
@@ -590,7 +597,7 @@
       fields.push(f);
     }
 
-    for (const { el, box, about } of uploadButtons()) {
+    for (const { el, box, about } of (NO_FILES ? [] : uploadButtons())) {
       fields.push({
         ref: remember('uploadbutton', [el], { markEl: box, box }), label: about, context: about, name: '',
         id: el.id || '', automation_id: '', autocomplete: '', type: 'file', options: [], group: '',
@@ -598,7 +605,7 @@
       });
     }
 
-    for (const zone of dropZones()) {
+    for (const zone of (NO_FILES ? [] : dropZones())) {
       const label = headingBefore(zone) || labelNear(zone) || contextOf(zone, []) || textOf(zone);
       const context = clean(headingBefore(zone) + ' ' + textOf(zone)).slice(0, 300);
       fields.push({
@@ -609,7 +616,13 @@
     }
 
     for (const g of groups.values()) {
-      if (g.els.some((e) => e.checked)) { g.els.forEach((e) => handled.add(e)); continue; }
+      // A list of uploaded documents to pick from (LinkedIn's resume cards): no question.
+      if (g.type === 'radio' && g.els.map(optionLabel).every((o) => /\.(pdf|docx?|rtf|odt|txt)\b/i.test(o))) {
+        g.els.forEach((e) => handled.add(e));
+        continue;
+      }
+      const groupHad = g.els.some((e) => e.checked);
+      if (groupHad && !OVERWRITE) { g.els.forEach((e) => handled.add(e)); continue; }
       const opts = g.els.map(optionLabel);
       if (g.type === 'checkbox' && g.els.length === 1) {
         const el = g.els[0];
@@ -630,7 +643,7 @@
       if (!question && box) question = contextOf(g.els[0], opts);
       const ftype = g.type === 'radio' ? 'radio' : 'checkbox_group';
       fields.push({
-        ref: remember(ftype, g.els), label: question, context: question, name: g.els[0].name || '',
+        ref: remember(ftype, g.els, groupHad ? { had: true } : null), label: question, context: question, name: g.els[0].name || '',
         id: '', automation_id: '', autocomplete: '', type: ftype, options: opts, group: groupOf(g.els[0]),
         required: g.els.some((e) => e.required) || /[*✱]/.test(question),
       });
@@ -1265,6 +1278,7 @@
     const el = r.els[0];
     const a = decision.action;
     if (a === 'skip') return;
+    if (a === 'resume' && NO_FILES) return;  // auto-apply: the bot uploads the tailored PDF itself
     if (a === 'resume') {
       if (!resume) {
         totals.resume = 'resume: attach it yourself (no match tag)';
@@ -1319,6 +1333,7 @@
       return mark(decision.ref, 'jab-missing', 'attach your resume (the PDF is in Downloads)');
     }
     if (a === 'unknown') {
+      if (r.had) return;  // LinkedIn's remembered answer stays
       if (decision.required || r.required) { totals.missing++; return mark(decision.ref, 'jab-missing', decision.reason || 'no answer yet'); }
       totals.optional++;
       return mark(decision.ref, 'jab-optional', decision.reason || 'no answer yet');

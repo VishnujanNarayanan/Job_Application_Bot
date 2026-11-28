@@ -78,12 +78,14 @@ def run_pipeline() -> None:
     with out.open("a") as fh:
         fh.write(f"\n===== {datetime.now():%Y-%m-%d %H:%M} =====\n")
         fh.flush()
-        subprocess.run([sys.executable, "-m", "src.main", "--term", str(cfg().search_term)],
+        hours = max(1, -(-int(cfg().get("posted_within_minutes", 60)) // 60))
+        subprocess.run([sys.executable, "-m", "src.main", "--term", str(cfg().search_term), "--hours-old", str(hours)],
                        cwd=ROOT, stdout=fh, stderr=subprocess.STDOUT, timeout=40 * 60, check=False)
 
 
-def candidates(tried: dict) -> list[dict]:
-    """New LinkedIn matches for the title, best first."""
+def candidates(tried: dict, only_ids: list[str] | None = None) -> list[dict]:
+    """New LinkedIn matches for the title. With ``only_ids`` (this run's Easy Apply
+    search results), only those jobs, in the search's order."""
     from sqlalchemy import select
 
     from src.state.db import session_scope
@@ -107,7 +109,18 @@ def candidates(tried: dict) -> list[dict]:
             continue
         out.append({"job_id": r.job_id, "role": r.role, "company": r.company, "url": r.job_url,
                     "score": r.final_score})
+    if only_ids is not None:
+        order = {lid: i for i, lid in enumerate(only_ids)}
+        out = [j for j in out if linkedin_id(j["job_id"], j["url"]) in order]
+        out.sort(key=lambda j: order[linkedin_id(j["job_id"], j["url"])])
     return out
+
+
+def linkedin_id(job_id: str, url: str | None = "") -> str:
+    import re
+
+    m = re.search(r"(\d{8,12})", f"{job_id} {url or ''}")
+    return m.group(1) if m else ""
 
 
 def mark_applied(job_id: str) -> None:
@@ -141,14 +154,20 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
 
     # Dry runs keep their own list: each one moves to a new job, and none blocks a real apply later.
     tried = {**state.get("tried", {}), **(state.get("dry_tried", {}) if dry else {})}
-    jobs = candidates(tried)
-    log.info("autoapply_candidates", count=len(jobs))
     done = []
-    if not jobs:
-        return {"ran": True, "applied": 0, "why": "no new LinkedIn match"}
     with edge.attached() as context:
         page = context.new_page()
         try:
+            # Only the search's own results: "data engineer", Easy Apply, posted in the last hour.
+            from src.autoapply.linkedin import search_job_ids
+
+            found = search_job_ids(page, str(c.search_term), int(c.get("posted_within_minutes", 60)),
+                                   str(c.get("location", "India")))
+            jobs = candidates(tried, only_ids=found)
+            log.info("autoapply_candidates", search_results=len(found), matched=len(jobs))
+            if not jobs:
+                return {"ran": True, "applied": 0, "search_results": len(found),
+                        "why": "no Easy Apply result from the last hour that the pipeline matched"}
             for job in jobs:
                 if len([d for d in done if d["status"] in ("applied", "dry_run")]) >= int(c.per_run):
                     break
