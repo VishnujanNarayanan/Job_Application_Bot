@@ -65,6 +65,19 @@ and this project loosely tracks iterations rather than semver.
     "required" messages after Next/Submit are read. A field you fill yourself
     is learned per site (`data/ats_sites.json`).
   - A Telegram job is remembered across frames and tabs for 30 minutes.
+- **Autofill: IBM-style forms and answers in any shape (#154).**
+  - Unnumbered "Education" / "Work experience" sections are filled from the
+    profile, and date pickers get whole dates.
+  - "Do you have past work experience?", "Is current position?" and
+    "Attended university?" are answered.
+  - Server-loaded Select2 lists are searched and waited for.
+  - The upload button "From Device" is chosen, never "Without Resume" or
+    "Paste".
+  - Date of birth in Month / Day / Year boxes.
+  - Bracketed asides are ignored when matching questions.
+  - "Can you meet this requirement?" is answered for work mode only.
+  - Yes/No is picked from sentence options by polarity, and durations in any
+    unit ("15 days" picks "Less than 1 month").
 
 ## [v3.3.2] — 2026-11-07
 

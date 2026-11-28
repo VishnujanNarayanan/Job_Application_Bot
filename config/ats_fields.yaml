@@ -112,7 +112,8 @@ fields:
     not: ["company", "pronoun*"]
     attrs: ["preferred name", "preferredname", "nickname"]
   date_of_birth:
-    asks: ["date of birth", "dob", "birth date", "birthdate", "birthday", "d o b"]
+    asks: ["date of birth", "dob", "birth date", "birthdate", "birthday", "d o b", "year of birth", "month of birth",
+           "day of birth"]
     not: ["place of birth", "country of birth", "city of birth"]
     attrs: ["dob", "date of birth", "birth date", "birthdate"]
   age:
@@ -153,6 +154,17 @@ fields:
           "posting", "requisition", "relative*", "auditor", "referrer", "referr*", "spouse", "manager", "if yes",
           "if you have", "if so", "family"]
     attrs: ["title", "job title", "current title", "designation"]
+  attended_university:
+    asks: ["attended university", "attended college", "higher education degree", "university or higher education",
+           "do you have a degree", "do you hold a degree", "have you completed a degree", "graduated from university"]
+  meet_requirement:
+    asks: ["can you meet this requirement", "able to meet this requirement", "can you meet these requirements",
+           "meet this requirement", "comply with this requirement", "are you comfortable with this requirement"]
+  has_work_experience:
+    asks: ["past working experience", "past work experience", "prior work experience", "previous work experience",
+           "do you have work experience", "do you have any work experience", "have you worked before",
+           "any professional experience", "do you have experience"]
+    not: ["years", "how many", "describe", "with", "in "]
   years_experience:
     asks: ["years of experience", "total experience", "total years of experience", "years experience",
            "how many years of experience", "work experience years", "overall experience", "relevant experience",
@@ -229,7 +241,7 @@ fields:
 
 # Labels that say nothing about the question: the field's surrounding text is
 # used instead ("Attach" beside Greenhouse's "Resume/CV" heading).
-generic_labels: ["no selection", "attach", "upload", "choose file", "browse", "type here", "start typing", "select", "search",
+generic_labels: ["month", "day", "year", "date", "mm", "dd", "yyyy", "no selection", "attach", "upload", "choose file", "browse", "type here", "start typing", "select", "search",
                  "enter", "enter manually", "drop files here", "or drag and drop", "add file", "your answer"]
 
 # A label made only of these words is generic too ("Drop files here or Select files").
@@ -237,5 +249,5 @@ generic_words: ["drop", "files", "file", "here", "or", "select", "upload", "brow
                 "and", "add", "a", "your", "to", "click", "from", "computer", "device"]
 
 # Choice options that are placeholders, not answers.
-placeholder_options: ["no selection", "- select -", "select", "select one", "select an option", "please select", "choose", "choose one",
+placeholder_options: ["--", "no selection", "- select -", "select", "select one", "select an option", "please select", "choose", "choose one",
                       "choose an option", "none selected", "pick one", "please choose", ""]
