@@ -66,3 +66,27 @@ def test_daily_cap(state_file, monkeypatch) -> None:
 def test_linkedin_id() -> None:
     assert run.linkedin_id("linkedin-li-4495075579", "") == "4495075579"
     assert run.linkedin_id("x", "https://www.linkedin.com/jobs/view/4493891384/") == "4493891384"
+
+
+def test_only_the_bot_asks_linkedin_for_easy_apply(monkeypatch) -> None:
+    import types
+
+    from src.scraper import jobspy_wrapper
+
+    calls = []
+
+    def fake_scrape_jobs(**kw):
+        calls.append(kw)
+        return None
+
+    for group, ea in ((["linkedin"], True), (["naukri"], True), (["linkedin"], False)):
+        jobspy_wrapper._scrape_with_retry(fake_scrape_jobs, site_group=group, search_term="data engineer",
+                                          country="india", location="India", results_wanted=5, hours_old=1,
+                                          fetch_description=False, proxies=None, max_retries=1,
+                                          backoff_base_seconds=0, easy_apply=ea)
+    assert [c.get("easy_apply") for c in calls] == [True, None, None]
+
+    seen = {}
+    monkeypatch.setattr(run.subprocess, "run", lambda args, **kw: seen.setdefault("args", args))
+    run.run_pipeline()
+    assert "--easy-apply" in seen["args"] and "--hours-old" in seen["args"]
