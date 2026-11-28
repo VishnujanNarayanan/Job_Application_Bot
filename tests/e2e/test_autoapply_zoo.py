@@ -76,17 +76,30 @@ def test_live_run_submits(board) -> None:
     assert page.evaluate("() => window.__submitted") is not None
 
 
-def test_an_unanswered_question_skips_the_job(board, monkeypatch) -> None:
-    # No sponsorship answer: citizenship unknown.
+def _without_citizenship(monkeypatch) -> None:
     import src.autofill.facts as facts_mod
     real = facts_mod.load_facts
 
-    def without_citizenship(*a, **kw):
+    def without(*a, **kw):
         f = real(*a, **kw)
         f.values.pop("citizenship", None)
         return f
 
-    monkeypatch.setattr("tests.e2e.harness.load_facts", without_citizenship)
+    monkeypatch.setattr("tests.e2e.harness.load_facts", without)
+
+
+def test_never_skip_answers_by_default_and_reports_it(board, monkeypatch) -> None:
+    _without_citizenship(monkeypatch)  # the sponsorship question now has no stored answer
+    page = board.new_page()
+    out = linkedin.easy_apply(page, "linkedin-li-1234567890", JOB_URL, dry_run=False, log=structlog.get_logger())
+    assert out.status == "applied", out
+    assert page.evaluate("() => window.__sponsor") == "No"          # needing sponsorship: never a guessed Yes
+    assert any("sponsorship" in d.lower() and d.endswith("No") for d in out.defaults), out.defaults
+
+
+def test_with_never_skip_off_an_unanswered_question_skips_the_job(board, monkeypatch) -> None:
+    _without_citizenship(monkeypatch)
+    monkeypatch.setattr(linkedin, "never_skip", lambda: False)
     page = board.new_page()
     out = linkedin.easy_apply(page, "linkedin-li-1234567890", JOB_URL, dry_run=False, log=structlog.get_logger())
     assert out.status == "skipped", out
