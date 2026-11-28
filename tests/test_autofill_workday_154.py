@@ -271,3 +271,11 @@ def test_ibm_style_questions(tmp_path) -> None:
 def test_same_answer_in_other_shapes(options, cand, expected) -> None:
     from src.autofill.matcher import pick_option
     assert pick_option(options, [cand]) == expected
+
+
+def test_no_field_waits_longer_than_eight_seconds() -> None:
+    """The operator's ceiling: 8 s per field at most, and a pick as soon as the option shows."""
+    js = (Path(__file__).resolve().parents[1] / "src" / "endpoint" / "static" / "jab.user.js").read_text()
+    assert "const FIELD_BUDGET_MS = 8000;" in js
+    assert "const POLL_MS = 100;" in js
+    assert js.count("Date.now() + FIELD_BUDGET_MS") == 2  # dropdowns and search boxes

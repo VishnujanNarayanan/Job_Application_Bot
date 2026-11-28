@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.6.0
+// @version      1.6.1
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -706,24 +706,31 @@
         || (LOADING.test(x.textContent || '') && (x.textContent || '').length < 60) || /loading|spinner/i.test(String(x.className))));
   }
 
-  async function waitOption(el, wants, tries) {
-    let extra = 0;
-    for (let i = 0; i < tries + extra; i++) {
-      await sleep(250);
+  // The longest any one field may take, however its list loads.
+  const FIELD_BUDGET_MS = 8000;
+  const POLL_MS = 100;
+
+  // Wait for one of ``wants`` to appear: picked the moment it shows. Gives up after
+  // ``ms`` unless the list says it is still loading, and never past ``deadline``.
+  async function waitOption(el, wants, ms, deadline) {
+    const start = Date.now();
+    while (Date.now() < deadline) {
       const hit = bestOption(comboOptions(el), wants);
       if (hit) return hit;
-      if (listLoading(el) && extra < 30) extra++;  // still loading: keep waiting
+      if (Date.now() - start >= ms && !listLoading(el)) return null;
+      await sleep(POLL_MS);
     }
-    return null;
+    return bestOption(comboOptions(el), wants);
   }
 
   async function chooseCombo(el, text, alts) {
     const wants = [text].concat(alts || []);
+    const deadline = Date.now() + FIELD_BUDGET_MS;
     const input = el.tagName === 'INPUT' ? el : el.querySelector('input');
     const side = input && input.parentElement && input.parentElement.querySelector('button');
     // 1. Open it: a click shows the whole list on most pick-lists (SuccessFactors, Workday).
     pressOn(input || el);
-    let hit = await waitOption(input || el, wants, 4);
+    let hit = await waitOption(input || el, wants, 800, deadline);
     // 2a. A search box the widget opened (Select2, Chosen): search there.
     if (!hit) {
       const search = [document.activeElement, ...deepAll('.select2-search__field, .chosen-search input, .choices__input--cloned, input[type="search"]')]
@@ -733,7 +740,7 @@
         setNative(search, text);
         search.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
         search.dispatchEvent(new KeyboardEvent('keyup', { key: text.slice(-1), bubbles: true }));
-        hit = await waitOption(input || el, wants, 14);  // results may come from the server
+        hit = await waitOption(input || el, wants, 2500, deadline);  // results may come from the server
       }
     }
     // 2. Type to filter (long lists, react-select).
@@ -742,13 +749,13 @@
       setNative(input, text);
       fire(input, 'input');
       input.dispatchEvent(new KeyboardEvent('keyup', { key: text.slice(-1), bubbles: true }));
-      hit = await waitOption(input, wants, 8);
+      hit = await waitOption(input, wants, 1500, deadline);
     }
     // 3. The arrow button beside it.
-    if (!hit && side) {
+    if (!hit && side && Date.now() < deadline) {
       if (input) { setNative(input, ''); fire(input, 'input'); }
       pressOn(side);
-      hit = await waitOption(input || el, wants, 6);
+      hit = await waitOption(input || el, wants, 1000, deadline);
     }
     if (hit) {
       const inner = hit.querySelector('a, [role="menuitem"]');
@@ -802,9 +809,11 @@
   const PROMPT_OPTS = '[data-automation-id="promptOption"], [data-automation-id="promptLeafNode"], [role="option"]';
 
   async function choosePrompt(el, wants) {
+    const deadline = Date.now() + FIELD_BUDGET_MS;
     const box = promptBox(el);
     const chosen = () => !!(box && box.querySelector('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"] li'));
     for (const want of wants) {
+      if (Date.now() >= deadline) break;
       el.focus();
       setNative(el, String(want));
       fire(el, 'input');
@@ -813,10 +822,11 @@
       }
       for (let level = 0; level < 3 && !chosen(); level++) {
         let hit = null;
-        for (let i = 0; i < 12 && !hit; i++) {
-          await sleep(300);
+        const until = Math.min(deadline, Date.now() + 3000);
+        while (!hit && Date.now() < until) {
           const opts = [...document.querySelectorAll(PROMPT_OPTS)].filter((o) => visible(o) && !o.closest('#' + PANEL_ID));
           hit = bestOption(opts, [want]);
+          if (!hit) await sleep(POLL_MS);
         }
         if (!hit) break;
         const tickBox = hit.querySelector('input[type="checkbox"], input[type="radio"]');
