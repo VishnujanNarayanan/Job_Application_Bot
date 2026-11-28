@@ -1,0 +1,4 @@
+# Browser tests of the autofill userscript (#154, #215): the form zoo in tests/e2e.
+# Installed only by CI's form-zoo job and by anyone running those tests:
+#   pip install -r requirements-e2e.txt && python -m playwright install chromium --only-shell --with-deps
+playwright==1.65.2

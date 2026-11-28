@@ -1,0 +1,63 @@
+<!doctype html><html><head><title>Apply</title></head><body>
+<!-- IBM-shaped: three resume sources (only "From Device" is right), a Select2 country list whose
+     results load from a server, sections whose headings are plain divs, a section that opens only
+     after "Yes", date pickers, date of birth in Month/Day/Year, gender with an aside, a requirement. -->
+<div class="Title">Resume</div><div class="cv-sources"><button type="button" id="dev">From Device<br>Upload CV file</button>
+<button type="button" id="paste">Copy &amp; Paste<br>Paste CV</button><button type="button" id="later">Without Resume<br>Upload CV later</button></div><p id="cvout"></p>
+<div class="grp">
+ <div class="WizardField"><label for="fn">Legal first name</label><input id="fn"></div>
+ <div class="WizardField"><label for="em">Email</label><input id="em" type="email"></div>
+ <div class="WizardField"><label for="cc">Current company</label><input id="cc"></div>
+ <div class="WizardField"><label for="es">Earliest start date</label><input id="es" type="date"></div>
+ <div class="WizardField"><label id="cl">Country</label><select id="cty" style="display:none"></select>
+  <span class="select2 select2-container" style="display:inline-block;width:240px;border:1px solid #999"><span class="select2-selection" role="combobox" aria-labelledby="cl" tabindex="0"><span class="ph">Select an option</span></span></span></div>
+</div>
+<div class="Title">Work experience</div>
+<div class="sec">
+ <div class="WizardField"><label for="pw">Do you have past working experience?</label><select id="pw"><option value="">Select an option</option><option>Yes</option><option>No</option></select></div>
+ <div id="wh" style="display:none"><div class="row">
+  <div class="WizardField"><label for="co">Company *</label><input id="co"></div>
+  <div class="WizardField"><label for="sd">Start date *</label><input id="sd" type="date"></div>
+  <div class="WizardField"><label for="cur">Is current position? *</label><select id="cur"><option value="">Select an option</option><option>Yes</option><option>No</option></select></div>
+  <div class="WizardField"><label for="pt">Position title</label><input id="pt"></div>
+ </div></div>
+</div>
+<div class="Title">Education</div>
+<div class="sec"><div class="row">
+ <div class="WizardField"><label for="dn">Degree name</label><input id="dn"></div>
+ <div class="WizardField"><label for="un">University</label><input id="un"></div>
+ <div class="WizardField"><label for="esd">Start date</label><input id="esd" type="date"></div>
+ <div class="WizardField"><label for="eed">End date</label><input id="eed" type="date"></div>
+</div></div>
+<p>Please indicate your date of birth. This data is collected for pre-employment verification checks. *</p>
+<div class="WizardField"><label for="dm">Month</label><select id="dm"><option>--</option><option>January</option><option>February</option><option>March</option><option>April</option></select></div>
+<div class="WizardField"><label for="dd">Day</label><select id="dd"><option>--</option><option>3</option><option>4</option><option>5</option></select></div>
+<div class="WizardField"><label for="dy">Year of Birth *</label><input id="dy"></div>
+<fieldset><legend>Please state your gender (this question is voluntary, you can choose not to declare) *</legend>
+ <label><input type="radio" name="g" value="f">Female</label><label><input type="radio" name="g" value="m">Male</label>
+ <label><input type="radio" name="g" value="n">Do not wish to declare</label></fieldset>
+<div class="req"><p>This job role requires the below working arrangement:</p><p>Hybrid</p>
+ <div class="WizardField"><label for="mr">Can you meet this requirement? *</label><select id="mr"><option>Select an option</option><option>Yes</option><option>No</option></select></div></div>
+<fieldset><legend>Attended university or higher education degree program? *</legend>
+ <label><input type="radio" name="au" value="y">Yes</label><label><input type="radio" name="au" value="n">No</label></fieldset>
+<script>
+document.getElementById('pw').addEventListener('change', (e) => { document.getElementById('wh').style.display = e.target.value === 'Yes' ? 'block' : 'none'; });
+document.getElementById('dev').addEventListener('click', () => { const i = document.createElement('input'); i.type = 'file'; i.style.display = 'none';
+  i.addEventListener('change', () => { document.getElementById('cvout').textContent = 'Uploaded ' + i.files[0].name; }); document.body.appendChild(i); });
+document.getElementById('later').addEventListener('click', () => { document.getElementById('cvout').textContent = 'WRONG: later'; });
+document.getElementById('paste').addEventListener('click', () => { document.getElementById('cvout').textContent = 'WRONG: paste'; });
+document.querySelector('.select2-selection').addEventListener('mousedown', () => {
+  if (document.querySelector('.select2-dropdown')) return;
+  const dd = document.createElement('span'); dd.className = 'select2-dropdown';
+  dd.innerHTML = '<span class="select2-search"><input class="select2-search__field" type="search" placeholder="Enter text to search"></span><ul role="tree"></ul>';
+  document.body.appendChild(dd); const inp = dd.querySelector('input'); inp.focus();
+  const load = () => { const ul = dd.querySelector('ul'); ul.innerHTML = '<li class="select2-results__option loading-results">Searching…</li>';
+    setTimeout(() => { ul.innerHTML = '';
+      for (const c of ['India', 'Indonesia', 'Germany'].filter((c) => c.toLowerCase().startsWith(inp.value.toLowerCase()))) {
+        const li = document.createElement('li'); li.className = 'select2-results__option'; li.setAttribute('role', 'treeitem'); li.textContent = c;
+        li.addEventListener('mouseup', () => { document.querySelector('.ph').textContent = c; document.getElementById('cty').append(new Option(c, c, true, true)); dd.remove(); });
+        ul.appendChild(li);
+      } }, 1200); };
+  inp.addEventListener('input', load); load();
+});
+</script></body></html>

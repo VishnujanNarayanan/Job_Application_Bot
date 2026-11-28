@@ -1,0 +1,8 @@
+<!doctype html><html><head><title>Upload your Resume</title></head><body><h1>Upload your Resume and we do the rest</h1>
+<!-- Archer/react-dropzone-shaped: an area you drop a file on, no file input anywhere. -->
+<div id="z" style="border:1px dashed #999;padding:30px">File upload criteria: PDF. Click to add your files or alternatively, drag and drop them here.</div>
+<p id="out"></p><script>
+const z = document.getElementById('z');
+['dragenter', 'dragover'].forEach((t) => z.addEventListener(t, (e) => e.preventDefault()));
+z.addEventListener('drop', (e) => { e.preventDefault(); document.getElementById('out').textContent = 'Uploaded ' + e.dataTransfer.files[0].name; });
+</script></body></html>

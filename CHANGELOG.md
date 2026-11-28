@@ -65,6 +65,12 @@ and this project loosely tracks iterations rather than semver.
     "required" messages after Next/Submit are read. A field you fill yourself
     is learned per site (`data/ats_sites.json`).
   - A Telegram job is remembered across frames and tabs for 30 minutes.
+- **Form zoo (#215).** `tests/e2e`: made-up copies of every form design met
+  on live sites (Workday, SuccessFactors, IBM, résumé pickers, chips, board
+  handover, slow lists, awkward designs), filled by the real userscript in
+  headless Chromium. Runs in its own CI job on every PR. Its first run caught
+  two bugs: a short label far from its box in a two-column table, and a
+  question written above Month/Day boxes.
 - **Autofill: IBM-style forms and answers in any shape (#154).**
   - Unnumbered "Education" / "Work experience" sections are filled from the
     profile, and date pickers get whole dates.

@@ -1,0 +1,8 @@
+<!doctype html><html><head><title>Apply</title></head><body><h2>What type of work are you looking for?</h2>
+<!-- Archer-shaped: a row of chips (several may be ticked) and Yes/No toggle buttons. -->
+<div class="chips"><div role="checkbox" aria-checked="false" tabindex="0">Onsite</div><div role="checkbox" aria-checked="false" tabindex="0">Hybrid</div><div role="checkbox" aria-checked="false" tabindex="0">Remote</div></div>
+<p>Would you relocate for the right role? *</p><div class="yn"><button type="button" aria-pressed="false">Yes</button><button type="button" aria-pressed="false">No</button></div>
+<script>
+document.querySelectorAll('[role=checkbox]').forEach((c) => c.onclick = () => c.setAttribute('aria-checked', c.getAttribute('aria-checked') === 'true' ? 'false' : 'true'));
+document.querySelectorAll('[aria-pressed]').forEach((b) => b.onclick = () => { b.parentElement.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', 'false')); b.setAttribute('aria-pressed', 'true'); });
+</script></body></html>

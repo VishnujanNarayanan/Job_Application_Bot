@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.6.2
+// @version      1.6.3
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -177,24 +177,29 @@
   function labelNear(el) {
     const box = el.getBoundingClientRect();
     if (!box.width && !box.height) return '';
-    let best = null;
+    // A label on the same row, to the left, beats text above: in a two-column table
+    // the label column is as wide as its longest label, so "Country" can sit far
+    // from its box while the row above ("Attach a Cover Letter") is close.
+    let left = null;
+    let above = null;
     let node = el.parentElement;
-    for (let depth = 0; node && depth < 4 && !best; depth++, node = node.parentElement) {
-      for (const t of node.querySelectorAll('label, legend, span, p, div, h1, h2, h3, h4, h5, h6, strong, b')) {
+    for (let depth = 0; node && depth < 5 && !left; depth++, node = node.parentElement) {
+      for (const t of node.querySelectorAll('label, legend, span, p, div, td, th, h1, h2, h3, h4, h5, h6, strong, b')) {
         if (t.contains(el) || t.closest('#' + PANEL_ID)) continue;
         const own = clean([...t.childNodes].filter((c) => c.nodeType === 3).map((c) => c.nodeValue).join(' '));
         if (!own || own.length > 160) continue;
         const r = t.getBoundingClientRect();
-        let d = null;
-        if (r.bottom <= box.top + 4 && box.top - r.bottom < 70 && r.left < box.right && r.right > box.left - 20) {
-          d = box.top - r.bottom;
-        } else if (r.right <= box.left + 4 && box.left - r.right < 260 && Math.abs((r.top + r.bottom) / 2 - (box.top + box.bottom) / 2) < box.height) {
-          d = (box.left - r.right) / 2;
+        const sameRow = Math.abs((r.top + r.bottom) / 2 - (box.top + box.bottom) / 2) < Math.max(box.height, 24);
+        if (sameRow && r.right <= box.left + 4 && box.left - r.right < 800) {
+          const d = box.left - r.right;
+          if (!left || d < left.d) left = { d, text: own };
+        } else if (r.bottom <= box.top + 4 && box.top - r.bottom < 70 && r.left < box.right && r.right > box.left - 20) {
+          const d = box.top - r.bottom;
+          if (!above || d < above.d) above = { d, text: own };
         }
-        if (d !== null && (!best || d < best.d)) best = { d, text: own };
       }
     }
-    return best ? best.text : '';
+    return (left || above || { text: '' }).text;
   }
 
   function labelOf(el) {
@@ -247,6 +252,22 @@
         if (/^H[1-6]$/.test(sib.tagName) || sib.getAttribute('role') === 'heading') return textOf(sib);
         const h = sib.querySelector && sib.querySelector('h1, h2, h3, h4, h5, h6, [role="heading"]');
         if (h && !sib.querySelector('input, select, textarea, button')) return textOf(h);
+      }
+    }
+    return '';
+  }
+
+  // The question written just before a field's block ("Please indicate your date of
+  // birth" above boxes labelled only Month / Day / Year), skipping sibling fields.
+  function textBefore(el, own) {
+    let node = el;
+    for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
+      let sib = node.previousElementSibling;
+      for (let i = 0; sib && i < 4; i++, sib = sib.previousElementSibling) {
+        if (sib.querySelector && sib.querySelector('input, select, textarea, [role="combobox"]')) continue;
+        const t = textOf(sib);
+        if (t === own || (sib.tagName === 'LABEL' && sib.htmlFor === el.id)) continue;  // its own label
+        if (t.length >= 2 && t.length <= 300) return t;
       }
     }
     return '';
@@ -549,6 +570,8 @@
       const options = el.tagName === 'SELECT' ? [...el.options].map((o) => clean(o.text)) : [];
       let context = contextOf(el, [label]);
       if (isFile) context = clean(headingBefore(el) + ' ' + context);
+      // A label of one or two words ("Month", "Day") leans on the question written before it.
+      if (label.split(' ').length <= 2 && (!context || context === label)) context = textBefore(el, label) || context;
       const fieldBox = el.closest('[data-automation-id^="formField-"]');
       const f = {
         ref: remember(ftype, [el], widget ? { markEl: widget } : null), label, context,
