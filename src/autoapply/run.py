@@ -123,6 +123,13 @@ def linkedin_id(job_id: str, url: str | None = "") -> str:
     return m.group(1) if m else ""
 
 
+def _defaults_text(defaults: list[str]) -> str:
+    if not defaults:
+        return ""
+    return ("\n\nAnswered by default (no stored answer; tell me if any is wrong):\n"
+            + "\n".join("• " + d for d in defaults[:10]))
+
+
 def mark_applied(job_id: str) -> None:
     from src.state.db import session_scope
     from src.state.job_status import set_job_status
@@ -187,9 +194,11 @@ def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool
                     mark_applied(job["job_id"])
                     today = state.setdefault("days", {}).setdefault(day, {"applied": 0})
                     today["applied"] = int(today.get("applied", 0)) + 1
-                    notify(f"✅ Applied (Easy Apply): {title}\n{job['url']}\nApplied today: {today['applied']}/{int(c.max_per_day)}")
+                    notify(f"✅ Applied (Easy Apply): {title}\n{job['url']}\nApplied today: {today['applied']}/{int(c.max_per_day)}"
+                           + _defaults_text(outcome.defaults))
                 elif outcome.status == "dry_run":
-                    notify(f"🧪 Dry run, ready to submit: {title}\n{job['url']}\nScreenshot: {outcome.screenshot}")
+                    notify(f"🧪 Dry run, ready to submit: {title}\n{job['url']}\nScreenshot: {outcome.screenshot}"
+                           + _defaults_text(outcome.defaults))
                 elif outcome.status == "skipped":
                     qs = "\n".join("• " + q for q in outcome.questions[:6])
                     notify(f"⏭ Skipped {title}: {outcome.detail}\n{qs}\n{job['url']}")

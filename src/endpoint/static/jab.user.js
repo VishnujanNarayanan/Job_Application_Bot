@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.7.1
+// @version      1.8.0
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -50,6 +50,39 @@
   // is the bot's job (it uploads the tailored PDF through the file picker).
   const OVERWRITE = !!(AUTO && AUTO.overwrite);
   const NO_FILES = !!(AUTO && AUTO.noFiles);
+  // Auto-apply, operator's rule: never skip a job over a question. A required
+  // question with no stored answer gets a default (reported to the operator,
+  // never learned): ability / willingness -> Yes; a declaration that would be
+  // false if guessed (convictions, clearances, dismissals, relatives) -> No;
+  // a "how many years" number -> total experience.
+  const NEVER_SKIP = !!(AUTO && AUTO.neverSkip);
+  window.__jabFallbacks = window.__jabFallbacks || [];
+  const RISKY = /convict|criminal|felony|offen[cs]e|arrest|security clearance|clearance|terminat|dismiss|fired|debar|sanction|blacklist|conflict of interest|relative|related to|family member|disciplinary|lawsuit|litigation|bankrupt/i;
+  const PRIVATE = /disab|veteran|ethnic|race|religio|sexual orientation|gender identity|pronoun/i;
+  const PREFER_NOT = /prefer not|decline|don.?t wish|do not wish|rather not|not to (say|disclose|answer)/i;
+
+  function fallbackValue(question, kind, options, years) {
+    const q = question || '';
+    const real = (options || []).filter((o) => o && !PLACEHOLDER.test(o));
+    const find = (re) => real.find((o) => re.test(o));
+    // Visas: needing sponsorship is No, being allowed to work is Yes (India; a
+    // question naming another country is answered by the matcher's own rule).
+    const sponsor = /sponsor/i.test(q);
+    const authorised = !sponsor && /authori[sz]|eligib|right to work|legally (able|permitted)|work permit/i.test(q);
+    if (sponsor) return real.length ? (find(/^\s*no\b/i) || null) : 'No';
+    if (authorised) return real.length ? (find(/^\s*yes\b/i) || null) : 'Yes';
+    if (real.length) {
+      if (PRIVATE.test(q)) return find(PREFER_NOT) || find(/^\s*no\b/i) || null;
+      if (RISKY.test(q)) return find(/^\s*no\b/i) || null;
+      return find(/^\s*yes\b/i) || find(/^(i )?(agree|accept|confirm)/i) || real[0];
+    }
+    if (kind === 'checkbox') return RISKY.test(q) ? null : true;
+    if (/\b(years?|experience)\b/i.test(q)) return String(years);
+    if (kind === 'number') return '0';
+    if (kind === 'combobox' || kind === 'prompt') return RISKY.test(q) ? 'No' : 'Yes';
+    if (/\b(yes|no)\b|^(are|do|did|have|has|can|will|would|is)\b/i.test(q.trim())) return RISKY.test(q) ? 'No' : 'Yes';
+    return 'Please refer to my resume';
+  }
   const scopeRoot = () => (AUTO && AUTO.scope && document.querySelector(AUTO.scope)) || document;
   const SESSION_KEY = 'jab-session';
   const SESSION_MS = 3 * 3600 * 1000;
@@ -1331,6 +1364,14 @@
         totals.resume = 'resume: not available (' + e.message + ')';
       }
       return mark(decision.ref, 'jab-missing', 'attach your resume (the PDF is in Downloads)');
+    }
+    if (a === 'unknown' && NEVER_SKIP && !r.had && (decision.required || r.required)) {
+      const fb = fallbackValue(decision.question || '', r.kind === 'checkbox' ? 'checkbox' : (r.ftype || r.kind),
+        r.options || (r.radios ? r.radios.map((x) => clean(x.textContent)) : []), (AUTO && AUTO.years) || 1);
+      if (fb !== null && fb !== undefined) {
+        window.__jabFallbacks.push({ question: decision.question || '', answer: String(fb) });
+        return apply(Object.assign({}, decision, { action: 'review', value: fb, fallback: true }), resume);
+      }
     }
     if (a === 'unknown') {
       if (r.had) return;  // LinkedIn's remembered answer stays

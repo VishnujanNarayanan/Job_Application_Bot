@@ -63,6 +63,7 @@ class Outcome:
     detail: str = ""
     screenshot: str = ""
     questions: list[str] = field(default_factory=list)
+    defaults: list[str] = field(default_factory=list)   # questions answered by the never-skip defaults
 
 
 def _pause(lo: float = 0.7, hi: float = 1.8) -> None:
@@ -145,11 +146,17 @@ def _modal(page):
     return None
 
 
+def never_skip() -> bool:
+    return bool(settings.autoapply.get("never_skip", True))
+
+
 def _inject(page, job_id: str) -> None:
     script = (SCRIPT.read_text(encoding="utf-8").replace("__JAB_ENDPOINT__", ENDPOINT)
               .replace("__JAB_HOST__", "localhost"))
     page.evaluate("(a) => { window.__jabAutoApply = a; window.__jabPasses = 0; }",
-                  {"jobId": job_id, "scope": SCOPE, "overwrite": True, "noFiles": True})
+                  {"jobId": job_id, "scope": SCOPE, "overwrite": True, "noFiles": True,
+                   "neverSkip": never_skip(),
+                   "years": float(settings.operator.get("years_experience") or 1)})
     page.evaluate(GM_SHIM)
     page.evaluate(script)
 
@@ -326,10 +333,11 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
             _discard(page)
             return Outcome("error", "no Next / Review / Submit button found", shot)
         if re.match(r"submit application", label, re.I):
+            defaults = [f"{d['question'][:90]} → {d['answer']}" for d in page.evaluate("() => window.__jabFallbacks || []")]
             if dry_run:
                 shot = _shot(page, job_id, "ready-to-submit")
                 _discard(page)
-                return Outcome("dry_run", "filled; stopped before Submit", shot)
+                return Outcome("dry_run", "filled; stopped before Submit", shot, defaults=defaults)
             btn.click()
             for _ in range(30):
                 time.sleep(0.5)
@@ -341,7 +349,7 @@ def easy_apply(page, job_id: str, job_url: str, *, dry_run: bool, log) -> Outcom
                         if b and b.is_visible():
                             b.click()
                             break
-                    return Outcome("applied", "Easy Apply submitted", shot)
+                    return Outcome("applied", "Easy Apply submitted", shot, defaults=defaults)
             return Outcome("error", "pressed Submit but saw no confirmation", _shot(page, job_id, "no-confirm"))
         log.info("autoapply_step", job_id=job_id, step=step, button=label)
         btn.click()

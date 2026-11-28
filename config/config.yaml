@@ -1032,6 +1032,7 @@ autoapply:
   title_must_contain: ["data engineer"]
   run_pipeline_first: true  # search + score + tailor before applying
   per_run: 1
+  never_skip: true          # a required question with no answer gets a default (reported), not a skip
   max_per_day: 20
   every_minutes: 30
   days: [mon, tue, wed, thu, fri]
