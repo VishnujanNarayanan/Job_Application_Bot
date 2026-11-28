@@ -1039,6 +1039,7 @@ autoapply:
   edge_exe: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
   edge_profile: "C:\\Users\\ASUS\\AppData\\Local\\JobBot\\EdgeProfile"
   cdp_port: 9223
+  cdp_relay_port: 9224   # the bot connects here; a hidden relay on Windows passes it on to cdp_port
 
 # ---------------------------------------------------------------------------
 # Resume endpoint + dashboard — FastAPI (Layer 6)

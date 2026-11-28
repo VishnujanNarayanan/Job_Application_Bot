@@ -118,7 +118,7 @@ def mark_applied(job_id: str) -> None:
         set_job_status(s, job_id, "applied")
 
 
-def run_once(*, dry_run: bool | None = None, force: bool = False) -> dict:
+def run_once(*, dry_run: bool | None = None, force: bool = False, pipeline: bool | None = None) -> dict:
     """One run. ``force`` ignores the window and ``enabled`` (for a manual try)."""
     from src.autoapply import edge
     from src.autoapply.linkedin import easy_apply
@@ -135,7 +135,7 @@ def run_once(*, dry_run: bool | None = None, force: bool = False) -> dict:
     if not dry and applied_today(state, day) >= int(c.max_per_day):
         return {"ran": False, "why": "daily cap reached"}
 
-    if bool(c.run_pipeline_first):
+    if bool(c.run_pipeline_first) if pipeline is None else pipeline:
         log.info("autoapply_pipeline_start", term=str(c.search_term))
         run_pipeline()
 
