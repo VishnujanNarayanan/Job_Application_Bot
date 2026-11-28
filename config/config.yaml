@@ -1024,8 +1024,8 @@ autofill:
 # LinkedIn's terms forbid automated applying: keep the caps low.
 # ---------------------------------------------------------------------------
 autoapply:
-  enabled: false            # true once a few dry runs look right
-  dry_run: true             # fill everything, stop before Submit, screenshot it
+  enabled: true             # switched on 2026-11-28 after dry runs on real LinkedIn
+  dry_run: false            # true: fill everything, stop before Submit, screenshot it
   search_term: "data engineer"
   location: "India"
   posted_within_minutes: 60  # the search and the scrape both look back this far
