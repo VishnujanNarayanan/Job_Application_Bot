@@ -119,25 +119,6 @@ def _easy_button(page):
     return None
 
 
-def search_job_ids(page, term: str, minutes: int, location: str) -> list[str]:
-    """LinkedIn's own search, Easy Apply only, posted in the last ``minutes``: job ids in order."""
-    from urllib.parse import quote
-
-    url = (f"https://www.linkedin.com/jobs/search/?keywords={quote(term)}&location={quote(location)}"
-           f"&f_AL=true&f_TPR=r{int(minutes) * 60}&sortBy=DD")
-    page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    _pause(3.0, 5.0)
-    for _ in range(4):  # results load as the list scrolls
-        page.mouse.wheel(0, 1600)
-        _pause(0.8, 1.6)
-    html = page.content()
-    ids: list[str] = []
-    for m in re.finditer(r"(?:jobs/view/|currentJobId=|jobPosting[:%3A]+|fsd_jobPosting[:%3A]+|\"jobPostingId\":\s*\"?)(\d{8,12})", html):
-        if m.group(1) not in ids:
-            ids.append(m.group(1))
-    return ids
-
-
 def _modal(page):
     for sel in MODAL.split(", "):
         el = page.query_selector(sel)

@@ -1029,16 +1029,16 @@ autoapply:
   search_term: "data engineer"
   location: "India"
   posted_within_minutes: 60  # the search and the scrape both look back this far
-  title_must_contain: ["data engineer"]
+  title_must_contain: []      # any title the search returns (it matched the profile)
   run_pipeline_first: true  # search + score + tailor before applying
-  per_run: 1
+  per_run: 0               # 0: every Easy Apply match of the run, up to max_per_day
   never_skip: true          # a required question with no answer gets a default (reported), not a skip
   max_per_day: 20
   every_minutes: 30
   days: [mon, tue, wed, thu, fri]
   hours: [9, 18]            # from 09:00 to before 18:00
   timezone: Asia/Kolkata
-  max_match_age_hours: 2    # matches built this recently (this run's scrape)
+  max_match_age_hours: 1    # with run --no-pipeline: matches built this recently
   edge_exe: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe"
   edge_profile: "C:\\Users\\ASUS\\AppData\\Local\\JobBot\\EdgeProfile"
   cdp_port: 9223
