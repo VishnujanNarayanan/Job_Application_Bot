@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Job Bot autofill
 // @namespace    job-application-bot
-// @version      1.6.1
+// @version      1.6.2
 // @description  Fills ATS application forms from the job bot's answers (#154). Never submits.
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -364,6 +364,38 @@
         if (isEntry(block)) for (let sib = block.previousElementSibling; sib; sib = sib.previousElementSibling) if (isEntry(sib)) index++;
         return kind + ' ' + index;
       }
+    }
+    return entryOf(el);
+  }
+
+  // Whatever the headings look like: a date (or title, location...) in the same
+  // small block as "University" / "Degree" is an education entry; next to
+  // "Company" / "Position", a work entry. Repeated blocks ("Add another") are
+  // numbered by their order among blocks of the same kind.
+  const EDU_FIELDS = /\b(university|school|college|institute|institution|degree|qualification|field of study|major|gpa|cgpa|grade)\b/i;
+  const WORK_FIELDS = /\b(company|employer|organi[sz]ation|position|job title|designation|role title|current position)\b/i;
+  const CONTROL_SEL = 'input:not([type=hidden]):not([type=button]):not([type=submit]), select, textarea, [role="combobox"]';
+  function blockKind(node) {
+    const controls = [...node.querySelectorAll(CONTROL_SEL)];
+    if (controls.length < 2 || controls.length > 14) return '';
+    const labels = controls.map((c) => labelOf(c)).join(' | ');
+    // A block holding the applicant's own details is the main form, not an entry.
+    if (/\b(e-?mail|phone|mobile|first name|last name|full name|surname)\b/i.test(labels)) return '';
+    const edu = EDU_FIELDS.test(labels);
+    const work = WORK_FIELDS.test(labels);
+    return edu && !work ? 'Education' : work && !edu ? 'Work Experience' : '';
+  }
+  function entryOf(el) {
+    // "Earliest start date", "When can you join": availability, never an entry's date.
+    if (/earliest|availab|join|notice|can you start|could you start/i.test(labelOf(el))) return '';
+    let node = el.parentElement;
+    for (let depth = 0; node && depth < 7; depth++, node = node.parentElement) {
+      const kind = blockKind(node);
+      if (!kind) continue;
+      // Siblings of the same kind before it: earlier entries.
+      let index = 1;
+      for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) if (blockKind(sib) === kind) index++;
+      return kind + ' ' + index;
     }
     return '';
   }
